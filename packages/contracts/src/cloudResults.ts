@@ -3,13 +3,18 @@ import * as Schema from "effect/Schema";
 import {
   IsoDateTime,
   NonNegativeInt,
+  CloudRunResultId,
   EnvironmentId,
   RunAllocationAttempt,
   RunAllocationId,
   ThreadId,
   TrimmedNonEmptyString,
 } from "./baseSchemas.ts";
-import { CloudProviderExecutionRecord, CloudProviderTurnInput } from "./cloudExecution.ts";
+import {
+  CloudProviderExecutionRecord,
+  CloudProviderTurnInput,
+  CloudProviderUnansweredRequestSeconds,
+} from "./cloudExecution.ts";
 import {
   CloudRepositoryPreparationRecord,
   CloudRepositoryVerificationRecord,
@@ -19,11 +24,6 @@ export const CLOUD_RESULT_RETENTION_DAYS = 7;
 export const CLOUD_RESULT_MAX_ARTIFACTS = 64;
 export const CLOUD_RESULT_MAX_ARTIFACT_BYTES = 64 * 1024 * 1024;
 export const CLOUD_RESULT_MAX_TOTAL_BYTES = 256 * 1024 * 1024;
-
-export const CloudRunResultId = Schema.String.check(Schema.isPattern(/^[a-f0-9]{64}$/)).pipe(
-  Schema.brand("CloudRunResultId"),
-);
-export type CloudRunResultId = typeof CloudRunResultId.Type;
 
 export const CloudResultArtifactRequest = Schema.Struct({
   relativePath: TrimmedNonEmptyString,
@@ -106,6 +106,7 @@ export const CloudResultContinuationInput = Schema.Struct({
   destinationWorkspacePath: TrimmedNonEmptyString,
   threadId: ThreadId,
   title: TrimmedNonEmptyString,
+  unansweredRequestSeconds: CloudProviderUnansweredRequestSeconds,
   turn: CloudProviderTurnInput,
 });
 export type CloudResultContinuationInput = typeof CloudResultContinuationInput.Type;

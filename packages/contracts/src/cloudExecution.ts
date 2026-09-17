@@ -1,10 +1,13 @@
+import * as Effect from "effect/Effect";
 import * as Schema from "effect/Schema";
 
 import {
+  ApprovalRequestId,
   CommandId,
   IsoDateTime,
   MessageId,
   NonNegativeInt,
+  PositiveInt,
   ProjectId,
   RunAllocationAttempt,
   RunAllocationId,
@@ -18,8 +21,25 @@ import {
   ModelSelection,
   PROVIDER_SEND_TURN_MAX_ATTACHMENTS,
   ProviderInteractionMode,
+  ProviderApprovalDecision,
+  ProviderUserInputAnswers,
   RuntimeMode,
+  UserInputAttachments,
 } from "./orchestration.ts";
+
+export const CLOUD_PROVIDER_MAX_UNANSWERED_REQUEST_SECONDS = 60 * 60;
+export const CLOUD_PROVIDER_DEFAULT_UNANSWERED_REQUEST_SECONDS = 15 * 60;
+
+export const CloudProviderUnansweredRequestSeconds = PositiveInt.pipe(
+  Schema.check(Schema.isLessThanOrEqualTo(CLOUD_PROVIDER_MAX_UNANSWERED_REQUEST_SECONDS)),
+  Schema.brand("CloudProviderUnansweredRequestSeconds"),
+);
+export type CloudProviderUnansweredRequestSeconds =
+  typeof CloudProviderUnansweredRequestSeconds.Type;
+
+const defaultUnansweredRequestSeconds = CloudProviderUnansweredRequestSeconds.make(
+  CLOUD_PROVIDER_DEFAULT_UNANSWERED_REQUEST_SECONDS,
+);
 
 export const CloudProviderTurnInput = Schema.Struct({
   commandId: CommandId,
@@ -39,6 +59,7 @@ export const CloudProviderExecutionStartInput = Schema.Struct({
   preparation: CloudRepositoryPreparationRecord,
   threadId: ThreadId,
   title: TrimmedNonEmptyString,
+  unansweredRequestSeconds: CloudProviderUnansweredRequestSeconds,
   turn: CloudProviderTurnInput,
 });
 export type CloudProviderExecutionStartInput = typeof CloudProviderExecutionStartInput.Type;
@@ -51,6 +72,9 @@ export const CloudProviderExecutionRecord = Schema.Struct({
   modelSelection: ModelSelection,
   runtimeMode: RuntimeMode,
   interactionMode: ProviderInteractionMode,
+  unansweredRequestSeconds: CloudProviderUnansweredRequestSeconds.pipe(
+    Schema.withDecodingDefault(Effect.succeed(defaultUnansweredRequestSeconds)),
+  ),
   acceptedSequence: NonNegativeInt,
   startedAt: IsoDateTime,
 });
@@ -69,6 +93,25 @@ export const CloudProviderInterruptInput = Schema.Struct({
   createdAt: IsoDateTime,
 });
 export type CloudProviderInterruptInput = typeof CloudProviderInterruptInput.Type;
+
+export const CloudProviderApprovalInput = Schema.Struct({
+  commandId: CommandId,
+  threadId: ThreadId,
+  requestId: ApprovalRequestId,
+  decision: ProviderApprovalDecision,
+  createdAt: IsoDateTime,
+});
+export type CloudProviderApprovalInput = typeof CloudProviderApprovalInput.Type;
+
+export const CloudProviderUserInput = Schema.Struct({
+  commandId: CommandId,
+  threadId: ThreadId,
+  requestId: ApprovalRequestId,
+  answers: ProviderUserInputAnswers,
+  attachmentsByQuestionId: Schema.optional(UserInputAttachments),
+  createdAt: IsoDateTime,
+});
+export type CloudProviderUserInput = typeof CloudProviderUserInput.Type;
 
 export class CloudProviderExecutionError extends Schema.TaggedError<CloudProviderExecutionError>()(
   "CloudProviderExecutionError",

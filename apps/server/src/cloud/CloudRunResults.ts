@@ -981,6 +981,7 @@ export const make = Effect.fn("CloudRunResults.make")(function* (input: CloudRun
         },
         threadId: request.threadId,
         title: request.title,
+        unansweredRequestSeconds: request.unansweredRequestSeconds,
         turn: request.turn,
       })
       .pipe(

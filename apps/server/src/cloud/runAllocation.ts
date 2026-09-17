@@ -172,6 +172,8 @@ export function decideRunAllocationCommand(
               type: "allocation.retry-requested",
               attempt: command.nextAttempt,
               deadlines: command.deadlines,
+              startPoint: command.startPoint,
+              publication: command.publication,
             },
           ]
         : [];
@@ -390,6 +392,14 @@ export function projectRunAllocationEvent(
       return projectUpdate(allocation, event, {
         attempt: event.attempt,
         deadlines: event.deadlines,
+        retry: {
+          previousAttempt: allocation.attempt,
+          startPoint: event.startPoint ?? {
+            type: "base-commit",
+            commit: allocation.target.baseCommit,
+          },
+          publication: event.publication ?? { status: "not-attempted" },
+        },
         allocationState: { status: "queued" },
         agentOutcome: { status: "not-started" },
         previewState: { status: "unavailable" },

@@ -1,18 +1,27 @@
 import {
+  ApprovalRequestId,
+  type CloudProviderApprovalInput,
   CloudProviderExecutionError,
   type CloudProviderExecutionRecord,
   type CloudProviderExecutionStartInput,
   type CloudProviderFollowUpInput,
   type CloudProviderInterruptInput,
+  type CloudProviderUserInput,
   CommandId,
   type OrchestrationCommand,
+  type OrchestrationEvent,
   ProjectId,
   ProviderDriverKind,
   type ServerProvider,
 } from "@t3tools/contracts";
 import * as Context from "effect/Context";
+import * as DateTime from "effect/DateTime";
+import * as Deferred from "effect/Deferred";
+import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
+import * as Predicate from "effect/Predicate";
+import * as Stream from "effect/Stream";
 
 import { OrchestrationEngineService } from "../orchestration/Services/OrchestrationEngine.ts";
 import { ProviderRegistry } from "../provider/Services/ProviderRegistry.ts";
@@ -30,6 +39,12 @@ export class CloudProviderExecution extends Context.Service<
     ) => Effect.Effect<{ readonly acceptedSequence: number }, CloudProviderExecutionError>;
     readonly interrupt: (
       input: CloudProviderInterruptInput,
+    ) => Effect.Effect<{ readonly acceptedSequence: number }, CloudProviderExecutionError>;
+    readonly approve: (
+      input: CloudProviderApprovalInput,
+    ) => Effect.Effect<{ readonly acceptedSequence: number }, CloudProviderExecutionError>;
+    readonly answer: (
+      input: CloudProviderUserInput,
     ) => Effect.Effect<{ readonly acceptedSequence: number }, CloudProviderExecutionError>;
   }
 >()("t3/cloud/CloudProviderExecution") {}
@@ -83,9 +98,30 @@ function validateAttachments(
       );
 }
 
-export const make = Effect.fn("CloudProviderExecution.make")(function* () {
+function activityRequestId(event: OrchestrationEvent): ApprovalRequestId | undefined {
+  if (event.type !== "thread.activity-appended") return undefined;
+  const payload = event.payload.activity.payload;
+  if (!Predicate.isObject(payload) || !Predicate.isString(payload.requestId)) return undefined;
+  return ApprovalRequestId.make(payload.requestId);
+}
+
+const build = Effect.fn("CloudProviderExecution.build")(function* () {
   const orchestration = yield* OrchestrationEngineService;
   const providers = yield* ProviderRegistry;
+  const requestPolicies = new Map<
+    CloudProviderExecutionStartInput["threadId"],
+    CloudProviderExecutionStartInput["unansweredRequestSeconds"]
+  >();
+  const pendingRequests = new Map<
+    string,
+    {
+      readonly threadId: CloudProviderExecutionStartInput["threadId"];
+      readonly resolved: Deferred.Deferred<void>;
+    }
+  >();
+
+  const requestKey = (threadId: CloudProviderExecutionStartInput["threadId"], requestId: string) =>
+    `${threadId}:${requestId}`;
 
   const preflightTurn = Effect.fn("CloudProviderExecution.preflightTurn")(function* (
     turn: CloudProviderFollowUpInput["turn"],
@@ -145,10 +181,87 @@ export const make = Effect.fn("CloudProviderExecution.make")(function* () {
       );
   });
 
+  const resolveRequest = (
+    threadId: CloudProviderExecutionStartInput["threadId"],
+    requestId: ApprovalRequestId,
+  ) => {
+    const pending = pendingRequests.get(requestKey(threadId, requestId));
+    return pending === undefined ? Effect.void : Deferred.succeed(pending.resolved, undefined);
+  };
+
+  const resolveThreadRequests = (threadId: CloudProviderExecutionStartInput["threadId"]) =>
+    Effect.forEach(
+      pendingRequests.values(),
+      (pending) =>
+        pending.threadId === threadId ? Deferred.succeed(pending.resolved, undefined) : Effect.void,
+      { discard: true },
+    );
+
+  const processEvent = Effect.fn("CloudProviderExecution.processEvent")(function* (
+    event: OrchestrationEvent,
+  ) {
+    if (
+      event.type === "thread.approval-response-requested" ||
+      event.type === "thread.user-input-response-requested"
+    ) {
+      yield* resolveRequest(event.payload.threadId, event.payload.requestId);
+      return;
+    }
+    if (event.type === "thread.turn-interrupt-requested" || event.type === "thread.settled") {
+      yield* resolveThreadRequests(event.payload.threadId);
+      return;
+    }
+    if (event.type !== "thread.activity-appended") return;
+
+    const activity = event.payload.activity;
+    if (activity.kind === "approval.resolved" || activity.kind === "user-input.resolved") {
+      const requestId = activityRequestId(event);
+      if (requestId !== undefined) yield* resolveRequest(event.payload.threadId, requestId);
+      return;
+    }
+    if (activity.kind !== "approval.requested" && activity.kind !== "user-input.requested") return;
+
+    const requestId = activityRequestId(event);
+    const timeoutSeconds = requestPolicies.get(event.payload.threadId);
+    if (requestId === undefined || timeoutSeconds === undefined) return;
+    const key = requestKey(event.payload.threadId, requestId);
+    if (pendingRequests.has(key)) return;
+
+    const resolved = yield* Deferred.make<void>();
+    pendingRequests.set(key, { threadId: event.payload.threadId, resolved });
+    const expire = Effect.gen(function* () {
+      yield* Effect.sleep(Duration.seconds(timeoutSeconds));
+      const createdAt = DateTime.formatIso(yield* DateTime.now);
+      if (activity.kind === "approval.requested") {
+        yield* dispatch({
+          type: "thread.approval.respond",
+          commandId: CommandId.make(`cloud-request-timeout:${requestId}`),
+          threadId: event.payload.threadId,
+          requestId,
+          decision: "decline",
+          createdAt,
+        }).pipe(Effect.ignore);
+        return;
+      }
+      yield* dispatch({
+        type: "thread.turn.interrupt",
+        commandId: CommandId.make(`cloud-request-timeout:${requestId}`),
+        threadId: event.payload.threadId,
+        ...(activity.turnId === null ? {} : { turnId: activity.turnId }),
+        createdAt,
+      }).pipe(Effect.ignore);
+    });
+    yield* Effect.race(Deferred.await(resolved), expire).pipe(
+      Effect.ensuring(Effect.sync(() => pendingRequests.delete(key))),
+      Effect.forkScoped,
+    );
+  });
+
   const start: CloudProviderExecution["Service"]["start"] = Effect.fn(
     "CloudProviderExecution.start",
   )(function* (request) {
     yield* preflightTurn(request.turn);
+    requestPolicies.set(request.threadId, request.unansweredRequestSeconds);
 
     const executionProjectId = projectId(request.preparation);
     yield* dispatch({
@@ -197,6 +310,7 @@ export const make = Effect.fn("CloudProviderExecution.make")(function* () {
       modelSelection: request.turn.modelSelection,
       runtimeMode: request.turn.runtimeMode,
       interactionMode: request.turn.interactionMode,
+      unansweredRequestSeconds: request.unansweredRequestSeconds,
       acceptedSequence: receipt.sequence,
       startedAt: request.turn.createdAt,
     } satisfies CloudProviderExecutionRecord;
@@ -237,7 +351,54 @@ export const make = Effect.fn("CloudProviderExecution.make")(function* () {
     return { acceptedSequence: receipt.sequence };
   });
 
-  return CloudProviderExecution.of({ start, followUp, interrupt });
+  const approve: CloudProviderExecution["Service"]["approve"] = Effect.fn(
+    "CloudProviderExecution.approve",
+  )(function* (request) {
+    const receipt = yield* dispatch({
+      type: "thread.approval.respond",
+      commandId: request.commandId,
+      threadId: request.threadId,
+      requestId: request.requestId,
+      decision: request.decision,
+      createdAt: request.createdAt,
+    });
+    return { acceptedSequence: receipt.sequence };
+  });
+
+  const answer: CloudProviderExecution["Service"]["answer"] = Effect.fn(
+    "CloudProviderExecution.answer",
+  )(function* (request) {
+    const receipt = yield* dispatch({
+      type: "thread.user-input.respond",
+      commandId: request.commandId,
+      threadId: request.threadId,
+      requestId: request.requestId,
+      answers: request.answers,
+      ...(request.attachmentsByQuestionId === undefined
+        ? {}
+        : { attachmentsByQuestionId: request.attachmentsByQuestionId }),
+      createdAt: request.createdAt,
+    });
+    return { acceptedSequence: receipt.sequence };
+  });
+
+  return {
+    service: CloudProviderExecution.of({ start, followUp, interrupt, approve, answer }),
+    processEvent,
+  };
 });
 
-export const layer = Layer.effect(CloudProviderExecution, make());
+export const make = Effect.fn("CloudProviderExecution.make")(function* () {
+  return (yield* build()).service;
+});
+
+export const layer = Layer.effect(
+  CloudProviderExecution,
+  Effect.gen(function* () {
+    const orchestration = yield* OrchestrationEngineService;
+    const events = yield* orchestration.subscribeDomainEvents;
+    const built = yield* build();
+    yield* Stream.runForEach(events, built.processEvent).pipe(Effect.forkScoped);
+    return built.service;
+  }),
+);

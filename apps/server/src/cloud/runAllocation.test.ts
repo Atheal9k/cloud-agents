@@ -247,11 +247,18 @@ describe("cloud allocation transitions", () => {
         attempt: 1,
         nextAttempt: 2,
         deadlines: retryDeadlines,
+        startPoint: { type: "base-commit", commit: "base-revision" },
+        publication: { status: "not-attempted" },
         occurredAt: "2026-09-17T03:00:06.000Z",
       }),
     ).allocation;
 
     expect(allocation.attempt).toBe(2);
+    expect(allocation.retry).toEqual({
+      previousAttempt: 1,
+      startPoint: { type: "base-commit", commit: "base-revision" },
+      publication: { status: "not-attempted" },
+    });
     expect(
       decideRunAllocationCommand(
         allocation,

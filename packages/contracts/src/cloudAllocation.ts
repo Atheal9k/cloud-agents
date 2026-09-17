@@ -2,6 +2,7 @@ import * as Schema from "effect/Schema";
 
 import {
   CommandId,
+  CloudRunResultId,
   EnvironmentId,
   IsoDateTime,
   NonNegativeInt,
@@ -84,6 +85,41 @@ export const RunResultLocation = Schema.Struct({
   uri: TrimmedNonEmptyString,
 });
 export type RunResultLocation = typeof RunResultLocation.Type;
+
+export const RunRetryStartPoint = Schema.Union([
+  Schema.Struct({
+    type: Schema.Literal("base-commit"),
+    commit: TrimmedNonEmptyString,
+  }),
+  Schema.Struct({
+    type: Schema.Literal("retained-result"),
+    resultId: CloudRunResultId,
+  }),
+]);
+export type RunRetryStartPoint = typeof RunRetryStartPoint.Type;
+
+export const RunPublicationReconciliation = Schema.Union([
+  Schema.Struct({ status: Schema.Literal("not-attempted") }),
+  Schema.Struct({
+    status: Schema.Literal("reconciled-not-published"),
+    checkedAt: IsoDateTime,
+  }),
+  Schema.Struct({
+    status: Schema.Literal("reconciled-published"),
+    checkedAt: IsoDateTime,
+    branch: TrimmedNonEmptyString,
+    commit: TrimmedNonEmptyString,
+    pullRequestUrl: Schema.optionalKey(TrimmedNonEmptyString),
+  }),
+]);
+export type RunPublicationReconciliation = typeof RunPublicationReconciliation.Type;
+
+export const RunRetryRecord = Schema.Struct({
+  previousAttempt: RunAllocationAttempt,
+  startPoint: RunRetryStartPoint,
+  publication: RunPublicationReconciliation,
+});
+export type RunRetryRecord = typeof RunRetryRecord.Type;
 
 export const RunAllocationState = Schema.Union([
   Schema.Struct({ status: Schema.Literal("queued") }),
@@ -171,6 +207,7 @@ export const RunAllocation = Schema.Struct({
   agentOutcome: RunAgentOutcome,
   previewState: RunPreviewState,
   cleanupState: RunCleanupState,
+  retry: Schema.optionalKey(RunRetryRecord),
   handledCommandIds: Schema.Array(CommandId),
   sequence: NonNegativeInt,
   createdAt: IsoDateTime,
@@ -262,6 +299,8 @@ export const RunAllocationCommand = Schema.Union([
     type: Schema.Literal("allocation.retry"),
     nextAttempt: RunAllocationAttempt,
     deadlines: RunDeadlines,
+    startPoint: RunRetryStartPoint,
+    publication: RunPublicationReconciliation,
   }),
 ]);
 export type RunAllocationCommand = typeof RunAllocationCommand.Type;
@@ -346,6 +385,8 @@ export const RunAllocationEvent = Schema.Union([
     ...EventBase,
     type: Schema.Literal("allocation.retry-requested"),
     deadlines: RunDeadlines,
+    startPoint: Schema.optionalKey(RunRetryStartPoint),
+    publication: Schema.optionalKey(RunPublicationReconciliation),
   }),
 ]);
 export type RunAllocationEvent = typeof RunAllocationEvent.Type;

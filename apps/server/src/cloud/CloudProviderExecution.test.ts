@@ -1,8 +1,11 @@
 import {
+  ApprovalRequestId,
   CloudProviderExecutionStartInput,
   CommandId,
+  EventId,
   MessageId,
   type OrchestrationCommand,
+  OrchestrationEvent,
   ProviderDriverKind,
   ProviderInstanceId,
   ServerProvider,
@@ -11,15 +14,19 @@ import {
 } from "@t3tools/contracts";
 import { expect, it } from "@effect/vitest";
 import * as Effect from "effect/Effect";
+import * as Layer from "effect/Layer";
+import * as PubSub from "effect/PubSub";
 import * as Schema from "effect/Schema";
 import * as Stream from "effect/Stream";
+import * as TestClock from "effect/testing/TestClock";
 
 import { OrchestrationEngineService } from "../orchestration/Services/OrchestrationEngine.ts";
 import { makeProviderRegistryLayer } from "../provider/testUtils/providerRegistryMock.ts";
-import { make } from "./CloudProviderExecution.ts";
+import { CloudProviderExecution, layer, make } from "./CloudProviderExecution.ts";
 
 const decodeProvider = Schema.decodeSync(ServerProvider);
 const decodeStartInput = Schema.decodeSync(CloudProviderExecutionStartInput);
+const decodeEvent = Schema.decodeSync(OrchestrationEvent);
 
 const readyCodex = decodeProvider({
   instanceId: "codex-cloud",
@@ -80,6 +87,7 @@ function startInput() {
     },
     threadId: "thread-allocation-11",
     title: "Implement CA-11",
+    unansweredRequestSeconds: 900,
     turn: {
       commandId: "cloud-turn-start-11",
       messageId: "cloud-message-11",
@@ -185,7 +193,7 @@ it.effect("starts Codex through ordinary project and turn orchestration commands
   }),
 );
 
-it.effect("uses ordinary turn and interrupt commands for a live worker thread", () =>
+it.effect("uses ordinary controls for a live worker thread", () =>
   Effect.gen(function* () {
     const { commands, execution } = yield* fixture([readyCodex]);
     const input = startInput();
@@ -205,16 +213,184 @@ it.effect("uses ordinary turn and interrupt commands for a live worker thread", 
       turnId: TurnId.make("provider-turn-1"),
       createdAt: "2026-09-17T05:02:00.000Z",
     });
+    yield* execution.approve({
+      commandId: CommandId.make("cloud-approval-11"),
+      threadId: input.threadId,
+      requestId: ApprovalRequestId.make("approval-11"),
+      decision: "accept",
+      createdAt: "2026-09-17T05:03:00.000Z",
+    });
+    yield* execution.answer({
+      commandId: CommandId.make("cloud-answer-11"),
+      threadId: input.threadId,
+      requestId: ApprovalRequestId.make("question-11"),
+      answers: { choice: "Run the focused test" },
+      createdAt: "2026-09-17T05:04:00.000Z",
+    });
 
     expect(commands.map((command) => command.type)).toEqual([
       "thread.turn.start",
       "thread.turn.interrupt",
+      "thread.approval.respond",
+      "thread.user-input.respond",
     ]);
     expect(commands[0]).toMatchObject({
       message: { text: "Now run the focused test." },
       modelSelection: { instanceId: "codex-cloud", model: "gpt-5.6-sol" },
     });
     expect(commands[1]).toMatchObject({ turnId: "provider-turn-1" });
+    expect(commands[2]).toMatchObject({ requestId: "approval-11", decision: "accept" });
+    expect(commands[3]).toMatchObject({
+      requestId: "question-11",
+      answers: { choice: "Run the focused test" },
+    });
+  }),
+);
+
+it.effect("declines unanswered approvals without racing a second client's response", () =>
+  Effect.gen(function* () {
+    const events = yield* PubSub.unbounded<OrchestrationEvent>();
+    const commands: OrchestrationCommand[] = [];
+    const orchestration = OrchestrationEngineService.of({
+      readEvents: () => Stream.empty,
+      readThreadEvents: () => Stream.empty,
+      getThreadReplayStats: () => Effect.die("unused"),
+      dispatch: (command) =>
+        Effect.sync(() => {
+          commands.push(command);
+          return { sequence: commands.length };
+        }),
+      streamDomainEvents: Stream.fromPubSub(events),
+      subscribeDomainEvents: PubSub.subscribe(events).pipe(
+        Effect.map((subscription) => Stream.fromSubscription(subscription)),
+      ),
+      latestSequence: Effect.succeed(0),
+    });
+    const executionLayer = layer.pipe(
+      Layer.provide(
+        Layer.merge(
+          Layer.succeed(OrchestrationEngineService, orchestration),
+          makeProviderRegistryLayer([readyCodex]),
+        ),
+      ),
+    );
+
+    yield* Effect.scoped(
+      Effect.gen(function* () {
+        const execution = yield* CloudProviderExecution;
+        const input = decodeStartInput({
+          ...startInput(),
+          unansweredRequestSeconds: 5,
+        });
+        yield* execution.start(input);
+        yield* PubSub.publish(
+          events,
+          decodeEvent({
+            sequence: 3,
+            eventId: EventId.make("cloud-approval-requested"),
+            aggregateKind: "thread",
+            aggregateId: input.threadId,
+            occurredAt: "2026-09-17T05:02:00.000Z",
+            commandId: null,
+            causationEventId: null,
+            correlationId: null,
+            metadata: {},
+            type: "thread.activity-appended",
+            payload: {
+              threadId: input.threadId,
+              activity: {
+                id: EventId.make("cloud-approval-activity"),
+                tone: "approval",
+                kind: "approval.requested",
+                summary: "Command approval requested",
+                payload: { requestId: "approval-timeout-1" },
+                turnId: null,
+                createdAt: "2026-09-17T05:02:00.000Z",
+              },
+            },
+          }),
+        );
+        yield* Effect.yieldNow;
+        yield* TestClock.adjust("5 seconds");
+        yield* Effect.yieldNow;
+
+        yield* PubSub.publish(
+          events,
+          decodeEvent({
+            sequence: 4,
+            eventId: EventId.make("cloud-approval-requested-2"),
+            aggregateKind: "thread",
+            aggregateId: input.threadId,
+            occurredAt: "2026-09-17T05:03:00.000Z",
+            commandId: null,
+            causationEventId: null,
+            correlationId: null,
+            metadata: {},
+            type: "thread.activity-appended",
+            payload: {
+              threadId: input.threadId,
+              activity: {
+                id: EventId.make("cloud-approval-activity-2"),
+                tone: "approval",
+                kind: "approval.requested",
+                summary: "Command approval requested",
+                payload: { requestId: "approval-answered-2" },
+                turnId: null,
+                createdAt: "2026-09-17T05:03:00.000Z",
+              },
+            },
+          }),
+        );
+        yield* Effect.yieldNow;
+        yield* execution.approve({
+          commandId: CommandId.make("second-client-approval"),
+          threadId: input.threadId,
+          requestId: ApprovalRequestId.make("approval-answered-2"),
+          decision: "accept",
+          createdAt: "2026-09-17T05:03:01.000Z",
+        });
+        yield* PubSub.publish(
+          events,
+          decodeEvent({
+            sequence: 5,
+            eventId: EventId.make("cloud-approval-response-2"),
+            aggregateKind: "thread",
+            aggregateId: input.threadId,
+            occurredAt: "2026-09-17T05:03:01.000Z",
+            commandId: CommandId.make("second-client-approval"),
+            causationEventId: null,
+            correlationId: CommandId.make("second-client-approval"),
+            metadata: {},
+            type: "thread.approval-response-requested",
+            payload: {
+              threadId: input.threadId,
+              requestId: "approval-answered-2",
+              decision: "accept",
+              createdAt: "2026-09-17T05:03:01.000Z",
+            },
+          }),
+        );
+        yield* Effect.yieldNow;
+        yield* TestClock.adjust("5 seconds");
+        yield* Effect.yieldNow;
+      }).pipe(Effect.provide(executionLayer)),
+    );
+
+    expect(
+      commands.filter(
+        (command) => command.type === "thread.approval.respond" && command.decision === "decline",
+      ),
+    ).toEqual([
+      expect.objectContaining({
+        requestId: "approval-timeout-1",
+        decision: "decline",
+      }),
+    ]);
+    expect(commands.at(-1)).toMatchObject({
+      type: "thread.approval.respond",
+      requestId: "approval-answered-2",
+      decision: "accept",
+    });
   }),
 );
 
