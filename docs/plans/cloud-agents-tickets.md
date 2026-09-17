@@ -287,6 +287,9 @@ Acceptance criteria:
 
 Dependencies: CA-01, CA-07, CA-09, CA-10.
 
+Status: Done on 17 September 2026 in
+[PR #11](https://github.com/Atheal9k/cloud-agents/pull/11).
+
 Description: Run real multi-turn work through the existing provider adapter, rather than an arbitrary shell command masquerading as an agent session.
 
 Acceptance criteria:
