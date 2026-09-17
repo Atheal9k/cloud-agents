@@ -147,6 +147,9 @@ Acceptance criteria:
 
 Dependencies: CA-01.
 
+Status: Done on 17 September 2026 in
+[PR #3](https://github.com/Atheal9k/cloud-agents/pull/3).
+
 Description: Adapt the reference OpenTofu source for one permanent Linux host, disposable web workers, retained data, and an authenticated access route.
 
 Acceptance criteria:
