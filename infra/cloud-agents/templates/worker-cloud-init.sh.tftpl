@@ -1,0 +1,54 @@
+#!/bin/bash
+set -euo pipefail
+
+install -d -m 0750 /etc/t3 /var/lib/t3-worker
+
+cat >/etc/t3/worker.env <<'ENV'
+AWS_REGION=${aws_region}
+T3_ARTIFACT_BUCKET=${artifact_bucket}
+T3_WORKER_PROFILE=${profile_name}
+T3_WORKER_PORT=${service_port}
+ENV
+chmod 0640 /etc/t3/worker.env
+
+cat >/etc/systemd/system/cloud-agent-worker.service <<'UNIT'
+[Unit]
+Description=T3 disposable cloud worker
+After=network-online.target
+Wants=network-online.target
+ConditionPathIsExecutable=/opt/t3/bin/cloud-agent-worker
+
+[Service]
+Type=simple
+User=root
+EnvironmentFile=/etc/t3/worker.env
+ExecStart=/opt/t3/bin/cloud-agent-worker
+Restart=on-failure
+RestartSec=5s
+NoNewPrivileges=yes
+PrivateTmp=yes
+ProtectSystem=strict
+ReadWritePaths=/var/lib/t3-worker /tmp
+
+[Install]
+WantedBy=multi-user.target
+UNIT
+
+cat >/etc/systemd/system/cloud-agent-hard-ttl.service <<'UNIT'
+[Unit]
+Description=Terminate this disposable worker after its hard lifetime
+
+[Service]
+Type=oneshot
+ExecStart=/usr/bin/systemd-run --unit cloud-agent-hard-stop --on-active=${ttl_minutes}m /sbin/shutdown -h now
+RemainAfterExit=yes
+
+[Install]
+WantedBy=multi-user.target
+UNIT
+
+systemctl daemon-reload
+systemctl enable --now amazon-ssm-agent.service
+systemctl enable --now cloud-agent-hard-ttl.service
+systemctl enable cloud-agent-worker.service
+systemctl start cloud-agent-worker.service || true
