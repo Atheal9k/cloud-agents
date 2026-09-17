@@ -422,6 +422,8 @@ Acceptance criteria:
 
 Dependencies: CA-07, CA-10.
 
+Status: Done on 17 September 2026 in [PR #19](https://github.com/Atheal9k/cloud-agents/pull/19).
+
 Description: Measure startup and avoid repeating expensive tool/dependency preparation. This ticket moves out of optional expansion into the first release.
 
 Acceptance criteria:
