@@ -405,6 +405,8 @@ Acceptance criteria:
 
 Dependencies: CA-09, CA-10, CA-11, CA-19.
 
+Status: Done on 17 September 2026 in [PR #18](https://github.com/Atheal9k/cloud-agents/pull/18).
+
 Description: Use an authenticated web route for ordinary frontend inspection. Viewing and interacting with the app does not start DCV automatically.
 
 Acceptance criteria:
