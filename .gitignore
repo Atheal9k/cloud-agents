@@ -38,6 +38,13 @@ artifacts/app-store/screenshots/
 native/**/target/
 node_modules/
 .alchemy/
+**/.terraform/
+*.tfstate
+*.tfstate.*
+*.tfplan
+*.tfvars
+!*.tfvars.example
+infra/cloud-agents/backend.hcl
 *.log
 .env*
 !.env.example

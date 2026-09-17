@@ -1,0 +1,21 @@
+aws_region = "us-west-1"
+
+# Keep this empty until CA-04 configures application authentication and TLS.
+# Then add only the trusted networks that should reach the controller.
+controller_ingress_cidrs = []
+
+controller_instance_type        = "t3.small"
+controller_root_volume_size_gib = 20
+controller_data_volume_size_gib = 40
+
+worker_default_ttl_minutes = 120
+worker_profiles = {
+  linux-web = {
+    instance_type        = "t3.medium"
+    root_volume_size_gib = 30
+    architecture         = "x86_64"
+    capabilities         = ["coding", "web-preview"]
+  }
+}
+
+artifact_retention_days = 30
