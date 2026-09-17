@@ -38,6 +38,7 @@ source alone does not explain. Most code changes do not need an internal documen
 - [Providers](./internals/providers.md)
 - [Model classification](./internals/model-manifest.md)
 - [Remote environments](./internals/remote.md)
+- [Cloud agent execution ownership](./internals/cloud-agent-execution.md)
 - [Server updates](./internals/server-updates.md)
 - [Resource telemetry](./internals/resource-telemetry.md)
 - [Product analytics](./internals/product-analytics.md)
