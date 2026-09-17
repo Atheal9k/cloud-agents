@@ -220,6 +220,8 @@ Acceptance criteria:
 
 Dependencies: CA-01, CA-03, CA-06.
 
+Status: Done on 17 September 2026 in [PR #7](https://github.com/Atheal9k/cloud-agents/pull/7).
+
 Description: Preinstall the selected T3 runtime, provider, and common build tools in a versioned image. Avoid downloading the entire toolchain for every run.
 
 Acceptance criteria:
