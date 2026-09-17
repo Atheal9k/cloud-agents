@@ -330,8 +330,11 @@ function CloudRunDialogForEnvironment(props: {
 
   return (
     <Dialog open={open} onOpenChange={setOpen}>
-      <DialogPopup className="max-h-[calc(100dvh-2rem)] w-[min(720px,calc(100vw-2rem))] max-w-3xl overflow-y-auto">
-        <form onSubmit={(event) => void launch(event)}>
+      <DialogPopup className="w-[min(720px,calc(100vw-2rem))] max-w-3xl overflow-hidden">
+        <form
+          className="flex max-h-[calc(100dvh-2rem)] min-h-0 flex-col max-sm:max-h-[calc(100dvh-3rem)]"
+          onSubmit={(event) => void launch(event)}
+        >
           <DialogHeader>
             <div className="flex items-center gap-2">
               <CloudIcon className="size-5" />
@@ -342,7 +345,7 @@ function CloudRunDialogForEnvironment(props: {
               app disconnects.
             </DialogDescription>
           </DialogHeader>
-          <DialogPanel className="space-y-5">
+          <DialogPanel className="space-y-5" scrollAreaClassName="flex-1">
             {snapshot === null ? (
               <div className="rounded-lg border bg-muted/24 p-3 text-sm text-muted-foreground">
                 Connecting to the cloud controller...

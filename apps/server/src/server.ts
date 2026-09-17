@@ -318,6 +318,8 @@ const CloudRunPublicationLayerLive = CloudRunPublication.layer.pipe(
   Layer.provideMerge(CloudAllocationControllerLayerLive),
 );
 
+const CloudRunResultsLayerLive = CloudRunResults.layer.pipe(Layer.provide(ProcessRunner.layer));
+
 const VcsDriverRegistryLayerLive = VcsDriverRegistry.layer.pipe(
   Layer.provide(VcsProjectConfig.layer),
 );
@@ -593,7 +595,7 @@ const RuntimeCoreDependenciesBaseLive = ReactorLayerLive.pipe(
 );
 
 const RuntimeCoreDependenciesLive = CloudRunControl.layer.pipe(
-  Layer.provideMerge(CloudRunResults.layer),
+  Layer.provideMerge(CloudRunResultsLayerLive),
   Layer.provideMerge(CloudProviderExecution.layer),
   Layer.provideMerge(CloudAllocationControllerLayerLive),
   Layer.provideMerge(RuntimeCoreDependenciesBaseLive),
