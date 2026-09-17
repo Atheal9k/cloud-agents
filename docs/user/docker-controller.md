@@ -69,6 +69,35 @@ explicit `OPENAI_API_KEY_FILE`, `ANTHROPIC_API_KEY_FILE`, or `AWS_SHARED_CREDENT
 readable. Restrict the host directory to the account that runs Docker. Compose environment values
 and `docker inspect` are not suitable places for secret values.
 
+### Cloud Git and GitHub credentials
+
+Store the publication SSH key and GitHub API token in AWS Secrets Manager. Give the controller's
+AWS identity access to those two secrets, then set references, not values, before starting
+Compose:
+
+```bash
+export T3CODE_CLOUD_GIT_SSH_SECRET_REF=cloud-agent-victor-key
+export T3CODE_CLOUD_GITHUB_TOKEN_SECRET_REF=cloud-agent-github-token
+docker compose -f compose.yaml -f compose.credentials.yaml up -d --wait
+```
+
+The SSH secret may be a raw, unencrypted OpenSSH private key or a JSON object with exactly one
+string field containing that key. JSON escaped newlines and CRLF keys are normalized before use.
+The GitHub secret may likewise be a raw token or a one-field JSON object. The controller reads
+Secrets Manager for each operation, so rotation applies without rebuilding the image.
+
+Clone and push use a temporary run directory below the controller's protected state. The Git
+remote is supplied by the controller, SSH is forced through `ssh.github.com` on port 443, and the
+wrapper accepts only GitHub's pinned Ed25519 host key. No SSH agent is started or passed to task
+code. The controller removes the run directory after the operation. Draft PR creation passes the
+configured token directly to `gh api`; it does not read a browser or initiating client's GitHub
+login. The controller machine and container must stay online until publication finishes.
+
+Grant the GitHub token `Pull requests: write` for the target repository. If
+`cloud-agent-victor-key` is an account SSH key, its Git access is as broad as that account's
+repository access even though each run receives only its configured repository operation. A
+repository deploy key is narrower when one repository is enough.
+
 The base image deliberately has no provider CLI. Cloud tasks run on workers. To run a provider
 inside this controller instead, derive another image that installs a pinned provider CLI, supply
 its credentials through the protected mount, and explicitly mount one workspace:
@@ -78,9 +107,9 @@ export T3CODE_WORKSPACE=/absolute/path/to/project
 docker compose -f compose.yaml -f compose.workspace.yaml up -d --wait
 ```
 
-On Linux, the mounted workspace must be writable by uid `10001`. Git and OpenSSH are already in
-the controller image. Any provider-specific binary and its runtime dependencies belong in the
-derived image, not in the workspace or controller state volume.
+On Linux, the mounted workspace must be writable by uid `10001`. Git, OpenSSH, the AWS CLI, and
+the GitHub CLI are already in the controller image. Any provider-specific binary and its runtime
+dependencies belong in the derived image, not in the workspace or controller state volume.
 
 ## Backup and restore
 

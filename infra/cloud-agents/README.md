@@ -31,6 +31,12 @@ CloudFormation retains the state bucket if its stack is deleted. `backend.hcl`, 
 
 Copy `terraform.tfvars.example` to `terraform.tfvars` and change only non-secret deployment settings. Image IDs, instance shapes, disks, CIDRs, TTL, artifact retention, and Linux worker profiles are configurable. Do not place credentials or provider tokens in variables.
 
+For Git publication, add the full Secrets Manager ARNs for the SSH key and GitHub API token to
+`controller_credential_secret_arns`. This grants `DescribeSecret` and `GetSecretValue` only to
+the controller role. The worker role has no access to either master credential. Configure their
+names or ARNs at controller runtime with `T3CODE_CLOUD_GIT_SSH_SECRET_REF` and
+`T3CODE_CLOUD_GITHUB_TOKEN_SECRET_REF`; do not put secret values in OpenTofu variables.
+
 The controller starts with no public ingress. CA-04 owns the authenticated application route and TLS setup. Until then, add only a trusted owner CIDR if you need to test port 443.
 
 ```powershell

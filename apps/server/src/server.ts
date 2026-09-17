@@ -130,6 +130,7 @@ import * as CloudManagedEndpointRuntime from "./cloud/ManagedEndpointRuntime.ts"
 import * as CloudCliTokenManager from "./cloud/CliTokenManager.ts";
 import * as CloudCliState from "./cloud/CliState.ts";
 import * as CloudAllocationController from "./cloud/CloudAllocationController.ts";
+import * as CloudGitCredentials from "./cloud/CloudGitCredentials.ts";
 import * as ServerSelfUpdate from "./cloud/selfUpdate.ts";
 import * as DesktopAppUpdate from "./desktopUpdate/DesktopAppUpdate.ts";
 import * as ServiceLauncherClient from "./cloud/serviceLauncherClient.ts";
@@ -274,6 +275,10 @@ const PersistenceLayerLive = Layer.empty.pipe(Layer.provideMerge(SqlitePersisten
 
 const CloudAllocationControllerLayerLive = CloudAllocationController.layer.pipe(
   Layer.provide(PersistenceLayerLive),
+);
+
+const CloudGitCredentialsLayerLive = CloudGitCredentials.layer.pipe(
+  Layer.provide(ProcessRunner.layer),
 );
 
 const VcsDriverRegistryLayerLive = VcsDriverRegistry.layer.pipe(
@@ -544,6 +549,7 @@ const RuntimeCoreDependenciesLive = ReactorLayerLive.pipe(
         Layer.provide(ExternalLauncher.layer),
       ),
       CloudManagedEndpointRuntimeLive,
+      CloudGitCredentialsLayerLive,
     ),
   ),
 );
