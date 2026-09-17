@@ -109,7 +109,10 @@ function startInput() {
   });
 }
 
-function fixture(providers: ReadonlyArray<ServerProviderType>) {
+function fixture(
+  providers: ReadonlyArray<ServerProviderType>,
+  options?: { readonly maxInputWaitSeconds?: number },
+) {
   return Effect.gen(function* () {
     const commands: OrchestrationCommand[] = [];
     const orchestration = OrchestrationEngineService.of({
@@ -125,7 +128,7 @@ function fixture(providers: ReadonlyArray<ServerProviderType>) {
       subscribeDomainEvents: Effect.succeed(Stream.empty),
       latestSequence: Effect.succeed(0),
     });
-    const execution = yield* make().pipe(
+    const execution = yield* make(options).pipe(
       Effect.provideService(OrchestrationEngineService, orchestration),
       Effect.provide(makeProviderRegistryLayer(providers)),
     );
@@ -190,6 +193,16 @@ it.effect("starts Codex through ordinary project and turn orchestration commands
         createdAt: "2026-09-17T05:01:00.000Z",
       },
     ]);
+  }),
+);
+
+it.effect("rejects input-wait policies above the worker limit before starting a turn", () =>
+  Effect.gen(function* () {
+    const { commands, execution } = yield* fixture([readyCodex], { maxInputWaitSeconds: 899 });
+    const error = yield* execution.start(startInput()).pipe(Effect.flip);
+
+    expect(error.reason).toBe("invalid-execution-policy");
+    expect(commands).toEqual([]);
   }),
 );
 

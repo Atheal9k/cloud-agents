@@ -269,6 +269,7 @@ import {
 } from "./sourceControl.ts";
 import { VcsError } from "./vcs.ts";
 import {
+  CloudAdmissionControlInput,
   CloudAllocationControllerError,
   CloudAllocationSnapshot,
   RunAllocation,
@@ -391,6 +392,7 @@ export const WS_METHODS = {
   cloudInstallRelayClient: "cloud.installRelayClient",
   cloudAllocationDispatch: "cloud.allocations.dispatch",
   cloudAllocationList: "cloud.allocations.list",
+  cloudAllocationSetAdmission: "cloud.allocations.setAdmission",
 
   // Pull request methods
   pullRequestsList: "pullRequests.list",
@@ -675,6 +677,12 @@ const WsCloudAllocationDispatchRpc = Rpc.make(WS_METHODS.cloudAllocationDispatch
 
 const WsCloudAllocationListRpc = Rpc.make(WS_METHODS.cloudAllocationList, {
   payload: Schema.Struct({}),
+  success: CloudAllocationSnapshot,
+  error: Schema.Union([CloudAllocationControllerError, EnvironmentAuthorizationError]),
+});
+
+const WsCloudAllocationSetAdmissionRpc = Rpc.make(WS_METHODS.cloudAllocationSetAdmission, {
+  payload: CloudAdmissionControlInput,
   success: CloudAllocationSnapshot,
   error: Schema.Union([CloudAllocationControllerError, EnvironmentAuthorizationError]),
 });
@@ -1424,6 +1432,7 @@ export const WsRpcGroup = RpcGroup.make(
   WsCloudInstallRelayClientRpc,
   WsCloudAllocationDispatchRpc,
   WsCloudAllocationListRpc,
+  WsCloudAllocationSetAdmissionRpc,
   WsPullRequestsListRpc,
   WsPullRequestsListStatsRpc,
   WsPullRequestsSummaryRpc,

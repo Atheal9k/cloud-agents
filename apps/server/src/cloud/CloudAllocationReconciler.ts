@@ -13,7 +13,6 @@ import * as CloudWorkerProvider from "./CloudWorkerProvider.ts";
 import type { CloudWorkerResource } from "./CloudWorkerProvider.ts";
 
 const MAX_LAUNCH_FAILURES = 3;
-const DEFAULT_REVIEW_GRACE_MILLIS = 15 * 60 * 1_000;
 const decodeCommand = Schema.decodeUnknownEffect(RunAllocationCommand);
 
 function commandId(
@@ -74,8 +73,6 @@ export const make = Effect.fn("CloudAllocationReconciler.make")(function* (input
   const controller = yield* CloudAllocationController.CloudAllocationController;
   const registrations = yield* CloudWorkerRegistration.CloudWorkerRegistration;
   const workers = yield* CloudWorkerProvider.CloudWorkerProvider;
-  const reviewGraceMillis = input?.reviewGraceMillis ?? DEFAULT_REVIEW_GRACE_MILLIS;
-
   const dispatch = Effect.fn("CloudAllocationReconciler.dispatch")(function* (
     allocation: RunAllocation,
     occurredAt: string,
@@ -166,6 +163,12 @@ export const make = Effect.fn("CloudAllocationReconciler.make")(function* (input
       liveResources,
       (resource) =>
         Effect.gen(function* () {
+          yield* Effect.logInfo("Cleaning up cloud worker resource.", {
+            allocationId: allocation.id,
+            attempt: allocation.attempt,
+            instanceId: resource.instanceId,
+            workerState: resource.state,
+          });
           if (resource.registrationCredentialPresent) {
             yield* workers.revokeRegistrationCredential(resource.instanceId);
           }
@@ -179,6 +182,8 @@ export const make = Effect.fn("CloudAllocationReconciler.make")(function* (input
 
   const reconcileAllocation = Effect.fn("CloudAllocationReconciler.reconcileAllocation")(function* (
     allocation: RunAllocation,
+    reviewGraceMillis: number,
+    maxInputWaitSeconds: number,
   ) {
     const now = yield* DateTime.now;
     const occurredAt = DateTime.formatIso(now);
@@ -208,6 +213,15 @@ export const make = Effect.fn("CloudAllocationReconciler.make")(function* (input
             allocation,
             occurredAt,
             "The worker launch did not start before its launch deadline.",
+          );
+          return;
+        }
+        const instanceType = allocation.profile.instanceType;
+        if (instanceType === undefined) {
+          yield* failLaunch(
+            allocation,
+            occurredAt,
+            "The allocation does not record a worker instance type.",
           );
           return;
         }
@@ -283,12 +297,23 @@ export const make = Effect.fn("CloudAllocationReconciler.make")(function* (input
           return;
         }
 
+        const instanceType = allocation.profile.instanceType;
+        if (instanceType === undefined) {
+          yield* failLaunch(
+            allocation,
+            occurredAt,
+            "The allocation does not record a worker instance type.",
+          );
+          return;
+        }
         const registrationCredential = yield* registrations.issueCredential(allocation);
         const launched = yield* workers
           .launch({
             allocationId: allocation.id,
             attempt: allocation.attempt,
             expiresAt: allocation.deadlines.expiresAt,
+            instanceType,
+            maxInputWaitSeconds,
             launchTemplate: allocation.allocationState.launchTemplate,
             registrationCredential,
           })
@@ -396,7 +421,11 @@ export const make = Effect.fn("CloudAllocationReconciler.make")(function* (input
         allocation.cleanupState.status !== "not-requested",
     );
     const next = leased ?? pending[0];
-    if (next !== undefined) yield* reconcileAllocation(next);
+    if (next !== undefined) {
+      const reviewGraceMillis =
+        input?.reviewGraceMillis ?? snapshot.limits.previewGraceSeconds * 1_000;
+      yield* reconcileAllocation(next, reviewGraceMillis, snapshot.limits.maxInputWaitSeconds);
+    }
   });
 
   const removeAbandonedResource = Effect.fn("CloudAllocationReconciler.removeAbandonedResource")(

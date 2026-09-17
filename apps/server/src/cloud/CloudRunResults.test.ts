@@ -101,7 +101,7 @@ function fencedAllocation(baseCommit: string): RunAllocation {
       baseCommit,
       branch: "cloud/run/result",
     },
-    profile: { id: "linux-web", os: "linux", arch: "x64" },
+    profile: { id: "linux-web", os: "linux", arch: "x64", instanceType: "t3.medium" },
     deadlines: {
       launchBy: DEADLINE,
       bootBy: DEADLINE,

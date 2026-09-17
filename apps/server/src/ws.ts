@@ -2669,6 +2669,12 @@ const makeWsRpcLayer = (
           observeRpcEffect(WS_METHODS.cloudAllocationList, cloudAllocations.snapshot, {
             "rpc.aggregate": "cloud-allocation",
           }),
+        [WS_METHODS.cloudAllocationSetAdmission]: (input) =>
+          observeRpcEffect(
+            WS_METHODS.cloudAllocationSetAdmission,
+            cloudAllocations.setAdmission(input),
+            { "rpc.aggregate": "cloud-allocation" },
+          ),
         [WS_METHODS.pullRequestsList]: (input) =>
           observeRpcEffect(WS_METHODS.pullRequestsList, pullRequests.list(input), {
             "rpc.aggregate": "pull-requests",

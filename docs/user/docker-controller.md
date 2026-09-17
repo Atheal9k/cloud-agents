@@ -42,6 +42,21 @@ launch template created by `infra/cloud-agents`. Their defaults are `us-west-1` 
 identity in the credential overlay must be allowed to describe launch templates and instances,
 launch workers with the project and worker tags, and terminate workers carrying those tags.
 
+The personal controller admits one active worker. Configure its waiting queue and time limits with
+`T3CODE_CLOUD_MAX_QUEUE_DEPTH`, `T3CODE_CLOUD_MAX_RUN_SECONDS`,
+`T3CODE_CLOUD_MAX_INPUT_WAIT_SECONDS`, and `T3CODE_CLOUD_PREVIEW_GRACE_SECONDS`. The defaults are
+8 waiting jobs, a 2-hour run, a 15-minute unanswered input request, and a 15-minute preview grace
+period. Requests with a longer run or an unapproved instance type fail before AWS launches
+anything.
+
+`T3CODE_CLOUD_WORKER_PRICES` is a comma-separated allowlist in `instance-type=hourly-usd` form.
+For example, `t3.medium=0.0496` allows only `t3.medium` and estimates one worker hour at $0.0496.
+Update the value when the region, instance type, operating system, or AWS price changes. The
+controller reports compute from this assumption. It reports storage, provider use, and streaming
+transfer separately when their costs are unknown. The estimate excludes taxes and discounts and
+does not turn an AWS billing alert into a live spending cap. AWS documents current price-list
+lookups in its [Price List API guide](https://docs.aws.amazon.com/awsaccountbilling/latest/aboutv2/price-changes.html).
+
 Set two HTTPS routes before launching a worker:
 
 ```bash

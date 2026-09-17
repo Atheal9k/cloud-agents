@@ -67,6 +67,7 @@ export const RPC_REQUIRED_SCOPES = {
   [WS_METHODS.cloudInstallRelayClient]: AuthRelayWriteScope,
   [WS_METHODS.cloudAllocationDispatch]: AuthOrchestrationOperateScope,
   [WS_METHODS.cloudAllocationList]: AuthOrchestrationReadScope,
+  [WS_METHODS.cloudAllocationSetAdmission]: AuthOrchestrationOperateScope,
   [WS_METHODS.pullRequestsList]: AuthOrchestrationReadScope,
   [WS_METHODS.pullRequestsListStats]: AuthOrchestrationReadScope,
   [WS_METHODS.pullRequestsSummary]: AuthOrchestrationReadScope,

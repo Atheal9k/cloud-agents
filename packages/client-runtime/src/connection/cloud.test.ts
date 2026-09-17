@@ -11,7 +11,7 @@ it("turns a current routed worker into the ordinary bearer connection shape", ()
     id: "allocation-1",
     attempt: 1,
     target: { repository: "t3tools/t3code", baseCommit: "abc123", branch: "ca-09" },
-    profile: { id: "linux-web", os: "linux", arch: "x64" },
+    profile: { id: "linux-web", os: "linux", arch: "x64", instanceType: "t3.medium" },
     deadlines: {
       launchBy: "2026-09-17T03:05:00.000Z",
       bootBy: "2026-09-17T03:10:00.000Z",
@@ -62,7 +62,7 @@ it("does not publish a connection after cleanup starts", () => {
     id: "allocation-1",
     attempt: 1,
     target: { repository: "t3tools/t3code", baseCommit: "abc123", branch: "ca-09" },
-    profile: { id: "linux-web", os: "linux", arch: "x64" },
+    profile: { id: "linux-web", os: "linux", arch: "x64", instanceType: "t3.medium" },
     deadlines: {
       launchBy: "2026-09-17T03:05:00.000Z",
       bootBy: "2026-09-17T03:10:00.000Z",

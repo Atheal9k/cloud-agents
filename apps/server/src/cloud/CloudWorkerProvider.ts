@@ -69,6 +69,8 @@ export class CloudWorkerProvider extends Context.Service<
       readonly allocationId: RunAllocationId;
       readonly attempt: RunAllocationAttempt;
       readonly expiresAt: string;
+      readonly instanceType: string;
+      readonly maxInputWaitSeconds: number;
       readonly launchTemplate: RunLaunchTemplate;
       readonly registrationCredential: string;
     }) => Effect.Effect<CloudWorkerInstance, CloudWorkerProviderError>;
@@ -323,6 +325,7 @@ export const make = Effect.fn("CloudWorkerProvider.make")(function* (input: {
         { Key: "CloudAgentAllocationId", Value: launchInput.allocationId },
         { Key: "CloudAgentAttempt", Value: String(launchInput.attempt) },
         { Key: "CloudAgentExpiresAtEpoch", Value: String(Math.floor(expiresAtMillis / 1000)) },
+        { Key: "CloudAgentMaxInputWaitSeconds", Value: String(launchInput.maxInputWaitSeconds) },
         { Key: "CloudAgentControllerUrl", Value: controllerUrl },
         { Key: "CloudAgentWorkerRouteUrl", Value: workerRouteUrl },
         { Key: "CloudAgentRegistrationCredential", Value: launchInput.registrationCredential },
@@ -331,6 +334,8 @@ export const make = Effect.fn("CloudWorkerProvider.make")(function* (input: {
         "run-instances",
         "--launch-template",
         `LaunchTemplateId=${launchInput.launchTemplate.id},Version=${launchInput.launchTemplate.version}`,
+        "--instance-type",
+        launchInput.instanceType,
         "--count",
         "1",
         "--client-token",
