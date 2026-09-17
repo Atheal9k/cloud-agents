@@ -33,6 +33,8 @@ const PullRequestResponse = Schema.Struct({
   number: Schema.Int,
   html_url: Schema.URLFromString,
 });
+const PullRequestListResponse = Schema.Array(PullRequestResponse);
+const GitCommit = Schema.String.check(Schema.isPattern(/^[0-9a-f]{40,64}$/));
 
 export type CloudGitRepository = typeof Repository.Type;
 export type CloudGitBranch = typeof Branch.Type;
@@ -49,6 +51,7 @@ const ErrorReason = Schema.Literals([
   "host-key-failed",
   "github-failed",
   "invalid-github-response",
+  "push-rejected",
 ]);
 
 export class CloudGitCredentialError extends Schema.TaggedError<CloudGitCredentialError>()(
@@ -84,6 +87,17 @@ export class CloudGitCredentials extends Context.Service<
       readonly branch: string;
       readonly cwd: string;
     }) => Effect.Effect<void, CloudGitCredentialError>;
+    readonly readBranch: (input: {
+      readonly runId: string;
+      readonly repository: string;
+      readonly branch: string;
+    }) => Effect.Effect<string | null, CloudGitCredentialError>;
+    readonly findPullRequest: (input: {
+      readonly runId: string;
+      readonly repository: string;
+      readonly base: string;
+      readonly head: string;
+    }) => Effect.Effect<CloudGitPullRequest | null, CloudGitCredentialError>;
     readonly createDraftPullRequest: (input: {
       readonly runId: string;
       readonly repository: string;
@@ -127,7 +141,7 @@ function classifySecretReadFailure(stderr: string): CloudGitCredentialError {
 
 function classifyGitFailure(
   stderr: string,
-  operation: "clone" | "fetch" | "push",
+  operation: "clone" | "fetch" | "inspect" | "push",
 ): CloudGitCredentialError {
   const normalized = stderr.toLowerCase();
   if (normalized.includes("host key verification failed")) {
@@ -145,10 +159,24 @@ function classifyGitFailure(
       "GitHub rejected the configured SSH credential. The key may be revoked or no longer authorized for this repository.",
     );
   }
+  if (
+    operation === "push" &&
+    (normalized.includes("non-fast-forward") ||
+      normalized.includes("fetch first") ||
+      normalized.includes("[rejected]"))
+  ) {
+    return error(
+      "push-rejected",
+      "GitHub rejected the branch update because the remote branch changed.",
+    );
+  }
   return error("git-failed", `The trusted Git ${operation} failed.`);
 }
 
-function classifyGitHubFailure(stderr: string): CloudGitCredentialError {
+function classifyGitHubFailure(
+  stderr: string,
+  operation: "inspect" | "create",
+): CloudGitCredentialError {
   const normalized = stderr.toLowerCase();
   if (normalized.includes("401") || normalized.includes("bad credentials")) {
     return error(
@@ -163,10 +191,17 @@ function classifyGitHubFailure(stderr: string): CloudGitCredentialError {
   ) {
     return error(
       "permission-denied",
-      "The controller GitHub credential cannot create a pull request for this repository.",
+      operation === "create"
+        ? "The controller GitHub credential cannot create a pull request for this repository."
+        : "The controller GitHub credential cannot inspect pull requests for this repository.",
     );
   }
-  return error("github-failed", "GitHub did not create the draft pull request.");
+  return error(
+    "github-failed",
+    operation === "create"
+      ? "GitHub did not create the draft pull request."
+      : "GitHub did not return the repository's pull requests.",
+  );
 }
 
 function shellQuote(value: string): string {
@@ -208,6 +243,10 @@ const decodeBranch = Schema.decodeUnknownEffect(Branch);
 const decodePullRequestResponse = Schema.decodeUnknownEffect(
   Schema.fromJsonString(PullRequestResponse),
 );
+const decodePullRequestListResponse = Schema.decodeUnknownEffect(
+  Schema.fromJsonString(PullRequestListResponse),
+);
+const decodeGitCommit = Schema.decodeUnknownEffect(GitCommit);
 
 export const make = Effect.fn("CloudGitCredentials.make")(function* (input: {
   readonly credentialRoot: string;
@@ -480,6 +519,129 @@ export const make = Effect.fn("CloudGitCredentials.make")(function* (input: {
       ),
     );
 
+  const readBranch: CloudGitCredentials["Service"]["readBranch"] = (request) =>
+    Effect.gen(function* () {
+      const repository = yield* decodeRepository(request.repository).pipe(
+        Effect.mapError(() => error("git-failed", "The configured GitHub repository is invalid.")),
+      );
+      const branch = yield* decodeBranch(request.branch).pipe(
+        Effect.mapError(() => error("git-failed", "The publication branch is invalid.")),
+      );
+      return yield* withSshCredential(request.runId, ({ gitEnvironment }) =>
+        runner
+          .run({
+            command: "git",
+            args: [
+              "ls-remote",
+              "--heads",
+              "--exit-code",
+              "--",
+              `ssh://git@ssh.github.com:443/${repository}.git`,
+              `refs/heads/${branch}`,
+            ],
+            env: gitEnvironment,
+            timeout: "30 seconds",
+            maxOutputBytes: 64 * 1024,
+          })
+          .pipe(
+            Effect.mapError(() =>
+              error("git-failed", "The controller could not inspect the publication branch."),
+            ),
+            Effect.flatMap((result) => {
+              if (result.code === ChildProcessSpawner.ExitCode(2)) return Effect.succeed(null);
+              if (result.code !== ChildProcessSpawner.ExitCode(0)) {
+                return Effect.fail(classifyGitFailure(result.stderr, "inspect"));
+              }
+              const [commit] = result.stdout.trim().split(/\s+/, 1);
+              return decodeGitCommit(commit).pipe(
+                Effect.mapError(() =>
+                  error(
+                    "git-failed",
+                    "GitHub returned an invalid commit for the publication branch.",
+                  ),
+                ),
+              );
+            }),
+          ),
+      );
+    });
+
+  const findPullRequest: CloudGitCredentials["Service"]["findPullRequest"] = (request) =>
+    Effect.gen(function* () {
+      const repository = yield* decodeRepository(request.repository).pipe(
+        Effect.mapError(() =>
+          error("github-failed", "The configured GitHub repository is invalid."),
+        ),
+      );
+      const [base, head] = yield* Effect.all([
+        decodeBranch(request.base),
+        decodeBranch(request.head),
+      ]).pipe(Effect.mapError(() => error("github-failed", "The pull request branch is invalid.")));
+      const raw = yield* readSecret(input.githubTokenSecretRef, "GitHub API");
+      const token = decodeTokenSecret(raw);
+      if (token === null) {
+        return yield* error(
+          "invalid-secret",
+          "The configured GitHub API secret must contain one token without whitespace.",
+        );
+      }
+      const [owner] = repository.split("/", 1);
+      return yield* withRunDirectory(request.runId, (directory) =>
+        runner
+          .run({
+            command: "gh",
+            args: [
+              "api",
+              "--hostname",
+              "github.com",
+              "--method",
+              "GET",
+              `repos/${repository}/pulls`,
+              "-f",
+              "state=open",
+              "-f",
+              `head=${owner}:${head}`,
+              "-f",
+              `base=${base}`,
+              "-f",
+              "per_page=1",
+            ],
+            env: {
+              GH_HOST: "github.com",
+              GH_TOKEN: token,
+              GITHUB_TOKEN: token,
+              GH_CONFIG_DIR: directory,
+              GH_DEBUG: "",
+            },
+            timeout: "30 seconds",
+            maxOutputBytes: 1024 * 1024,
+          })
+          .pipe(
+            Effect.mapError(() =>
+              error("github-failed", "The controller could not inspect GitHub pull requests."),
+            ),
+            Effect.flatMap((result) =>
+              result.code === ChildProcessSpawner.ExitCode(0)
+                ? decodePullRequestListResponse(result.stdout).pipe(
+                    Effect.map((responses) => {
+                      const response = responses[0];
+                      return response === undefined
+                        ? null
+                        : { number: response.number, url: response.html_url.toString() };
+                    }),
+                    Effect.mapError(() =>
+                      error(
+                        "invalid-github-response",
+                        "GitHub returned an invalid pull request list.",
+                      ),
+                    ),
+                  )
+                : Effect.fail(classifyGitHubFailure(result.stderr, "inspect")),
+            ),
+          ),
+      );
+    });
+
   const createDraftPullRequest: CloudGitCredentials["Service"]["createDraftPullRequest"] = (
     request,
   ) =>
@@ -551,13 +713,20 @@ export const make = Effect.fn("CloudGitCredentials.make")(function* (input: {
                       ),
                     ),
                   )
-                : Effect.fail(classifyGitHubFailure(result.stderr)),
+                : Effect.fail(classifyGitHubFailure(result.stderr, "create")),
             ),
           ),
       );
     });
 
-  return CloudGitCredentials.of({ clone, fetch, push, createDraftPullRequest });
+  return CloudGitCredentials.of({
+    clone,
+    fetch,
+    push,
+    readBranch,
+    findPullRequest,
+    createDraftPullRequest,
+  });
 });
 
 const optionalReference = (name: string) =>

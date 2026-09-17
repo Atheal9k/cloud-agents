@@ -105,6 +105,8 @@ it.layer(NodeServices.layer)("CloudRepositoryPreparation", (it) => {
       clone,
       fetch,
       push: () => Effect.die("push should not run during preparation"),
+      readBranch: () => Effect.die("branch inspection should not run during preparation"),
+      findPullRequest: () => Effect.die("PR inspection should not run during preparation"),
       createDraftPullRequest: () => Effect.die("PR creation should not run during preparation"),
     });
     const preparation = yield* make({ workspaceRoot }).pipe(
