@@ -9,7 +9,9 @@ import {
   ProviderDriverKind,
   ProviderInstanceId,
   ServerProvider,
+  type SharedBrowserError,
   type ServerProvider as ServerProviderType,
+  type ThreadId,
   TurnId,
 } from "@t3tools/contracts";
 import { expect, it } from "@effect/vitest";
@@ -111,7 +113,10 @@ function startInput() {
 
 function fixture(
   providers: ReadonlyArray<ServerProviderType>,
-  options?: { readonly maxInputWaitSeconds?: number },
+  options?: {
+    readonly maxInputWaitSeconds?: number;
+    readonly prepareSharedBrowser?: (threadId: ThreadId) => Effect.Effect<void, SharedBrowserError>;
+  },
 ) {
   return Effect.gen(function* () {
     const commands: OrchestrationCommand[] = [];
@@ -209,6 +214,21 @@ it.effect("starts Codex through ordinary project and turn orchestration commands
         createdAt: "2026-09-17T05:01:00.000Z",
       },
     ]);
+  }),
+);
+
+it.effect("prepares the attempt browser before starting the provider turn", () =>
+  Effect.gen(function* () {
+    let preparedThreadId: ThreadId | null = null;
+    const { execution } = yield* fixture([readyCodex], {
+      prepareSharedBrowser: (threadId) =>
+        Effect.sync(() => {
+          preparedThreadId = threadId;
+        }),
+    });
+
+    yield* execution.start(startInput());
+    expect(preparedThreadId).toBe("thread-allocation-11");
   }),
 );
 

@@ -46,6 +46,7 @@ export * from "./browserProfile.ts";
 export * from "./device.ts";
 export * from "./preview.ts";
 export * from "./previewAutomation.ts";
+export * from "./sharedBrowser.ts";
 export * from "./resourceTelemetry.ts";
 export * from "./usage.ts";
 export * from "./rpc.ts";

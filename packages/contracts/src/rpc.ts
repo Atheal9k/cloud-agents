@@ -278,6 +278,13 @@ import {
   RunAllocation,
   RunAllocationCommand,
 } from "./cloudAllocation.ts";
+import {
+  SharedBrowserError,
+  SharedBrowserGrant,
+  SharedBrowserIssueInput,
+  SharedBrowserReleaseResult,
+  SharedBrowserViewerInput,
+} from "./sharedBrowser.ts";
 
 export const WS_METHODS = {
   // Project registry methods
@@ -397,6 +404,9 @@ export const WS_METHODS = {
   cloudAllocationDispatch: "cloud.allocations.dispatch",
   cloudAllocationList: "cloud.allocations.list",
   cloudAllocationSetAdmission: "cloud.allocations.setAdmission",
+  sharedBrowserIssue: "sharedBrowser.issue",
+  sharedBrowserKeepAlive: "sharedBrowser.keepAlive",
+  sharedBrowserRelease: "sharedBrowser.release",
 
   // Pull request methods
   pullRequestsList: "pullRequests.list",
@@ -689,6 +699,24 @@ const WsCloudAllocationSetAdmissionRpc = Rpc.make(WS_METHODS.cloudAllocationSetA
   payload: CloudAdmissionControlInput,
   success: CloudAllocationSnapshot,
   error: Schema.Union([CloudAllocationControllerError, EnvironmentAuthorizationError]),
+});
+
+const WsSharedBrowserIssueRpc = Rpc.make(WS_METHODS.sharedBrowserIssue, {
+  payload: SharedBrowserIssueInput,
+  success: SharedBrowserGrant,
+  error: Schema.Union([SharedBrowserError, EnvironmentAuthorizationError]),
+});
+
+const WsSharedBrowserKeepAliveRpc = Rpc.make(WS_METHODS.sharedBrowserKeepAlive, {
+  payload: SharedBrowserViewerInput,
+  success: SharedBrowserGrant,
+  error: Schema.Union([SharedBrowserError, EnvironmentAuthorizationError]),
+});
+
+const WsSharedBrowserReleaseRpc = Rpc.make(WS_METHODS.sharedBrowserRelease, {
+  payload: SharedBrowserViewerInput,
+  success: SharedBrowserReleaseResult,
+  error: Schema.Union([SharedBrowserError, EnvironmentAuthorizationError]),
 });
 
 const WsSubscribeCloudAllocationsRpc = Rpc.make(WS_METHODS.subscribeCloudAllocations, {
@@ -1443,6 +1471,9 @@ export const WsRpcGroup = RpcGroup.make(
   WsCloudAllocationDispatchRpc,
   WsCloudAllocationListRpc,
   WsCloudAllocationSetAdmissionRpc,
+  WsSharedBrowserIssueRpc,
+  WsSharedBrowserKeepAliveRpc,
+  WsSharedBrowserReleaseRpc,
   WsPullRequestsListRpc,
   WsPullRequestsListStatsRpc,
   WsPullRequestsSummaryRpc,

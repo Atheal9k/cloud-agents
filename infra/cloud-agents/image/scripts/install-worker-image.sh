@@ -3,8 +3,12 @@ set -euo pipefail
 
 : "${CLAUDE_CODE_VERSION:?CLAUDE_CODE_VERSION is required}"
 : "${CODEX_VERSION:?CODEX_VERSION is required}"
+: "${DCV_ARCHIVE_SHA256:?DCV_ARCHIVE_SHA256 is required}"
+: "${DCV_GPG_KEY_SHA256:?DCV_GPG_KEY_SHA256 is required}"
+: "${DCV_VERSION:?DCV_VERSION is required}"
 : "${IMAGE_VERSION:?IMAGE_VERSION is required}"
 : "${INSTALL_DESKTOP_DEPENDENCIES:?INSTALL_DESKTOP_DEPENDENCIES is required}"
+: "${INSTALL_SHARED_BROWSER:?INSTALL_SHARED_BROWSER is required}"
 : "${NODE_LINUX_X64_SHA256:?NODE_LINUX_X64_SHA256 is required}"
 : "${NODE_VERSION:?NODE_VERSION is required}"
 : "${PROFILE_NAME:?PROFILE_NAME is required}"
@@ -24,6 +28,8 @@ dnf install --assumeyes \
   tar \
   xz
 
+install -d -m 0755 /opt/t3/bin
+
 if [[ "${INSTALL_DESKTOP_DEPENDENCIES}" == "true" ]]; then
   dnf install --assumeyes \
     alsa-lib \
@@ -36,6 +42,51 @@ if [[ "${INSTALL_DESKTOP_DEPENDENCIES}" == "true" ]]; then
     pango \
     xorg-x11-server-Xvfb
 fi
+
+if [[ "${INSTALL_SHARED_BROWSER}" == "true" ]]; then
+  [[ "${INSTALL_DESKTOP_DEPENDENCIES}" == "true" ]] \
+    || { echo "shared browser requires desktop dependencies" >&2; exit 1; }
+  dnf install --assumeyes spal-release
+  dnf install --assumeyes chromium nginx
+  chromium_executable="$(command -v chromium-browser)" \
+    || { echo "SPAL Chromium executable is unavailable" >&2; exit 1; }
+  ln --symbolic "${chromium_executable}" /usr/local/bin/chromium
+
+  dcv_archive="nice-dcv-${DCV_VERSION}-amzn2023-x86_64.tgz"
+  curl --fail --location --proto '=https' --tlsv1.2 \
+    --output /tmp/NICE-GPG-KEY \
+    "https://d1uj6qtbmh3dt5.cloudfront.net/NICE-GPG-KEY"
+  echo "${DCV_GPG_KEY_SHA256}  /tmp/NICE-GPG-KEY" | sha256sum --check --strict
+  rpm --import /tmp/NICE-GPG-KEY
+  rm -f /tmp/NICE-GPG-KEY
+  curl --fail --location --proto '=https' --tlsv1.2 \
+    --output "/tmp/${dcv_archive}" \
+    "https://d1uj6qtbmh3dt5.cloudfront.net/2025.0/Servers/${dcv_archive}"
+  echo "${DCV_ARCHIVE_SHA256}  /tmp/${dcv_archive}" | sha256sum --check --strict
+  install -d -m 0755 /tmp/dcv-packages
+  tar --extract --file "/tmp/${dcv_archive}" --directory /tmp/dcv-packages --strip-components 1
+  dnf install --assumeyes \
+    /tmp/dcv-packages/nice-dcv-server-*.rpm \
+    /tmp/dcv-packages/nice-dcv-web-viewer-*.rpm \
+    /tmp/dcv-packages/nice-xdcv-*.rpm
+  rm -rf /tmp/dcv-packages "/tmp/${dcv_archive}"
+
+  install -m 0644 /tmp/dcv.conf /etc/dcv/dcv.conf
+  install -m 0644 /tmp/shared-browser.perm /etc/dcv/shared-browser.perm
+  install -m 0644 /tmp/shared-browser-nginx.conf /etc/nginx/conf.d/t3-shared-browser.conf
+  install -m 0755 /tmp/cloud-agent-shared-browser /opt/t3/bin/cloud-agent-shared-browser
+  install -m 0755 /tmp/cloud-agent-shared-browser-session \
+    /opt/t3/bin/cloud-agent-shared-browser-session
+  install -m 0755 /tmp/measure-shared-browser.sh /opt/t3/bin/measure-shared-browser
+  systemctl enable dcvserver.service nginx.service
+fi
+rm -f \
+  /tmp/dcv.conf \
+  /tmp/shared-browser.perm \
+  /tmp/shared-browser-nginx.conf \
+  /tmp/cloud-agent-shared-browser \
+  /tmp/cloud-agent-shared-browser-session \
+  /tmp/measure-shared-browser.sh
 
 node_archive="node-v${NODE_VERSION}-linux-x64.tar.xz"
 curl --fail --location --proto '=https' --tlsv1.2 \
@@ -56,9 +107,9 @@ if ! id cloudagent >/dev/null 2>&1; then
   useradd --system --gid cloudagent --create-home --home-dir /home/cloudagent --shell /bin/bash cloudagent
 fi
 
-install -d -m 0755 /opt/t3/bin
 install -d -o cloudagent -g cloudagent -m 0700 /var/lib/t3-worker/t3
 install -d -o cloudagent -g cloudagent -m 0750 /work
+install -d -o root -g cloudagent -m 0750 /etc/t3
 install -m 0755 /tmp/cloud-agent-worker-preflight /opt/t3/bin/cloud-agent-worker-preflight
 install -m 0755 /tmp/cloud-agent-worker-register /opt/t3/bin/cloud-agent-worker-register
 install -m 0755 /tmp/cloud-agent-worker-cleanup /opt/t3/bin/cloud-agent-worker-cleanup
@@ -74,6 +125,8 @@ jq --null-input \
   --arg claude_code "${CLAUDE_CODE_VERSION}" \
   --arg codex "${CODEX_VERSION}" \
   --argjson desktop_dependencies "${INSTALL_DESKTOP_DEPENDENCIES}" \
+  --argjson shared_browser "${INSTALL_SHARED_BROWSER}" \
+  --arg dcv "${DCV_VERSION}" \
   '{
     imageVersion: $image_version,
     profile: $profile,
@@ -82,14 +135,17 @@ jq --null-input \
       node: $node,
       t3: $t3,
       claudeCode: $claude_code,
-      codex: $codex
+      codex: $codex,
+      dcv: (if $shared_browser then $dcv else null end)
     },
     capabilities: {
       coding: true,
       webPreview: true,
       desktopDependencies: $desktop_dependencies,
       mobileSdk: false,
-      desktopStreamService: false
+      desktopStreamService: $shared_browser,
+      browserAutomation: $shared_browser,
+      desktopStreamTransport: (if $shared_browser then "dcv" else null end)
     }
   }' >/opt/t3/worker-image-manifest.json
 chmod 0644 /opt/t3/worker-image-manifest.json

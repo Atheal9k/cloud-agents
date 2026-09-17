@@ -16,7 +16,7 @@ if ! jq --exit-status \
   exit 1
 fi
 
-install -d -m 0750 /etc/t3
+install -d -o root -g cloudagent -m 0750 /etc/t3
 
 metadata_base='http://169.254.169.254/latest'
 metadata_token="$(
@@ -30,8 +30,26 @@ max_input_wait_seconds="$(
     --header "X-aws-ec2-metadata-token: $${metadata_token}" \
     "$${metadata_base}/meta-data/tags/instance/CloudAgentMaxInputWaitSeconds"
 )"
+allocation_id="$(
+  curl --noproxy '*' --silent --show-error --fail --max-time 5 \
+    --header "X-aws-ec2-metadata-token: $${metadata_token}" \
+    "$${metadata_base}/meta-data/tags/instance/CloudAgentAllocationId"
+)"
+attempt="$(
+  curl --noproxy '*' --silent --show-error --fail --max-time 5 \
+    --header "X-aws-ec2-metadata-token: $${metadata_token}" \
+    "$${metadata_base}/meta-data/tags/instance/CloudAgentAttempt"
+)"
 [[ "$${max_input_wait_seconds}" =~ ^[1-9][0-9]*$ ]] || {
   echo "cloud-agent bootstrap failed: input-wait limit tag is invalid" >&2
+  exit 1
+}
+[[ "$${allocation_id}" =~ ^[A-Za-z0-9_-]{1,128}$ ]] || {
+  echo "cloud-agent bootstrap failed: allocation id tag is invalid" >&2
+  exit 1
+}
+[[ "$${attempt}" =~ ^[1-9][0-9]*$ ]] || {
+  echo "cloud-agent bootstrap failed: attempt tag is invalid" >&2
   exit 1
 }
 
@@ -40,7 +58,13 @@ T3_WORKER_PROFILE=${profile_name}
 T3_WORKER_IMAGE_VERSION=${image_version}
 T3CODE_CLOUD_MAX_INPUT_WAIT_SECONDS=$${max_input_wait_seconds}
 T3CODE_PORT=${service_port}
+T3CODE_SHARED_BROWSER_THREAD_ID=thread-$${allocation_id}-$${attempt}
+T3CODE_SHARED_BROWSER_ATTEMPT_KEY=$${allocation_id}:$${attempt}
 ENV
+if jq --exit-status '.capabilities.desktopStreamService == true' "$manifest" >/dev/null; then
+  echo 'T3CODE_SHARED_BROWSER_COMMAND=/opt/t3/bin/cloud-agent-shared-browser' \
+    >>/etc/t3/worker.env
+fi
 chown root:cloudagent /etc/t3/worker.env
 chmod 0640 /etc/t3/worker.env
 

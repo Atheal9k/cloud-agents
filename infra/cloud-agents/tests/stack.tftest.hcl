@@ -74,12 +74,43 @@ run "protected_plan" {
         instance_type        = "t3.medium"
         root_volume_size_gib = 30
       }
+      linux-web-browser = {
+        ami_id               = "ami-0123456789abcdef0"
+        image_version        = "0.0.42-ca34.1"
+        instance_type        = "t3.medium"
+        root_volume_size_gib = 30
+        capabilities         = ["coding", "web-preview", "shared-browser"]
+        desktop_dependencies = true
+        shared_browser       = true
+      }
     }
   }
 
   assert {
     condition     = aws_iam_role.controller.name_prefix != aws_iam_role.worker.name_prefix
     error_message = "The controller and workers must use separate IAM roles."
+  }
+
+  assert {
+    condition = alltrue([
+      strcontains(base64decode(aws_launch_template.worker["linux-web-browser"].user_data), "T3CODE_SHARED_BROWSER_THREAD_ID"),
+      strcontains(base64decode(aws_launch_template.worker["linux-web-browser"].user_data), "T3CODE_SHARED_BROWSER_COMMAND"),
+      one([
+        for specification in aws_launch_template.worker["linux-web-browser"].tag_specifications :
+        specification.tags["CloudAgentSharedBrowser"]
+        if specification.resource_type == "instance"
+      ]) == "true",
+    ])
+    error_message = "The browser profile must bind the shared viewer lifecycle to the allocation attempt."
+  }
+
+  assert {
+    condition = alltrue([
+      aws_vpc_security_group_ingress_rule.worker_control.from_port != 8443,
+      aws_vpc_security_group_ingress_rule.worker_preview.from_port != 8443,
+      aws_vpc_security_group_ingress_rule.worker_preview.to_port != 8443,
+    ])
+    error_message = "Amazon DCV must not have direct worker security-group ingress."
   }
 
   assert {

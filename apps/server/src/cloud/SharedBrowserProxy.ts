@@ -1,5 +1,4 @@
 import * as NodeSocket from "@effect/platform-node/NodeSocket";
-import * as Clock from "effect/Clock";
 import * as Effect from "effect/Effect";
 import * as Option from "effect/Option";
 import {
@@ -12,12 +11,12 @@ import {
 import * as Socket from "effect/unstable/socket/Socket";
 
 import {
-  PREVIEW_GATEWAY_BOOTSTRAP_PREFIX,
-  PREVIEW_GATEWAY_COOKIE_NAME,
-  PreviewGateway,
-  type PreviewGatewayTarget,
-} from "./Gateway.ts";
-import { SHARED_BROWSER_COOKIE_NAME } from "../cloud/SharedBrowserGateway.ts";
+  SHARED_BROWSER_BOOTSTRAP_PREFIX,
+  SHARED_BROWSER_COOKIE_MAX_AGE_SECONDS,
+  SHARED_BROWSER_COOKIE_NAME,
+  SharedBrowserGateway,
+} from "./SharedBrowserGateway.ts";
+import { PREVIEW_GATEWAY_COOKIE_NAME } from "../preview/Gateway.ts";
 
 const GATEWAY_COOKIE_OPTIONS = {
   path: "/",
@@ -52,15 +51,11 @@ const DROPPED_RESPONSE_HEADERS = new Set([
   "x-frame-options",
 ]);
 
-const PREVIEW_SANDBOX_POLICY =
-  "sandbox allow-scripts allow-same-origin allow-forms allow-popups allow-modals allow-downloads";
-
 const isWebSocketUpgrade = (request: HttpServerRequest.HttpServerRequest): boolean =>
   request.headers.upgrade?.toLowerCase() === "websocket";
 
-function upstreamOrigin(target: PreviewGatewayTarget): string {
-  const hostname = target.protocol === "https" ? "localhost" : "127.0.0.1";
-  return `${target.protocol}://${hostname}:${target.port}`;
+function upstreamOrigin(rawUrl: string): string {
+  return new URL(rawUrl).origin;
 }
 
 function requestHeaders(request: HttpServerRequest.HttpServerRequest, origin: string) {
@@ -69,47 +64,36 @@ function requestHeaders(request: HttpServerRequest.HttpServerRequest, origin: st
     if (DROPPED_REQUEST_HEADERS.has(name) || value === undefined) continue;
     headers[name] = value;
   }
-  if (request.headers.origin !== undefined) headers.origin = origin;
+  headers.origin = origin;
   return headers;
 }
 
-function responseHeaders(
-  response: { readonly headers: Readonly<Record<string, string | undefined>> },
-  origin: string,
-) {
+function responseHeaders(response: {
+  readonly headers: Readonly<Record<string, string | undefined>>;
+}) {
   const headers: Record<string, string> = {};
   for (const [name, value] of Object.entries(response.headers)) {
     if (DROPPED_RESPONSE_HEADERS.has(name) || value === undefined) continue;
-    if (name === "location") {
-      try {
-        const location = new URL(value, origin);
-        if (location.origin === origin) {
-          headers.location = `${location.pathname}${location.search}${location.hash}`;
-          continue;
-        }
-      } catch {
-        // Preserve malformed upstream locations so the browser reports them.
-      }
-    }
     headers[name] = value;
   }
-  const contentType = headers["content-type"]?.toLowerCase() ?? "";
-  if (contentType.startsWith("text/html") || contentType.startsWith("application/xhtml+xml")) {
-    headers["content-security-policy"] = PREVIEW_SANDBOX_POLICY;
-    headers["referrer-policy"] = "no-referrer";
-  }
-  headers["cache-control"] = "no-store, no-transform";
+  headers["cache-control"] = "private, no-store, no-transform";
+  headers["referrer-policy"] = "no-referrer";
   return headers;
 }
 
-const proxyWebSocket = Effect.fn("PreviewGatewayProxy.proxyWebSocket")(function* (
+const proxyWebSocket = Effect.fn("SharedBrowserProxy.proxyWebSocket")(function* (
   request: HttpServerRequest.HttpServerRequest,
   upstreamUrl: string,
 ) {
   const downstream = yield* request.upgrade;
-  const upstream = yield* Socket.makeWebSocket(upstreamUrl, { openTimeout: "10 seconds" }).pipe(
-    Effect.provide(NodeSocket.layerWebSocketConstructor),
-  );
+  const protocols = request.headers["sec-websocket-protocol"]
+    ?.split(",")
+    .map((protocol) => protocol.trim())
+    .filter((protocol) => protocol.length > 0);
+  const upstream = yield* Socket.makeWebSocket(upstreamUrl, {
+    openTimeout: "10 seconds",
+    ...(protocols === undefined || protocols.length === 0 ? {} : { protocols }),
+  }).pipe(Effect.provide(NodeSocket.layerWebSocketConstructor));
   yield* Effect.scoped(
     Effect.gen(function* () {
       const writeDownstream = yield* downstream.writer;
@@ -123,7 +107,7 @@ const proxyWebSocket = Effect.fn("PreviewGatewayProxy.proxyWebSocket")(function*
   return HttpServerResponse.empty();
 });
 
-const proxyHttp = Effect.fn("PreviewGatewayProxy.proxyHttp")(function* (
+const proxyHttp = Effect.fn("SharedBrowserProxy.proxyHttp")(function* (
   request: HttpServerRequest.HttpServerRequest,
   upstreamUrl: string,
   origin: string,
@@ -137,7 +121,7 @@ const proxyHttp = Effect.fn("PreviewGatewayProxy.proxyHttp")(function* (
       : HttpClientRequest.bodyStream(request.stream),
   );
   const response = yield* client.execute(upstreamRequest);
-  const headers = responseHeaders(response, origin);
+  const headers = responseHeaders(response);
   return HttpServerResponse.stream(response.stream, {
     status: response.status,
     headers,
@@ -149,58 +133,56 @@ const bootstrapHandler = Effect.gen(function* () {
   const request = yield* HttpServerRequest.HttpServerRequest;
   const url = HttpServerRequest.toURL(request);
   if (Option.isNone(url)) return HttpServerResponse.text("Bad Request", { status: 400 });
-  const token = url.value.pathname.slice(PREVIEW_GATEWAY_BOOTSTRAP_PREFIX.length);
+  const token = url.value.pathname.slice(SHARED_BROWSER_BOOTSTRAP_PREFIX.length);
   if (token.length === 0 || token.includes("/")) {
     return HttpServerResponse.text("Not Found", { status: 404 });
   }
-  const gateway = yield* PreviewGateway;
+  const gateway = yield* SharedBrowserGateway;
   const target = yield* gateway.resolve(token);
-  if (target === null) return HttpServerResponse.text("Preview expired", { status: 410 });
-  const nowMillis = yield* Clock.currentTimeMillis;
-  const maxAge = Math.max(1, Math.ceil((target.expiresAtMillis - nowMillis) / 1_000));
-  return HttpServerResponse.redirect(target.initialPath, {
+  if (target === null) return HttpServerResponse.text("Viewer expired", { status: 410 });
+  return HttpServerResponse.redirect(`/#${encodeURIComponent(target.sessionId)}`, {
     status: 302,
     headers: {
       "cache-control": "private, no-store",
       "referrer-policy": "no-referrer",
     },
   }).pipe(
-    HttpServerResponse.setCookieUnsafe(PREVIEW_GATEWAY_COOKIE_NAME, token, {
+    HttpServerResponse.setCookieUnsafe(SHARED_BROWSER_COOKIE_NAME, token, {
       ...GATEWAY_COOKIE_OPTIONS,
-      maxAge: maxAge * 1_000,
+      maxAge: SHARED_BROWSER_COOKIE_MAX_AGE_SECONDS * 1_000,
     }),
-    HttpServerResponse.expireCookieUnsafe(SHARED_BROWSER_COOKIE_NAME, GATEWAY_COOKIE_OPTIONS),
+    HttpServerResponse.expireCookieUnsafe(PREVIEW_GATEWAY_COOKIE_NAME, GATEWAY_COOKIE_OPTIONS),
   );
 });
 
-export const previewGatewayBootstrapRouteLayer = HttpRouter.add(
+export const sharedBrowserBootstrapRouteLayer = HttpRouter.add(
   "GET",
-  `${PREVIEW_GATEWAY_BOOTSTRAP_PREFIX}*`,
+  `${SHARED_BROWSER_BOOTSTRAP_PREFIX}*`,
   bootstrapHandler,
 );
 
-export const previewGatewayProxyMiddlewareLayer = HttpRouter.middleware(
+export const sharedBrowserProxyMiddlewareLayer = HttpRouter.middleware(
   (httpEffect) =>
     Effect.gen(function* () {
       const request = yield* HttpServerRequest.HttpServerRequest;
       const url = HttpServerRequest.toURL(request);
-      if (Option.isNone(url) || url.value.pathname.startsWith(PREVIEW_GATEWAY_BOOTSTRAP_PREFIX)) {
+      if (Option.isNone(url) || url.value.pathname.startsWith(SHARED_BROWSER_BOOTSTRAP_PREFIX)) {
         return yield* httpEffect;
       }
-      const token = request.cookies[PREVIEW_GATEWAY_COOKIE_NAME];
+      const token = request.cookies[SHARED_BROWSER_COOKIE_NAME];
       if (token === undefined) return yield* httpEffect;
-      const gateway = yield* PreviewGateway;
+      const gateway = yield* SharedBrowserGateway;
       const target = yield* gateway.resolve(token);
       if (target === null) {
-        return HttpServerResponse.text("Preview expired", {
+        return HttpServerResponse.text("Viewer expired", {
           status: 410,
           headers: {
             "cache-control": "private, no-store",
-            "set-cookie": `${PREVIEW_GATEWAY_COOKIE_NAME}=; Path=/; HttpOnly; Secure; SameSite=None; Partitioned; Max-Age=0`,
+            "set-cookie": `${SHARED_BROWSER_COOKIE_NAME}=; Path=/; HttpOnly; Secure; SameSite=None; Partitioned; Max-Age=0`,
           },
         });
       }
-      const origin = upstreamOrigin(target);
+      const origin = upstreamOrigin(target.upstreamUrl);
       const upstreamPath = `${url.value.pathname}${url.value.search}`;
       if (isWebSocketUpgrade(request)) {
         return yield* proxyWebSocket(request, `${origin.replace(/^http/, "ws")}${upstreamPath}`);

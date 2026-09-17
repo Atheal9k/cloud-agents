@@ -10,15 +10,15 @@ import {
 } from "effect/unstable/http";
 
 import {
-  PREVIEW_GATEWAY_BOOTSTRAP_PREFIX,
-  PREVIEW_GATEWAY_COOKIE_NAME,
-  PreviewGateway,
-} from "./Gateway.ts";
+  SHARED_BROWSER_BOOTSTRAP_PREFIX,
+  SHARED_BROWSER_COOKIE_NAME,
+  SharedBrowserGateway,
+} from "./SharedBrowserGateway.ts";
 import {
-  previewGatewayBootstrapRouteLayer,
-  previewGatewayProxyMiddlewareLayer,
-} from "./GatewayProxy.ts";
-import { SHARED_BROWSER_COOKIE_NAME } from "../cloud/SharedBrowserGateway.ts";
+  sharedBrowserBootstrapRouteLayer,
+  sharedBrowserProxyMiddlewareLayer,
+} from "./SharedBrowserProxy.ts";
+import { PREVIEW_GATEWAY_COOKIE_NAME } from "../preview/Gateway.ts";
 
 const TOKEN = "a".repeat(43);
 const disposers: Array<() => Promise<void>> = [];
@@ -42,36 +42,36 @@ function fixture() {
     return Effect.succeed(
       HttpClientResponse.fromWeb(
         request,
-        new Response("<main>app</main>", {
+        new Response("<main>dcv</main>", {
           headers: {
-            "content-type": "text/html; charset=utf-8",
-            "set-cookie": "app-secret=leak",
+            "content-security-policy": "frame-ancestors 'none'",
+            "set-cookie": "dcv-secret=leak",
+            "x-frame-options": "DENY",
           },
         }),
       ),
     );
   });
-  const gateway = PreviewGateway.of({
+  const gateway = SharedBrowserGateway.of({
     issue: () => Effect.die("not used"),
+    keepAlive: () => Effect.die("not used"),
+    release: () => Effect.die("not used"),
     resolve: (token) =>
       Effect.succeed(
         token === TOKEN
           ? {
               threadId: ThreadId.make("thread-allocation-1-2"),
-              port: 5173,
-              protocol: "http",
-              initialPath: "/dashboard",
-              expiresAtMillis: Date.now() + 60_000,
-              pid: 42,
-              terminalId: "terminal-1",
+              upstreamUrl: "http://127.0.0.1:8090",
+              sessionId: "t3-allocation-1-2",
+              expiresAtMillis: Date.parse("2099-01-01T00:00:00.000Z"),
             }
           : null,
       ),
   });
   const fallback = HttpRouter.add("*", "/*", HttpServerResponse.text("t3"));
-  const routes = Layer.mergeAll(previewGatewayBootstrapRouteLayer, fallback).pipe(
-    Layer.provide(previewGatewayProxyMiddlewareLayer),
-    Layer.provideMerge(Layer.succeed(PreviewGateway, gateway)),
+  const routes = Layer.mergeAll(sharedBrowserBootstrapRouteLayer, fallback).pipe(
+    Layer.provide(sharedBrowserProxyMiddlewareLayer),
+    Layer.provideMerge(Layer.succeed(SharedBrowserGateway, gateway)),
     Layer.provideMerge(Layer.succeed(HttpClient.HttpClient, client)),
   );
   const { handler, dispose } = HttpRouter.toWebHandler(routes, { disableLogger: true });
@@ -79,59 +79,51 @@ function fixture() {
   return { handler, requests };
 }
 
-describe("preview gateway proxy", () => {
-  it("bootstraps an isolated partitioned cookie and redirects to the app path", async () => {
+describe("shared browser proxy", () => {
+  it("bootstraps a partitioned cookie into the attempt session", async () => {
     const { handler } = fixture();
     const response = await handler(
-      new Request(`https://worker.test${PREVIEW_GATEWAY_BOOTSTRAP_PREFIX}${TOKEN}`),
+      new Request(`https://worker.test${SHARED_BROWSER_BOOTSTRAP_PREFIX}${TOKEN}`),
     );
     expect(response.status, await response.clone().text()).toBe(302);
-    expect(response.headers.get("location")).toBe("/dashboard");
-    expect(response.headers.get("set-cookie")).toContain(`${PREVIEW_GATEWAY_COOKIE_NAME}=${TOKEN}`);
-    expect(response.headers.get("set-cookie")).toContain(`${SHARED_BROWSER_COOKIE_NAME}=`);
+    expect(response.headers.get("location")).toBe("/#t3-allocation-1-2");
+    expect(response.headers.get("set-cookie")).toContain(`${SHARED_BROWSER_COOKIE_NAME}=${TOKEN}`);
+    expect(response.headers.get("set-cookie")).toContain(`${PREVIEW_GATEWAY_COOKIE_NAME}=`);
     expect(response.headers.get("set-cookie")).toContain("Max-Age=0");
     expect(response.headers.get("set-cookie")).toContain("Partitioned");
   });
 
-  it("proxies every app path without forwarding T3 credentials", async () => {
+  it("proxies DCV without forwarding T3 credentials or frame-denial headers", async () => {
     const { handler, requests } = fixture();
     const response = await handler(
-      new Request("https://worker.test/api/data?view=full", {
+      new Request("https://worker.test/app.js", {
         headers: {
           authorization: "Bearer t3-secret",
-          cookie: `${PREVIEW_GATEWAY_COOKIE_NAME}=${TOKEN}; t3_session=session-secret`,
+          cookie: `${SHARED_BROWSER_COOKIE_NAME}=${TOKEN}; t3_session=session-secret`,
         },
       }),
     );
-    expect(response.status, await response.clone().text()).toBe(200);
-    expect(await response.text()).toBe("<main>app</main>");
+    expect(await response.text()).toBe("<main>dcv</main>");
     expect(requests).toEqual([
       {
-        url: "http://127.0.0.1:5173/api/data?view=full",
+        url: "http://127.0.0.1:8090/app.js",
         authorization: undefined,
         cookie: undefined,
       },
     ]);
     expect(response.headers.get("set-cookie")).toBeNull();
-    expect(response.headers.get("content-security-policy")).toContain("sandbox allow-scripts");
+    expect(response.headers.get("content-security-policy")).toBeNull();
+    expect(response.headers.get("x-frame-options")).toBeNull();
   });
 
-  it("leaves ordinary T3 requests alone when no preview grant is present", async () => {
-    const { handler, requests } = fixture();
-    const response = await handler(new Request("https://worker.test/api/server"));
-    expect(await response.text()).toBe("t3");
-    expect(requests).toEqual([]);
-  });
-
-  it("never falls through to authenticated T3 routes after a preview expires", async () => {
+  it("does not fall through to T3 after a viewer expires", async () => {
     const { handler, requests } = fixture();
     const response = await handler(
       new Request("https://worker.test/api/server", {
-        headers: { cookie: `${PREVIEW_GATEWAY_COOKIE_NAME}=${"b".repeat(43)}` },
+        headers: { cookie: `${SHARED_BROWSER_COOKIE_NAME}=${"b".repeat(43)}` },
       }),
     );
     expect(response.status).toBe(410);
-    expect(response.headers.get("set-cookie")).toContain("Max-Age=0");
     expect(requests).toEqual([]);
   });
 });

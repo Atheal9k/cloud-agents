@@ -14,6 +14,8 @@ import {
   ProviderDriverKind,
   type ProjectScript,
   type ServerProvider,
+  type SharedBrowserError,
+  type ThreadId,
 } from "@t3tools/contracts";
 import * as Context from "effect/Context";
 import * as Config from "effect/Config";
@@ -22,11 +24,13 @@ import * as Deferred from "effect/Deferred";
 import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
+import * as Option from "effect/Option";
 import * as Predicate from "effect/Predicate";
 import * as Stream from "effect/Stream";
 
 import { OrchestrationEngineService } from "../orchestration/Services/OrchestrationEngine.ts";
 import { ProviderRegistry } from "../provider/Services/ProviderRegistry.ts";
+import { SharedBrowserHost } from "./SharedBrowserHost.ts";
 
 const QUALIFIED_DRIVER = ProviderDriverKind.make("codex");
 
@@ -128,6 +132,7 @@ function activityRequestId(event: OrchestrationEvent): ApprovalRequestId | undef
 
 const build = Effect.fn("CloudProviderExecution.build")(function* (input?: {
   readonly maxInputWaitSeconds?: number;
+  readonly prepareSharedBrowser?: (threadId: ThreadId) => Effect.Effect<void, SharedBrowserError>;
 }) {
   const orchestration = yield* OrchestrationEngineService;
   const providers = yield* ProviderRegistry;
@@ -292,6 +297,16 @@ const build = Effect.fn("CloudProviderExecution.build")(function* (input?: {
       );
     }
     yield* preflightTurn(request.turn);
+    if (input?.prepareSharedBrowser !== undefined) {
+      yield* input.prepareSharedBrowser(request.threadId).pipe(
+        Effect.catch((error) =>
+          Effect.logWarning("Shared browser preparation failed; continuing without a viewer.", {
+            threadId: request.threadId,
+            error: String(error),
+          }),
+        ),
+      );
+    }
     requestPolicies.set(request.threadId, request.unansweredRequestSeconds);
 
     const executionProjectId = projectId(request.preparation);
@@ -448,6 +463,7 @@ const build = Effect.fn("CloudProviderExecution.build")(function* (input?: {
 
 export const make = Effect.fn("CloudProviderExecution.make")(function* (input?: {
   readonly maxInputWaitSeconds?: number;
+  readonly prepareSharedBrowser?: (threadId: ThreadId) => Effect.Effect<void, SharedBrowserError>;
 }) {
   return (yield* build(input)).service;
 });
@@ -456,11 +472,20 @@ export const layer = Layer.effect(
   CloudProviderExecution,
   Effect.gen(function* () {
     const orchestration = yield* OrchestrationEngineService;
+    const sharedBrowserHost = yield* Effect.serviceOption(SharedBrowserHost);
     const events = yield* orchestration.subscribeDomainEvents;
     const maxInputWaitSeconds = yield* Config.int("T3CODE_CLOUD_MAX_INPUT_WAIT_SECONDS").pipe(
       Config.withDefault(15 * 60),
     );
-    const built = yield* build({ maxInputWaitSeconds });
+    const built = yield* build({
+      maxInputWaitSeconds,
+      ...(Option.isSome(sharedBrowserHost) && sharedBrowserHost.value.available
+        ? {
+            prepareSharedBrowser: (threadId: ThreadId) =>
+              sharedBrowserHost.value.prepare(threadId).pipe(Effect.asVoid),
+          }
+        : {}),
+    });
     yield* Stream.runForEach(events, built.processEvent).pipe(Effect.forkScoped);
     return built.service;
   }),

@@ -148,11 +148,14 @@ import { makeManualOnlyProviderMaintenanceCapabilities } from "./provider/provid
 import * as ServerLifecycleEvents from "./serverLifecycleEvents.ts";
 import * as ServerRuntimeStartup from "./serverRuntimeStartup.ts";
 import * as ServiceLauncherClient from "./cloud/serviceLauncherClient.ts";
+import * as SharedBrowserGateway from "./cloud/SharedBrowserGateway.ts";
+import * as SharedBrowserHost from "./cloud/SharedBrowserHost.ts";
 import * as ServerSettings from "./serverSettings.ts";
 import * as TerminalManager from "./terminal/Manager.ts";
 import * as ProjectCloneTracker from "./project/ProjectCloneTracker.ts";
 import * as WorktreeSetupTracker from "./project/WorktreeSetupTracker.ts";
 import * as PreviewManager from "./preview/Manager.ts";
+import * as PreviewGateway from "./preview/Gateway.ts";
 import * as PortScanner from "./preview/PortScanner.ts";
 import * as BrowserTraceCollector from "./observability/BrowserTraceCollector.ts";
 import * as NativeAppIconResolver from "./assets/NativeAppIconResolver.ts";
@@ -753,15 +756,34 @@ const buildAppUnderTest = (options?: {
     const serviceLauncherClientLayer = ServiceLauncherClient.layer.pipe(
       Layer.provide(Layer.succeed(HostProcessEnvironment, {})),
     );
+    const portDiscoveryLayer = Layer.mock(PortScanner.PortDiscovery)({
+      scan: () => Effect.succeed([]),
+      subscribe: () => Effect.void,
+      retain: Effect.void,
+      registerTerminalProcesses: () => Effect.void,
+      unregisterTerminal: () => Effect.void,
+    });
+    const browserGatewayLayers = Layer.mergeAll(
+      PreviewGateway.layer.pipe(Layer.provide(portDiscoveryLayer)),
+      SharedBrowserGateway.layer.pipe(
+        Layer.provide(
+          Layer.succeed(SharedBrowserHost.SharedBrowserHost, {
+            available: false,
+            prepare: () => Effect.die("Shared browser host not stubbed in this test"),
+          }),
+        ),
+      ),
+    );
 
-    const servedRoutesLayer = HttpRouter.serve(
+    const browserGatewayRoutesLayer = HttpRouter.serve(
       makeRoutesLayer.pipe(Layer.provide(serviceLauncherClientLayer)),
       {
         disableListenLog: true,
         disableLogger: true,
         routerConfig: HTTP_ROUTER_CONFIG,
       },
-    ).pipe(
+    ).pipe(Layer.provide(browserGatewayLayers));
+    const servedRoutesLayer = browserGatewayRoutesLayer.pipe(
       Layer.provide(
         Layer.mergeAll(
           Layer.mock(Keybindings.Keybindings)({
@@ -961,13 +983,7 @@ const buildAppUnderTest = (options?: {
               PubSub.subscribe(pubsub),
             ),
           }),
-          Layer.mock(PortScanner.PortDiscovery)({
-            scan: () => Effect.succeed([]),
-            subscribe: () => Effect.void,
-            retain: Effect.void,
-            registerTerminalProcesses: () => Effect.void,
-            unregisterTerminal: () => Effect.void,
-          }),
+          portDiscoveryLayer,
         ),
       ),
       Layer.provide(
