@@ -40,6 +40,19 @@ describe("ExecutionEnvironmentDescriptor", () => {
     ).toBe(true);
   });
 
+  it("treats a missing cloud-allocation capability as unsupported", () => {
+    expect(decodeDescriptor(descriptor).capabilities.cloudAllocations).toBeUndefined();
+  });
+
+  it("preserves an advertised cloud-allocation capability", () => {
+    expect(
+      decodeDescriptor({
+        ...descriptor,
+        capabilities: { ...descriptor.capabilities, cloudAllocations: true },
+      }).capabilities.cloudAllocations,
+    ).toBe(true);
+  });
+
   it("preserves the server's generic attachment upload limit", () => {
     expect(
       decodeDescriptor({

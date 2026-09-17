@@ -171,6 +171,10 @@ export const ExecutionEnvironmentCapabilities = Schema.Struct({
       desktop servers whose app predates the remote trigger, where clients
       must keep telling the user to update the app on that machine. */
   desktopAppUpdate: Schema.optionalKey(Schema.Boolean),
+  /** Server exposes controller-owned cloud allocation commands and snapshots.
+      Missing on older and ordinary worker environments, so clients must hide
+      cloud-run actions unless this is explicitly true. */
+  cloudAllocations: Schema.optionalKey(Schema.Boolean),
 });
 export type ExecutionEnvironmentCapabilities = typeof ExecutionEnvironmentCapabilities.Type;
 
