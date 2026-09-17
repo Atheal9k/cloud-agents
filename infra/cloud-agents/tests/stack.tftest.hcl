@@ -123,6 +123,19 @@ run "protected_plan" {
   }
 
   assert {
+    condition = (
+      aws_launch_template.worker["linux-web"].tags["CloudAgentProject"] == "t3-cloud-agents" &&
+      aws_launch_template.worker["linux-web"].tags["CloudAgentProfile"] == "linux-web"
+    )
+    error_message = "The controller must be able to discover exactly one launch template by project and profile."
+  }
+
+  assert {
+    condition     = aws_iam_role_policy.controller_worker_allocation.role == aws_iam_role.controller.id
+    error_message = "Only the controller role may allocate and terminate workers."
+  }
+
+  assert {
     condition     = aws_launch_template.worker["linux-web"].metadata_options[0].instance_metadata_tags == "disabled"
     error_message = "Workers must not expose instance tags through metadata."
   }

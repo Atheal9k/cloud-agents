@@ -90,6 +90,77 @@ resource "aws_iam_role_policy" "controller_credentials" {
   policy = data.aws_iam_policy_document.controller_credentials[0].json
 }
 
+data "aws_iam_policy_document" "controller_worker_allocation" {
+  statement {
+    sid = "DiscoverWorkerTemplatesAndInstances"
+    actions = [
+      "ec2:DescribeInstances",
+      "ec2:DescribeLaunchTemplates",
+    ]
+    resources = ["*"]
+  }
+
+  statement {
+    sid       = "LaunchTaggedWorkers"
+    actions   = ["ec2:RunInstances"]
+    resources = ["*"]
+
+    condition {
+      test     = "StringEquals"
+      variable = "aws:RequestTag/CloudAgentProject"
+      values   = [var.name_prefix]
+    }
+
+    condition {
+      test     = "StringEquals"
+      variable = "aws:RequestTag/CloudAgentRole"
+      values   = ["worker"]
+    }
+  }
+
+  statement {
+    sid       = "TagWorkersDuringLaunch"
+    actions   = ["ec2:CreateTags"]
+    resources = ["arn:${data.aws_partition.current.partition}:ec2:${var.aws_region}:${data.aws_caller_identity.current.account_id}:*"]
+
+    condition {
+      test     = "StringEquals"
+      variable = "ec2:CreateAction"
+      values   = ["RunInstances"]
+    }
+  }
+
+  statement {
+    sid       = "TerminateOwnedWorkers"
+    actions   = ["ec2:TerminateInstances"]
+    resources = ["arn:${data.aws_partition.current.partition}:ec2:${var.aws_region}:${data.aws_caller_identity.current.account_id}:instance/*"]
+
+    condition {
+      test     = "StringEquals"
+      variable = "ec2:ResourceTag/CloudAgentProject"
+      values   = [var.name_prefix]
+    }
+
+    condition {
+      test     = "StringEquals"
+      variable = "ec2:ResourceTag/CloudAgentRole"
+      values   = ["worker"]
+    }
+  }
+
+  statement {
+    sid       = "PassWorkerRole"
+    actions   = ["iam:PassRole"]
+    resources = [aws_iam_role.worker.arn]
+  }
+}
+
+resource "aws_iam_role_policy" "controller_worker_allocation" {
+  name   = "worker-allocation"
+  role   = aws_iam_role.controller.id
+  policy = data.aws_iam_policy_document.controller_worker_allocation.json
+}
+
 data "aws_iam_policy_document" "worker_artifacts" {
   statement {
     sid = "WriteRunArtifacts"

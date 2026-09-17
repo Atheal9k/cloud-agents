@@ -36,6 +36,12 @@ address before starting it when another device needs direct access. Put TLS and 
 front of the controller instead of publishing unencrypted T3 traffic to the internet. Do not set
 `VITE_HTTP_URL` or `VITE_WS_URL`; the built client uses the same origin for HTTP and WebSockets.
 
+The cloud queue uses `T3CODE_CLOUD_AWS_REGION` and `T3CODE_CLOUD_PROJECT` to find the worker
+launch template created by `infra/cloud-agents`. Their defaults are `us-west-1` and
+`t3-cloud-agents`. Set both when your OpenTofu `aws_region` or `name_prefix` differs. The AWS
+identity in the credential overlay must be allowed to describe launch templates and instances,
+launch workers with the project and worker tags, and terminate workers carrying those tags.
+
 Compose uses `restart: unless-stopped`, a health check, and a 30-second shutdown window. The stop
 command waits for the server to close its SQLite connection before stopping the container.
 

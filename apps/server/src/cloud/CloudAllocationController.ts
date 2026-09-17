@@ -77,6 +77,7 @@ function replayEvents(
 
 export const make = Effect.fn("CloudAllocationController.make")(function* (input: {
   readonly enabled: boolean;
+  readonly maxQueueDepth?: number;
 }) {
   const sql = yield* SqlClient.SqlClient;
   const changes = yield* PubSub.unbounded<CloudAllocationSnapshot>();
@@ -162,6 +163,18 @@ export const make = Effect.fn("CloudAllocationController.make")(function* (input
       Effect.gen(function* () {
         yield* requireEnabled;
         const current = yield* readAllocation(command.allocationId);
+        if (command.type === "allocation.launch" && current === undefined) {
+          const snapshot = yield* readSnapshot;
+          const queued = snapshot.allocations.filter(
+            (allocation) => allocation.cleanupState.status !== "succeeded",
+          ).length;
+          if (queued >= (input.maxQueueDepth ?? 32)) {
+            return yield* controllerError(
+              "queue-full",
+              `The cloud allocation queue is full at ${input.maxQueueDepth ?? 32} jobs.`,
+            );
+          }
+        }
         const events = decideRunAllocationCommand(current, command);
         if (events.length === 0) {
           if (current === undefined) {

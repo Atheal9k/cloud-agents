@@ -35,6 +35,7 @@ resource "aws_instance" "controller" {
   user_data = templatefile("${path.module}/templates/controller-cloud-init.sh.tftpl", {
     artifact_bucket = aws_s3_bucket.artifacts.id
     aws_region      = var.aws_region
+    project_name    = var.name_prefix
     data_device     = "/dev/sdf"
   })
 
@@ -80,6 +81,11 @@ resource "aws_launch_template" "worker" {
 
   update_default_version               = true
   instance_initiated_shutdown_behavior = "terminate"
+
+  tags = {
+    CloudAgentProject = var.name_prefix
+    CloudAgentProfile = each.key
+  }
 
   iam_instance_profile {
     name = aws_iam_instance_profile.worker.name

@@ -5,6 +5,7 @@ import {
   EnvironmentId,
   IsoDateTime,
   NonNegativeInt,
+  PositiveInt,
   RunAllocationAttempt,
   RunAllocationId,
   RunWorkerId,
@@ -33,10 +34,29 @@ export type RunRepositoryTarget = typeof RunRepositoryTarget.Type;
 
 export const RunDeadlines = Schema.Struct({
   launchBy: IsoDateTime,
+  bootBy: IsoDateTime,
+  registerBy: IsoDateTime,
   expiresAt: IsoDateTime,
   cleanupBy: IsoDateTime,
 });
 export type RunDeadlines = typeof RunDeadlines.Type;
+
+export const RunLaunchTemplate = Schema.Struct({
+  id: TrimmedNonEmptyString,
+  version: PositiveInt,
+});
+export type RunLaunchTemplate = typeof RunLaunchTemplate.Type;
+
+export const RunLaunchRetry = Schema.Union([
+  Schema.Struct({ status: Schema.Literal("ready"), failures: NonNegativeInt }),
+  Schema.Struct({
+    status: Schema.Literal("waiting"),
+    failures: PositiveInt,
+    retryAt: IsoDateTime,
+    reason: TrimmedNonEmptyString,
+  }),
+]);
+export type RunLaunchRetry = typeof RunLaunchRetry.Type;
 
 export const RunWorkerReferences = Schema.Struct({
   workerId: RunWorkerId,
@@ -52,9 +72,25 @@ export type RunResultLocation = typeof RunResultLocation.Type;
 
 export const RunAllocationState = Schema.Union([
   Schema.Struct({ status: Schema.Literal("queued") }),
-  Schema.Struct({ status: Schema.Literal("launching"), startedAt: IsoDateTime }),
+  Schema.Struct({
+    status: Schema.Literal("launching"),
+    startedAt: IsoDateTime,
+    launchTemplate: RunLaunchTemplate,
+    retry: RunLaunchRetry,
+  }),
+  Schema.Struct({
+    status: Schema.Literal("booting"),
+    instanceId: TrimmedNonEmptyString,
+    launchedAt: IsoDateTime,
+  }),
+  Schema.Struct({
+    status: Schema.Literal("registering"),
+    instanceId: TrimmedNonEmptyString,
+    bootedAt: IsoDateTime,
+  }),
   Schema.Struct({
     status: Schema.Literal("ready"),
+    instanceId: TrimmedNonEmptyString,
     references: RunWorkerReferences,
     readyAt: IsoDateTime,
   }),
@@ -62,6 +98,7 @@ export const RunAllocationState = Schema.Union([
     status: Schema.Literal("failed"),
     reason: TrimmedNonEmptyString,
     failedAt: IsoDateTime,
+    instanceId: Schema.optionalKey(TrimmedNonEmptyString),
   }),
 ]);
 export type RunAllocationState = typeof RunAllocationState.Type;
@@ -143,7 +180,24 @@ export const RunAllocationCommand = Schema.Union([
     profile: RunWorkerProfile,
     deadlines: RunDeadlines,
   }),
-  Schema.Struct({ ...AttemptCommandBase, type: Schema.Literal("allocation.launch-started") }),
+  Schema.Struct({
+    ...AttemptCommandBase,
+    type: Schema.Literal("allocation.launch-started"),
+    launchTemplate: RunLaunchTemplate,
+  }),
+  Schema.Struct({
+    ...AttemptCommandBase,
+    type: Schema.Literal("allocation.launch-retry-scheduled"),
+    failures: PositiveInt,
+    retryAt: IsoDateTime,
+    reason: TrimmedNonEmptyString,
+  }),
+  Schema.Struct({
+    ...AttemptCommandBase,
+    type: Schema.Literal("allocation.instance-launched"),
+    instanceId: TrimmedNonEmptyString,
+  }),
+  Schema.Struct({ ...AttemptCommandBase, type: Schema.Literal("allocation.worker-booted") }),
   Schema.Struct({
     ...AttemptCommandBase,
     type: Schema.Literal("allocation.worker-assigned"),
@@ -205,7 +259,24 @@ export const RunAllocationEvent = Schema.Union([
     profile: RunWorkerProfile,
     deadlines: RunDeadlines,
   }),
-  Schema.Struct({ ...EventBase, type: Schema.Literal("allocation.launch-started") }),
+  Schema.Struct({
+    ...EventBase,
+    type: Schema.Literal("allocation.launch-started"),
+    launchTemplate: RunLaunchTemplate,
+  }),
+  Schema.Struct({
+    ...EventBase,
+    type: Schema.Literal("allocation.launch-retry-scheduled"),
+    failures: PositiveInt,
+    retryAt: IsoDateTime,
+    reason: TrimmedNonEmptyString,
+  }),
+  Schema.Struct({
+    ...EventBase,
+    type: Schema.Literal("allocation.instance-launched"),
+    instanceId: TrimmedNonEmptyString,
+  }),
+  Schema.Struct({ ...EventBase, type: Schema.Literal("allocation.worker-booted") }),
   Schema.Struct({
     ...EventBase,
     type: Schema.Literal("allocation.worker-assigned"),
@@ -272,6 +343,7 @@ export class CloudAllocationControllerError extends Schema.TaggedError<CloudAllo
     reason: Schema.Literals([
       "controller-disabled",
       "allocation-not-found",
+      "queue-full",
       "persistence-failed",
       "invalid-persisted-event",
     ]),

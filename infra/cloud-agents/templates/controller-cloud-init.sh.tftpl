@@ -5,6 +5,8 @@ install -d -m 0750 /etc/t3
 
 cat >/etc/t3/controller.env <<'ENV'
 AWS_REGION=${aws_region}
+T3CODE_CLOUD_AWS_REGION=${aws_region}
+T3CODE_CLOUD_PROJECT=${project_name}
 T3_ARTIFACT_BUCKET=${artifact_bucket}
 T3_DATA_DIR=/var/lib/t3
 ENV
