@@ -304,6 +304,9 @@ Acceptance criteria:
 
 Dependencies: CA-02, CA-04A, CA-10, CA-11.
 
+Status: Done on 17 September 2026 in
+[PR #12](https://github.com/Atheal9k/cloud-agents/pull/12).
+
 Description: Save enough authoritative environment/workspace state to recover interrupted work and review the result after compute ends. Avoid continuous replication of the full domain model.
 
 Acceptance criteria:
