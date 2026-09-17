@@ -1,0 +1,6 @@
+services:
+  controller:
+    volumes:
+      - type: bind
+        source: ${T3CODE_WORKSPACE:?Set T3CODE_WORKSPACE to the host workspace}
+        target: /workspace

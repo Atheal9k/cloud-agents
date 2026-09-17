@@ -1,0 +1,38 @@
+name: t3-controller
+
+services:
+  controller:
+    image: ${T3CODE_IMAGE:-t3-code-controller:local}
+    restart: unless-stopped
+    stop_grace_period: 30s
+    ports:
+      - "${T3CODE_BIND_ADDRESS:-127.0.0.1}:${T3CODE_PORT:-3777}:3777"
+    environment:
+      T3CODE_CLOUD_CONTROLLER: "1"
+      T3CODE_HOME: /var/lib/t3
+      T3CODE_HOST: 0.0.0.0
+      T3CODE_NO_BROWSER: "1"
+      T3CODE_PORT: "3777"
+    volumes:
+      - t3-controller-data:/var/lib/t3
+    read_only: true
+    tmpfs:
+      - /tmp:rw,noexec,nosuid,size=256m
+    cap_drop:
+      - ALL
+    security_opt:
+      - no-new-privileges:true
+    healthcheck:
+      test:
+        - CMD
+        - node
+        - -e
+        - "fetch('http://127.0.0.1:3777/').then(r=>{if(!r.ok)throw new Error(String(r.status))}).catch(()=>process.exit(1))"
+      interval: 10s
+      timeout: 5s
+      start_period: 20s
+      retries: 6
+
+volumes:
+  t3-controller-data:
+    name: ${T3CODE_DATA_VOLUME:-t3-controller-data}

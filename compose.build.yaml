@@ -1,0 +1,8 @@
+services:
+  controller:
+    build:
+      context: .
+      dockerfile: Dockerfile
+      args:
+        T3CODE_IMAGE_VERSION: ${T3CODE_IMAGE_VERSION:-0.0.42}
+        T3CODE_SOURCE_REVISION: ${T3CODE_SOURCE_REVISION:?Set T3CODE_SOURCE_REVISION to the full Git commit}
