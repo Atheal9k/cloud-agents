@@ -8,6 +8,7 @@ import * as Schema from "effect/Schema";
 
 import * as ServerConfig from "../config.ts";
 import * as CloudAllocationController from "./CloudAllocationController.ts";
+import * as CloudWorkerRegistration from "./CloudWorkerRegistration.ts";
 import * as CloudWorkerProvider from "./CloudWorkerProvider.ts";
 
 const MAX_LAUNCH_FAILURES = 3;
@@ -52,6 +53,7 @@ function orderedAllocations(
 
 export const make = Effect.fn("CloudAllocationReconciler.make")(function* () {
   const controller = yield* CloudAllocationController.CloudAllocationController;
+  const registrations = yield* CloudWorkerRegistration.CloudWorkerRegistration;
   const workers = yield* CloudWorkerProvider.CloudWorkerProvider;
 
   const dispatch = Effect.fn("CloudAllocationReconciler.dispatch")(function* (
@@ -228,12 +230,14 @@ export const make = Effect.fn("CloudAllocationReconciler.make")(function* () {
           return;
         }
 
+        const registrationCredential = yield* registrations.issueCredential(allocation);
         const launched = yield* workers
           .launch({
             allocationId: allocation.id,
             attempt: allocation.attempt,
             expiresAt: allocation.deadlines.expiresAt,
             launchTemplate: allocation.allocationState.launchTemplate,
+            registrationCredential,
           })
           .pipe(Effect.result);
         if (Result.isSuccess(launched)) {

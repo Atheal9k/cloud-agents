@@ -92,6 +92,19 @@ export function decideRunAllocationCommand(
         allocation.cleanupState.status === "not-requested"
         ? [{ ...base, type: command.type, references: command.references }]
         : [];
+    case "allocation.worker-registered":
+      return allocation.allocationState.status === "registering" &&
+        allocation.agentOutcome.status === "not-started" &&
+        allocation.cleanupState.status === "not-requested"
+        ? [
+            {
+              ...base,
+              type: command.type,
+              references: command.references,
+              route: command.route,
+            },
+          ]
+        : [];
     case "allocation.launch-failed":
       return (allocation.allocationState.status === "queued" ||
         allocation.allocationState.status === "launching" ||
@@ -285,6 +298,19 @@ export function projectRunAllocationEvent(
           status: "ready",
           instanceId: allocation.allocationState.instanceId,
           references: event.references,
+          readyAt: event.occurredAt,
+        },
+      });
+    case "allocation.worker-registered":
+      if (allocation.allocationState.status !== "registering") {
+        throw new Error("Worker registration requires a registering allocation");
+      }
+      return projectUpdate(allocation, event, {
+        allocationState: {
+          status: "ready",
+          instanceId: allocation.allocationState.instanceId,
+          references: event.references,
+          route: event.route,
           readyAt: event.occurredAt,
         },
       });

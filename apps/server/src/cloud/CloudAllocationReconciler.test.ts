@@ -7,6 +7,7 @@ import * as TestClock from "effect/testing/TestClock";
 import { SqlitePersistenceMemory } from "../persistence/Layers/Sqlite.ts";
 import * as CloudAllocationController from "./CloudAllocationController.ts";
 import * as CloudAllocationReconciler from "./CloudAllocationReconciler.ts";
+import { CloudWorkerRegistration } from "./CloudWorkerRegistration.ts";
 import {
   CloudWorkerProvider,
   CloudWorkerProviderError,
@@ -81,6 +82,13 @@ function fixture(input: { readonly launchFailure?: "capacity" | "lost-response" 
     });
     const reconciler = yield* CloudAllocationReconciler.make().pipe(
       Effect.provideService(CloudAllocationController.CloudAllocationController, controller),
+      Effect.provideService(
+        CloudWorkerRegistration,
+        CloudWorkerRegistration.of({
+          issueCredential: () => Effect.succeed("registration-credential"),
+          register: () => Effect.die("unused"),
+        }),
+      ),
       Effect.provideService(CloudWorkerProvider, provider),
     );
     return { controller, provider, reconciler, state };
@@ -104,6 +112,13 @@ it.effect("recovers a lost launch response without creating another instance", (
       Effect.provideService(
         CloudAllocationController.CloudAllocationController,
         restartedController,
+      ),
+      Effect.provideService(
+        CloudWorkerRegistration,
+        CloudWorkerRegistration.of({
+          issueCredential: () => Effect.succeed("registration-credential"),
+          register: () => Effect.die("unused"),
+        }),
       ),
       Effect.provideService(CloudWorkerProvider, provider),
     );

@@ -112,6 +112,11 @@ build {
   }
 
   provisioner "file" {
+    source      = "${path.root}/files/cloud-agent-worker-registration.service"
+    destination = "/tmp/cloud-agent-worker-registration.service"
+  }
+
+  provisioner "file" {
     source      = "${path.root}/scripts/cloud-agent-worker-cleanup"
     destination = "/tmp/cloud-agent-worker-cleanup"
   }
@@ -119,6 +124,11 @@ build {
   provisioner "file" {
     source      = "${path.root}/scripts/cloud-agent-worker-preflight"
     destination = "/tmp/cloud-agent-worker-preflight"
+  }
+
+  provisioner "file" {
+    source      = "${path.root}/scripts/cloud-agent-worker-register"
+    destination = "/tmp/cloud-agent-worker-register"
   }
 
   provisioner "shell" {

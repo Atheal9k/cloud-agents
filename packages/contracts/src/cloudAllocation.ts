@@ -65,6 +65,21 @@ export const RunWorkerReferences = Schema.Struct({
 });
 export type RunWorkerReferences = typeof RunWorkerReferences.Type;
 
+export const RunWorkerRoute = Schema.Struct({
+  httpBaseUrl: TrimmedNonEmptyString,
+  wsBaseUrl: TrimmedNonEmptyString,
+  accessToken: TrimmedNonEmptyString,
+});
+export type RunWorkerRoute = typeof RunWorkerRoute.Type;
+
+export const RunWorkerRegistrationInput = Schema.Struct({
+  allocationId: RunAllocationId,
+  attempt: RunAllocationAttempt,
+  references: RunWorkerReferences,
+  route: RunWorkerRoute,
+});
+export type RunWorkerRegistrationInput = typeof RunWorkerRegistrationInput.Type;
+
 export const RunResultLocation = Schema.Struct({
   uri: TrimmedNonEmptyString,
 });
@@ -92,6 +107,8 @@ export const RunAllocationState = Schema.Union([
     status: Schema.Literal("ready"),
     instanceId: TrimmedNonEmptyString,
     references: RunWorkerReferences,
+    /** Absent on CA-08 events written before worker routing was introduced. */
+    route: Schema.optionalKey(RunWorkerRoute),
     readyAt: IsoDateTime,
   }),
   Schema.Struct({
@@ -205,6 +222,12 @@ export const RunAllocationCommand = Schema.Union([
   }),
   Schema.Struct({
     ...AttemptCommandBase,
+    type: Schema.Literal("allocation.worker-registered"),
+    references: RunWorkerReferences,
+    route: RunWorkerRoute,
+  }),
+  Schema.Struct({
+    ...AttemptCommandBase,
     type: Schema.Literal("allocation.launch-failed"),
     reason: TrimmedNonEmptyString,
   }),
@@ -281,6 +304,12 @@ export const RunAllocationEvent = Schema.Union([
     ...EventBase,
     type: Schema.Literal("allocation.worker-assigned"),
     references: RunWorkerReferences,
+  }),
+  Schema.Struct({
+    ...EventBase,
+    type: Schema.Literal("allocation.worker-registered"),
+    references: RunWorkerReferences,
+    route: RunWorkerRoute,
   }),
   Schema.Struct({
     ...EventBase,

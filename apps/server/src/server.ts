@@ -131,6 +131,8 @@ import * as CloudCliTokenManager from "./cloud/CliTokenManager.ts";
 import * as CloudCliState from "./cloud/CliState.ts";
 import * as CloudAllocationController from "./cloud/CloudAllocationController.ts";
 import * as CloudAllocationReconciler from "./cloud/CloudAllocationReconciler.ts";
+import * as CloudWorkerRegistration from "./cloud/CloudWorkerRegistration.ts";
+import { cloudWorkerRegistrationHttpApiLayer } from "./cloud/CloudWorkerRegistrationHttp.ts";
 import * as CloudWorkerProvider from "./cloud/CloudWorkerProvider.ts";
 import * as CloudGitCredentials from "./cloud/CloudGitCredentials.ts";
 import * as ServerSelfUpdate from "./cloud/selfUpdate.ts";
@@ -283,9 +285,14 @@ const CloudWorkerProviderLayerLive = CloudWorkerProvider.layer.pipe(
   Layer.provide(ProcessRunner.layer),
 );
 
+const CloudWorkerRegistrationLayerLive = CloudWorkerRegistration.layer.pipe(
+  Layer.provide(ServerSecretStore.layer),
+  Layer.provideMerge(CloudAllocationControllerLayerLive),
+);
+
 const CloudAllocationRuntimeLayerLive = CloudAllocationReconciler.layer.pipe(
   Layer.provide(CloudWorkerProviderLayerLive),
-  Layer.provideMerge(CloudAllocationControllerLayerLive),
+  Layer.provideMerge(CloudWorkerRegistrationLayerLive),
 );
 
 const CloudGitCredentialsLayerLive = CloudGitCredentials.layer.pipe(
@@ -591,6 +598,7 @@ export const makeRoutesLayer = Layer.mergeAll(
     HttpApiBuilder.layer(EnvironmentHttpApi).pipe(
       Layer.provide(authHttpApiLayer),
       Layer.provide(connectHttpApiLayer),
+      Layer.provide(cloudWorkerRegistrationHttpApiLayer),
       Layer.provide(orchestrationHttpApiLayer),
       Layer.provide(pullRequestHttpApiLayer),
       Layer.provide(serverEnvironmentHttpApiLayer),

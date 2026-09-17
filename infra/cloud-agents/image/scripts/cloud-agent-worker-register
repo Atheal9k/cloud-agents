@@ -1,0 +1,107 @@
+#!/bin/bash
+set -euo pipefail
+
+fail() {
+  echo "cloud-agent worker registration failed: $*" >&2
+  exit 1
+}
+
+metadata_base='http://169.254.169.254/latest'
+metadata_token="$(
+  curl --noproxy '*' --silent --show-error --fail --max-time 5 \
+    --request PUT \
+    --header 'X-aws-ec2-metadata-token-ttl-seconds: 60' \
+    "${metadata_base}/api/token"
+)" || fail 'instance metadata token is unavailable'
+
+read_tag() {
+  curl --noproxy '*' --silent --show-error --fail --max-time 5 \
+    --header "X-aws-ec2-metadata-token: ${metadata_token}" \
+    "${metadata_base}/meta-data/tags/instance/$1"
+}
+
+allocation_id="$(read_tag CloudAgentAllocationId)" || fail 'allocation id tag is unavailable'
+attempt="$(read_tag CloudAgentAttempt)" || fail 'attempt tag is unavailable'
+controller_url="$(read_tag CloudAgentControllerUrl)" || fail 'controller URL tag is unavailable'
+worker_route_url="$(read_tag CloudAgentWorkerRouteUrl)" || fail 'worker route URL tag is unavailable'
+registration_credential="$(read_tag CloudAgentRegistrationCredential)" \
+  || fail 'registration credential tag is unavailable'
+
+normalized_urls="$(node -e '
+  const controller = new URL(process.argv[1]);
+  const worker = new URL(process.argv[2]);
+  if (controller.protocol !== "https:" || worker.protocol !== "https:") process.exit(2);
+  if (controller.username || controller.password || worker.username || worker.password) process.exit(2);
+  controller.pathname = "/api/cloud/workers/register";
+  controller.search = "";
+  controller.hash = "";
+  worker.pathname = "/";
+  worker.search = "";
+  worker.hash = "";
+  const socket = new URL(worker);
+  socket.protocol = "wss:";
+  process.stdout.write([controller, worker, socket].map(String).join("\n"));
+' "${controller_url}" "${worker_route_url}")" || fail 'controller or worker route URL is invalid'
+mapfile -t urls <<<"${normalized_urls}"
+controller_registration_url="${urls[0]}"
+worker_http_url="${urls[1]}"
+worker_ws_url="${urls[2]}"
+
+descriptor=''
+for _ in {1..30}; do
+  if descriptor="$(curl --silent --show-error --fail --max-time 2 \
+    http://127.0.0.1:3773/.well-known/t3/environment)"; then
+    break
+  fi
+  sleep 1
+done
+environment_id="$(jq --exit-status --raw-output '.environmentId | select(type == "string" and length > 0)' \
+  <<<"${descriptor}")" || fail 'local T3 descriptor is unavailable'
+
+access_token="$(runuser --user cloudagent -- \
+  t3 auth session issue \
+  --base-dir /var/lib/t3-worker/t3 \
+  --ttl 2h \
+  --subject "cloud-worker:${allocation_id}:${attempt}" \
+  --label "Cloud worker ${allocation_id}" \
+  --token-only)" || fail 'worker access token could not be issued'
+
+payload="$(jq --null-input \
+  --arg allocation_id "${allocation_id}" \
+  --arg attempt "${attempt}" \
+  --arg worker_id "worker-${allocation_id}-${attempt}" \
+  --arg environment_id "${environment_id}" \
+  --arg thread_id "thread-${allocation_id}-${attempt}" \
+  --arg http_base_url "${worker_http_url}" \
+  --arg ws_base_url "${worker_ws_url}" \
+  --arg access_token "${access_token}" \
+  '{
+    allocationId: $allocation_id,
+    attempt: ($attempt | tonumber),
+    references: {
+      workerId: $worker_id,
+      environmentId: $environment_id,
+      threadId: $thread_id
+    },
+    route: {
+      httpBaseUrl: $http_base_url,
+      wsBaseUrl: $ws_base_url,
+      accessToken: $access_token
+    }
+  }')" || fail 'worker registration payload could not be encoded'
+
+response="$(curl --silent --show-error --fail-with-body --max-time 20 \
+  --request POST \
+  --header "Authorization: Bearer ${registration_credential}" \
+  --header 'Content-Type: application/json' \
+  --data-binary "${payload}" \
+  "${controller_registration_url}")" || fail 'controller rejected worker registration'
+
+jq --exit-status \
+  --arg allocation_id "${allocation_id}" \
+  --arg attempt "${attempt}" \
+  --arg environment_id "${environment_id}" \
+  '.id == $allocation_id and .attempt == ($attempt | tonumber) and
+   .allocationState.status == "ready" and
+   .allocationState.references.environmentId == $environment_id' \
+  <<<"${response}" >/dev/null || fail 'controller returned an invalid registration receipt'

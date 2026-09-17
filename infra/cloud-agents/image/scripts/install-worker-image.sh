@@ -60,8 +60,10 @@ install -d -m 0755 /opt/t3/bin
 install -d -o cloudagent -g cloudagent -m 0700 /var/lib/t3-worker/t3
 install -d -o cloudagent -g cloudagent -m 0750 /work
 install -m 0755 /tmp/cloud-agent-worker-preflight /opt/t3/bin/cloud-agent-worker-preflight
+install -m 0755 /tmp/cloud-agent-worker-register /opt/t3/bin/cloud-agent-worker-register
 install -m 0755 /tmp/cloud-agent-worker-cleanup /opt/t3/bin/cloud-agent-worker-cleanup
 install -m 0644 /tmp/cloud-agent-worker.service /etc/systemd/system/cloud-agent-worker.service
+install -m 0644 /tmp/cloud-agent-worker-registration.service /etc/systemd/system/cloud-agent-worker-registration.service
 
 jq --null-input \
   --arg image_version "${IMAGE_VERSION}" \
@@ -97,3 +99,4 @@ chmod 0644 /opt/t3/worker-os-packages.txt
 
 systemctl daemon-reload
 systemctl enable cloud-agent-worker.service
+systemctl enable cloud-agent-worker-registration.service

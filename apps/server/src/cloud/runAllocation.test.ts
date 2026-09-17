@@ -45,6 +45,11 @@ const references = {
   environmentId: "environment-1",
   threadId: "thread-1",
 };
+const route = {
+  httpBaseUrl: "https://worker.example.test/",
+  wsBaseUrl: "wss://worker.example.test/",
+  accessToken: "worker-access-token",
+};
 
 function command(input: typeof RunAllocationCommand.Encoded): RunAllocationCommand {
   return decodeCommand(input);
@@ -102,12 +107,13 @@ function runningAllocation(): {
       occurredAt: "2026-09-17T03:00:03.000Z",
     }),
     command({
-      type: "allocation.worker-assigned",
+      type: "allocation.worker-registered",
       commandId: "command-worker-assigned",
       allocationId: "allocation-1",
       attempt: 1,
       occurredAt: "2026-09-17T03:00:04.000Z",
       references,
+      route,
     }),
     command({
       type: "allocation.agent-started",
@@ -329,6 +335,7 @@ describe("cloud allocation transitions", () => {
       status: "ready",
       instanceId: "i-worker",
       references,
+      route,
       readyAt: "2026-09-17T03:00:04.000Z",
     });
     expect(allocation.agentOutcome).toEqual({

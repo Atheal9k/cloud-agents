@@ -16,8 +16,11 @@ fail() {
   || fail "workspace permissions are not isolated"
 [[ "$(systemctl is-enabled cloud-agent-worker.service)" == "enabled" ]] \
   || fail "worker service is not enabled"
+[[ "$(systemctl is-enabled cloud-agent-worker-registration.service)" == "enabled" ]] \
+  || fail "worker registration service is not enabled"
 
 systemd-analyze verify /etc/systemd/system/cloud-agent-worker.service
+systemd-analyze verify /etc/systemd/system/cloud-agent-worker-registration.service
 install -d -m 0750 /etc/t3
 cat >/etc/t3/worker.env <<'ENV'
 T3CODE_PORT=3773
@@ -67,3 +70,4 @@ else
 fi
 
 systemctl enable cloud-agent-worker.service
+systemctl enable cloud-agent-worker-registration.service

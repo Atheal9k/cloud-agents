@@ -136,17 +136,18 @@ run "protected_plan" {
   }
 
   assert {
-    condition     = aws_launch_template.worker["linux-web"].metadata_options[0].instance_metadata_tags == "disabled"
-    error_message = "Workers must not expose instance tags through metadata."
+    condition     = aws_launch_template.worker["linux-web"].metadata_options[0].instance_metadata_tags == "enabled"
+    error_message = "The root registration unit must be able to read attempt-bound launch tags."
   }
 
   assert {
     condition = alltrue([
       strcontains(base64decode(aws_launch_template.worker["linux-web"].user_data), "0.0.42-ca07.2"),
       strcontains(base64decode(aws_launch_template.worker["linux-web"].user_data), "systemctl start cloud-agent-worker.service"),
+      strcontains(base64decode(aws_launch_template.worker["linux-web"].user_data), "cloud-agent-worker-registration.service"),
       !strcontains(base64decode(aws_launch_template.worker["linux-web"].user_data), aws_s3_bucket.artifacts.id),
     ])
-    error_message = "Worker bootstrap must validate the pinned image, start its baked service, and omit controller-owned configuration."
+    error_message = "Worker bootstrap must validate the pinned image, start its baked services, and omit controller-owned configuration."
   }
 
   assert {
