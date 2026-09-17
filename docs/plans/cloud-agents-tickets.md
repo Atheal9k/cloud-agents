@@ -371,6 +371,9 @@ Acceptance criteria:
 
 Dependencies: CA-02, CA-08, CA-17.
 
+Status: Done on 17 September 2026 in
+[PR #16](https://github.com/Atheal9k/cloud-agents/pull/16).
+
 Description: Keep the personal release bounded without building a billing dashboard.
 
 Acceptance criteria:
