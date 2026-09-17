@@ -3,13 +3,14 @@ import { expect, it } from "@effect/vitest";
 import * as Effect from "effect/Effect";
 import * as Schema from "effect/Schema";
 import * as SqlClient from "effect/unstable/sql/SqlClient";
+import * as TestClock from "effect/testing/TestClock";
 
 import { SqlitePersistenceMemory } from "../persistence/Layers/Sqlite.ts";
 import { make } from "./CloudAllocationController.ts";
 
 const decodeCommand = Schema.decodeSync(RunAllocationCommand);
 
-const launch = decodeCommand({
+const launchInput = {
   type: "allocation.launch",
   commandId: "command-launch",
   allocationId: "allocation-1",
@@ -20,7 +21,7 @@ const launch = decodeCommand({
     baseCommit: "afd7667ed",
     branch: "ca-04a-local-controller",
   },
-  profile: { id: "linux-web", os: "linux", arch: "x64" },
+  profile: { id: "linux-web", os: "linux", arch: "x64", instanceType: "t3.medium" },
   deadlines: {
     launchBy: "2026-09-17T03:05:00.000Z",
     bootBy: "2026-09-17T03:10:00.000Z",
@@ -28,7 +29,8 @@ const launch = decodeCommand({
     expiresAt: "2026-09-17T05:00:00.000Z",
     cleanupBy: "2026-09-17T05:05:00.000Z",
   },
-});
+} as const;
+const launch = decodeCommand(launchInput);
 
 it.effect("keeps the local allocation controller opt-in", () =>
   Effect.gen(function* () {
@@ -41,12 +43,22 @@ it.effect("keeps the local allocation controller opt-in", () =>
 
 it.effect("rejects admission beyond the durable queue bound", () =>
   Effect.gen(function* () {
-    const controller = yield* make({ enabled: true, maxQueueDepth: 1 });
+    const controller = yield* make({
+      enabled: true,
+      limits: {
+        maxConcurrentWorkers: 1,
+        maxQueueDepth: 0,
+        maxRunSeconds: 7_200,
+        maxInputWaitSeconds: 900,
+        previewGraceSeconds: 900,
+        allowedInstanceTypes: ["t3.medium"],
+      },
+    });
     yield* controller.dispatch(launch);
     const error = yield* controller
       .dispatch(
         decodeCommand({
-          ...launch,
+          ...launchInput,
           commandId: "command-launch-2",
           allocationId: "allocation-2",
         }),
@@ -75,7 +87,133 @@ it.effect("persists allocation events and rebuilds the catalog after restart", (
     const restartedController = yield* make({ enabled: true });
     const snapshot = yield* restartedController.snapshot;
 
-    expect(snapshot.controller).toEqual({ mode: "local", requiresHostOnline: true });
+    expect(snapshot.controller).toEqual({
+      mode: "local",
+      requiresHostOnline: true,
+      admission: { status: "open" },
+    });
     expect(snapshot.allocations).toEqual([launched]);
+  }).pipe(Effect.provide(SqlitePersistenceMemory)),
+);
+
+it.effect("rejects invalid shapes and run durations before allocation", () =>
+  Effect.gen(function* () {
+    const controller = yield* make({ enabled: true });
+    const invalidShape = yield* controller
+      .dispatch(
+        decodeCommand({
+          ...launchInput,
+          profile: { ...launchInput.profile, instanceType: "m7i.48xlarge" },
+        }),
+      )
+      .pipe(Effect.flip);
+    const invalidDuration = yield* controller
+      .dispatch(
+        decodeCommand({
+          ...launchInput,
+          commandId: "command-long-run",
+          allocationId: "allocation-long-run",
+          deadlines: {
+            ...launchInput.deadlines,
+            expiresAt: "2026-09-17T05:00:01.000Z",
+            cleanupBy: "2026-09-17T05:05:01.000Z",
+          },
+        }),
+      )
+      .pipe(Effect.flip);
+
+    expect(invalidShape.reason).toBe("invalid-request");
+    expect(invalidDuration.reason).toBe("invalid-request");
+    expect((yield* controller.snapshot).allocations).toEqual([]);
+  }).pipe(Effect.provide(SqlitePersistenceMemory)),
+);
+
+it.effect("persists stopped admission without blocking control of accepted runs", () =>
+  Effect.gen(function* () {
+    const controller = yield* make({ enabled: true });
+    const accepted = yield* controller.dispatch(launch);
+    yield* controller.setAdmission({
+      admissionOpen: false,
+      occurredAt: "2026-09-17T03:01:00.000Z",
+    });
+    const rejected = yield* controller
+      .dispatch(
+        decodeCommand({
+          ...launchInput,
+          commandId: "command-launch-while-stopped",
+          allocationId: "allocation-while-stopped",
+        }),
+      )
+      .pipe(Effect.flip);
+    const cancelled = yield* controller.dispatch(
+      decodeCommand({
+        type: "allocation.cancel",
+        commandId: "command-cancel-accepted",
+        allocationId: accepted.id,
+        attempt: accepted.attempt,
+        occurredAt: "2026-09-17T03:02:00.000Z",
+      }),
+    );
+    const restarted = yield* make({ enabled: true });
+
+    expect(rejected.reason).toBe("admission-stopped");
+    expect(cancelled.cleanupState.status).toBe("requested");
+    expect((yield* restarted.snapshot).controller.admission).toEqual({
+      status: "stopped",
+      stoppedAt: "2026-09-17T03:01:00.000Z",
+    });
+    const reopened = yield* restarted.setAdmission({
+      admissionOpen: true,
+      occurredAt: "2026-09-17T03:03:00.000Z",
+    });
+    const acceptedAfterReopen = yield* restarted.dispatch(
+      decodeCommand({
+        ...launchInput,
+        commandId: "command-launch-after-reopen",
+        allocationId: "allocation-after-reopen",
+      }),
+    );
+    expect(reopened.controller.admission.status).toBe("open");
+    expect(acceptedAfterReopen.allocationState.status).toBe("queued");
+  }).pipe(Effect.provide(SqlitePersistenceMemory)),
+);
+
+it.effect("reports elapsed worker time and categorized estimate assumptions", () =>
+  Effect.gen(function* () {
+    yield* TestClock.setTime(Date.parse("2026-09-17T03:00:00.000Z"));
+    const controller = yield* make({ enabled: true });
+    const accepted = yield* controller.dispatch(launch);
+    yield* controller.dispatch(
+      decodeCommand({
+        type: "allocation.launch-started",
+        commandId: "command-launch-started",
+        allocationId: accepted.id,
+        attempt: accepted.attempt,
+        occurredAt: "2026-09-17T03:00:00.000Z",
+        launchTemplate: { id: "lt-worker", version: 1 },
+      }),
+    );
+    yield* controller.dispatch(
+      decodeCommand({
+        type: "allocation.instance-launched",
+        commandId: "command-instance-launched",
+        allocationId: accepted.id,
+        attempt: accepted.attempt,
+        occurredAt: "2026-09-17T03:00:00.000Z",
+        instanceId: "i-worker",
+      }),
+    );
+    yield* TestClock.setTime(Date.parse("2026-09-17T04:00:00.000Z"));
+
+    const snapshot = yield* controller.snapshot;
+    const usage = snapshot.usage[0];
+    expect(usage?.elapsedWorkerSeconds).toBe(3_600);
+    expect(usage?.instanceType).toBe("t3.medium");
+    expect(usage?.costs.workerCompute).toMatchObject({ status: "estimated", usd: 0.0496 });
+    expect(usage?.costs.controllerHost.status).toBe("not-attributed");
+    expect(usage?.costs.provider.status).toBe("unknown");
+    expect(usage?.costs.storage.status).toBe("unknown");
+    expect(usage?.costs.streamingTransfer.status).toBe("unknown");
+    expect(snapshot.spendingControl).toBe("estimate-only");
   }).pipe(Effect.provide(SqlitePersistenceMemory)),
 );

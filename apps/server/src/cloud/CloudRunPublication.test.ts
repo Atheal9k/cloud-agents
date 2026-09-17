@@ -83,7 +83,7 @@ it.layer(NodeServices.layer)("CloudRunPublication", (it) => {
         branch: outputBranch,
       },
       publication,
-      profile: { id: "linux-web", os: "linux", arch: "x64" },
+      profile: { id: "linux-web", os: "linux", arch: "x64", instanceType: "t3.medium" },
       deadlines: {
         launchBy: NOW,
         bootBy: NOW,

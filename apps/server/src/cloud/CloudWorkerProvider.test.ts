@@ -63,6 +63,8 @@ it.effect("pins the discovered template and reuses one AWS client token", () =>
       allocationId,
       attempt,
       expiresAt: "2026-09-17T05:00:00.000Z",
+      instanceType: "t3.medium",
+      maxInputWaitSeconds: 900,
       launchTemplate,
       registrationCredential: "registration-credential",
     };
@@ -81,6 +83,9 @@ it.effect("pins the discovered template and reuses one AWS client token", () =>
     expect(launches[0]?.args.join(" ")).toContain("CloudAgentAllocationId");
     expect(launches[0]?.args.join(" ")).toContain("CloudAgentExpiresAtEpoch");
     expect(launches[0]?.args.join(" ")).toContain("CloudAgentRegistrationCredential");
+    expect(launches[0]?.args.join(" ")).toContain("CloudAgentMaxInputWaitSeconds");
+    expect(launches[0]?.args).toContain("--instance-type");
+    expect(launches[0]?.args).toContain("t3.medium");
   }),
 );
 
@@ -106,6 +111,8 @@ it.effect("classifies AWS capacity failures as retryable", () =>
         allocationId,
         attempt,
         expiresAt: "2026-09-17T05:00:00.000Z",
+        instanceType: "t3.medium",
+        maxInputWaitSeconds: 900,
         launchTemplate: { id: "lt-worker", version: 7 },
         registrationCredential: "registration-credential",
       })
@@ -132,6 +139,8 @@ it.effect("rejects controller-local routing before launching a worker", () =>
         allocationId,
         attempt,
         expiresAt: "2026-09-17T05:00:00.000Z",
+        instanceType: "t3.medium",
+        maxInputWaitSeconds: 900,
         launchTemplate: { id: "lt-worker", version: 7 },
         registrationCredential: "registration-credential",
       })

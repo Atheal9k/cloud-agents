@@ -24,6 +24,8 @@ export const RunWorkerProfile = Schema.Struct({
   os: ExecutionEnvironmentPlatformOs,
   arch: ExecutionEnvironmentPlatformArch,
   device: Schema.optionalKey(RunWorkerDevice),
+  /** Missing on allocation requests written before CA-18. New admissions require it. */
+  instanceType: Schema.optionalKey(TrimmedNonEmptyString),
 });
 export type RunWorkerProfile = typeof RunWorkerProfile.Type;
 
@@ -419,12 +421,80 @@ export const CloudAllocationControllerStatus = Schema.Struct({
   mode: CloudAllocationControllerMode,
   /** A local controller can outlive clients, but not the machine hosting T3. */
   requiresHostOnline: Schema.Literal(true),
+  admission: Schema.Union([
+    Schema.Struct({ status: Schema.Literal("open") }),
+    Schema.Struct({ status: Schema.Literal("stopped"), stoppedAt: IsoDateTime }),
+  ]),
 });
 export type CloudAllocationControllerStatus = typeof CloudAllocationControllerStatus.Type;
 
+export const CloudAllocationLimits = Schema.Struct({
+  maxConcurrentWorkers: Schema.Literal(1),
+  maxQueueDepth: NonNegativeInt,
+  maxRunSeconds: PositiveInt,
+  maxInputWaitSeconds: PositiveInt,
+  previewGraceSeconds: NonNegativeInt,
+  allowedInstanceTypes: Schema.Array(TrimmedNonEmptyString).pipe(
+    Schema.check(Schema.isMinLength(1)),
+  ),
+});
+export type CloudAllocationLimits = typeof CloudAllocationLimits.Type;
+
+const NonNegativeFinite = Schema.Finite.check(Schema.isGreaterThanOrEqualTo(0));
+
+export const CloudWorkerPriceAssumption = Schema.Struct({
+  instanceType: TrimmedNonEmptyString,
+  hourlyUsd: NonNegativeFinite,
+  region: TrimmedNonEmptyString,
+  description: TrimmedNonEmptyString,
+});
+export type CloudWorkerPriceAssumption = typeof CloudWorkerPriceAssumption.Type;
+
+export const CloudRunCostCategory = Schema.Union([
+  Schema.Struct({
+    status: Schema.Literal("estimated"),
+    usd: NonNegativeFinite,
+    assumption: TrimmedNonEmptyString,
+  }),
+  Schema.Struct({
+    status: Schema.Literal("not-attributed"),
+    reason: TrimmedNonEmptyString,
+  }),
+  Schema.Struct({ status: Schema.Literal("unknown"), reason: TrimmedNonEmptyString }),
+]);
+export type CloudRunCostCategory = typeof CloudRunCostCategory.Type;
+
+export const CloudRunUsage = Schema.Struct({
+  allocationId: RunAllocationId,
+  attempt: RunAllocationAttempt,
+  calculatedAt: IsoDateTime,
+  elapsedWorkerSeconds: NonNegativeInt,
+  instanceType: Schema.optionalKey(TrimmedNonEmptyString),
+  deadlines: RunDeadlines,
+  costs: Schema.Struct({
+    controllerHost: CloudRunCostCategory,
+    workerCompute: CloudRunCostCategory,
+    storage: CloudRunCostCategory,
+    provider: CloudRunCostCategory,
+    streamingTransfer: CloudRunCostCategory,
+  }),
+});
+export type CloudRunUsage = typeof CloudRunUsage.Type;
+
+export const CloudAdmissionControlInput = Schema.Struct({
+  admissionOpen: Schema.Boolean,
+  occurredAt: IsoDateTime,
+});
+export type CloudAdmissionControlInput = typeof CloudAdmissionControlInput.Type;
+
 export const CloudAllocationSnapshot = Schema.Struct({
   controller: CloudAllocationControllerStatus,
+  limits: CloudAllocationLimits,
+  workerPriceAssumptions: Schema.Array(CloudWorkerPriceAssumption),
+  /** Billing alerts can lag and are not an exact live spending cap. */
+  spendingControl: Schema.Literal("estimate-only"),
   allocations: Schema.Array(RunAllocation),
+  usage: Schema.Array(CloudRunUsage),
 });
 export type CloudAllocationSnapshot = typeof CloudAllocationSnapshot.Type;
 
@@ -433,7 +503,9 @@ export class CloudAllocationControllerError extends Schema.TaggedError<CloudAllo
   {
     reason: Schema.Literals([
       "controller-disabled",
+      "admission-stopped",
       "allocation-not-found",
+      "invalid-request",
       "queue-full",
       "persistence-failed",
       "invalid-persisted-event",

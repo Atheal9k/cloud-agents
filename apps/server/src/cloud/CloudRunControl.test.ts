@@ -31,7 +31,7 @@ function runningAllocation() {
       baseCommit: "a".repeat(40),
       branch: "cloud/run/control-1",
     },
-    profile: { id: "linux-web", os: "linux", arch: "x64" },
+    profile: { id: "linux-web", os: "linux", arch: "x64", instanceType: "t3.medium" },
     deadlines: {
       launchBy: "2026-09-17T05:01:00.000Z",
       bootBy: "2026-09-17T05:02:00.000Z",
@@ -166,10 +166,22 @@ function fixture(initial: RunAllocation, options?: { readonly captureFails?: boo
           return allocation;
         }),
       snapshot: Effect.sync(() => ({
-        controller: { mode: "local", requiresHostOnline: true },
+        controller: { mode: "local", requiresHostOnline: true, admission: { status: "open" } },
+        limits: {
+          maxConcurrentWorkers: 1,
+          maxQueueDepth: 8,
+          maxRunSeconds: 7_200,
+          maxInputWaitSeconds: 900,
+          previewGraceSeconds: 900,
+          allowedInstanceTypes: ["t3.medium"],
+        },
+        workerPriceAssumptions: [],
+        spendingControl: "estimate-only",
         allocations: [allocation],
+        usage: [],
       })),
       stream: Stream.empty,
+      setAdmission: () => Effect.die("unused"),
     });
     const execution = CloudProviderExecution.CloudProviderExecution.of({
       start: () => Effect.die("unused"),

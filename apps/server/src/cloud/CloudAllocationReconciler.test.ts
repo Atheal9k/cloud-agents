@@ -30,7 +30,7 @@ function launchCommand(allocationId: string) {
       baseCommit: "afd7667ed",
       branch: "ca-08-durable-worker-allocation",
     },
-    profile: { id: "linux-web", os: "linux", arch: "x64" },
+    profile: { id: "linux-web", os: "linux", arch: "x64", instanceType: "t3.medium" },
     deadlines: {
       launchBy: "2026-09-17T03:05:00.000Z",
       bootBy: "2026-09-17T03:10:00.000Z",

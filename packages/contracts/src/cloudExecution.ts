@@ -123,6 +123,7 @@ export class CloudProviderExecutionError extends Schema.TaggedError<CloudProvide
       "model-unavailable",
       "quota-exhausted",
       "unsupported-attachment",
+      "invalid-execution-policy",
       "orchestration-failed",
     ]),
     message: TrimmedNonEmptyString,

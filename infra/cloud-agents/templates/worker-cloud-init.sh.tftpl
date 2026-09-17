@@ -18,9 +18,27 @@ fi
 
 install -d -m 0750 /etc/t3
 
-cat >/etc/t3/worker.env <<'ENV'
+metadata_base='http://169.254.169.254/latest'
+metadata_token="$(
+  curl --noproxy '*' --silent --show-error --fail --max-time 5 \
+    --request PUT \
+    --header 'X-aws-ec2-metadata-token-ttl-seconds: 60' \
+    "$${metadata_base}/api/token"
+)"
+max_input_wait_seconds="$(
+  curl --noproxy '*' --silent --show-error --fail --max-time 5 \
+    --header "X-aws-ec2-metadata-token: $${metadata_token}" \
+    "$${metadata_base}/meta-data/tags/instance/CloudAgentMaxInputWaitSeconds"
+)"
+[[ "$${max_input_wait_seconds}" =~ ^[1-9][0-9]*$ ]] || {
+  echo "cloud-agent bootstrap failed: input-wait limit tag is invalid" >&2
+  exit 1
+}
+
+cat >/etc/t3/worker.env <<ENV
 T3_WORKER_PROFILE=${profile_name}
 T3_WORKER_IMAGE_VERSION=${image_version}
+T3CODE_CLOUD_MAX_INPUT_WAIT_SECONDS=$${max_input_wait_seconds}
 T3CODE_PORT=${service_port}
 ENV
 chown root:cloudagent /etc/t3/worker.env

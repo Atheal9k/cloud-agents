@@ -15,6 +15,7 @@ import {
   type ServerProvider,
 } from "@t3tools/contracts";
 import * as Context from "effect/Context";
+import * as Config from "effect/Config";
 import * as DateTime from "effect/DateTime";
 import * as Deferred from "effect/Deferred";
 import * as Duration from "effect/Duration";
@@ -105,7 +106,9 @@ function activityRequestId(event: OrchestrationEvent): ApprovalRequestId | undef
   return ApprovalRequestId.make(payload.requestId);
 }
 
-const build = Effect.fn("CloudProviderExecution.build")(function* () {
+const build = Effect.fn("CloudProviderExecution.build")(function* (input?: {
+  readonly maxInputWaitSeconds?: number;
+}) {
   const orchestration = yield* OrchestrationEngineService;
   const providers = yield* ProviderRegistry;
   const requestPolicies = new Map<
@@ -260,6 +263,13 @@ const build = Effect.fn("CloudProviderExecution.build")(function* () {
   const start: CloudProviderExecution["Service"]["start"] = Effect.fn(
     "CloudProviderExecution.start",
   )(function* (request) {
+    const maxInputWaitSeconds = input?.maxInputWaitSeconds ?? 15 * 60;
+    if (request.unansweredRequestSeconds > maxInputWaitSeconds) {
+      return yield* executionError(
+        "invalid-execution-policy",
+        `Input may wait at most ${maxInputWaitSeconds} seconds on this worker.`,
+      );
+    }
     yield* preflightTurn(request.turn);
     requestPolicies.set(request.threadId, request.unansweredRequestSeconds);
 
@@ -300,6 +310,13 @@ const build = Effect.fn("CloudProviderExecution.build")(function* () {
         },
       },
       createdAt: request.turn.createdAt,
+    });
+
+    yield* Effect.logInfo("Cloud provider execution started.", {
+      allocationId: request.preparation.allocationId,
+      attempt: request.preparation.attempt,
+      threadId: request.threadId,
+      providerInstanceId: request.turn.modelSelection.instanceId,
     });
 
     return {
@@ -388,8 +405,10 @@ const build = Effect.fn("CloudProviderExecution.build")(function* () {
   };
 });
 
-export const make = Effect.fn("CloudProviderExecution.make")(function* () {
-  return (yield* build()).service;
+export const make = Effect.fn("CloudProviderExecution.make")(function* (input?: {
+  readonly maxInputWaitSeconds?: number;
+}) {
+  return (yield* build(input)).service;
 });
 
 export const layer = Layer.effect(
@@ -397,7 +416,10 @@ export const layer = Layer.effect(
   Effect.gen(function* () {
     const orchestration = yield* OrchestrationEngineService;
     const events = yield* orchestration.subscribeDomainEvents;
-    const built = yield* build();
+    const maxInputWaitSeconds = yield* Config.int("T3CODE_CLOUD_MAX_INPUT_WAIT_SECONDS").pipe(
+      Config.withDefault(15 * 60),
+    );
+    const built = yield* build({ maxInputWaitSeconds });
     yield* Stream.runForEach(events, built.processEvent).pipe(Effect.forkScoped);
     return built.service;
   }),
