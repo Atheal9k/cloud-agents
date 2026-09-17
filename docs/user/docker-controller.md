@@ -42,6 +42,27 @@ launch template created by `infra/cloud-agents`. Their defaults are `us-west-1` 
 identity in the credential overlay must be allowed to describe launch templates and instances,
 launch workers with the project and worker tags, and terminate workers carrying those tags.
 
+Set two HTTPS routes before launching a worker:
+
+```bash
+export T3CODE_CLOUD_CONTROLLER_URL=https://controller.example.com
+export T3CODE_CLOUD_WORKER_ROUTE_URL=https://worker.example.com
+```
+
+The controller URL must reach this controller from the worker. The worker route must be an
+authenticated overlay or outbound tunnel that forwards HTTP and WebSocket traffic to port 3773
+on the one active worker. Configure that route in the worker image or tunnel service so it starts
+at boot. Do not open port 3773 to the internet or forward it by hand for each allocation. The
+controller rejects loopback routes because `localhost` on a browser, controller, and worker names
+three different machines.
+
+At launch, the controller signs a credential that names one allocation attempt and expires at its
+registration deadline. The root registration unit reads that credential from EC2 instance tags,
+waits for the local T3 service, issues a worker bearer session, and registers the route. The
+`cloudagent` service and repository processes remain unable to reach instance metadata. Replaced
+or expired attempts cannot register again. Normal HTTP and WebSocket traffic then connects to the
+worker T3 environment directly; SSM remains a recovery tool and is not part of an active session.
+
 Compose uses `restart: unless-stopped`, a health check, and a 30-second shutdown window. The stop
 command waits for the server to close its SQLite connection before stopping the container.
 

@@ -30,6 +30,7 @@ import {
   ThreadId,
   TrimmedNonEmptyString,
 } from "./baseSchemas.ts";
+import { RunAllocation, RunWorkerRegistrationInput } from "./cloudAllocation.ts";
 import { ExecutionEnvironmentDescriptor } from "./environment.ts";
 import {
   ClientOrchestrationCommand,
@@ -615,9 +616,25 @@ class EnvironmentConnectHttpApi extends HttpApiGroup.make("connect")
     }),
   ) {}
 
+class EnvironmentCloudWorkersHttpApi extends HttpApiGroup.make("cloudWorkers").add(
+  HttpApiEndpoint.post("register", "/api/cloud/workers/register", {
+    headers: OptionalBearerHeaders,
+    payload: RunWorkerRegistrationInput,
+    success: RunAllocation,
+    error: [
+      EnvironmentHttpBadRequestError,
+      EnvironmentHttpUnauthorizedError,
+      EnvironmentHttpConflictError,
+      EnvironmentCloudEndpointUnavailableError,
+      EnvironmentHttpInternalServerError,
+    ],
+  }),
+) {}
+
 export class EnvironmentHttpApi extends HttpApi.make("environment")
   .add(EnvironmentMetadataHttpApi)
   .add(EnvironmentAuthHttpApi)
   .add(EnvironmentOrchestrationHttpApi)
   .add(EnvironmentPullRequestsHttpApi)
-  .add(EnvironmentConnectHttpApi) {}
+  .add(EnvironmentConnectHttpApi)
+  .add(EnvironmentCloudWorkersHttpApi) {}

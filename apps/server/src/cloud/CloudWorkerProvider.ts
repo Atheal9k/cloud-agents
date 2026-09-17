@@ -8,6 +8,7 @@ import * as Config from "effect/Config";
 import * as Context from "effect/Context";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
+import * as Option from "effect/Option";
 import * as Schema from "effect/Schema";
 
 import * as ProcessRunner from "../processRunner.ts";
@@ -51,6 +52,7 @@ export class CloudWorkerProvider extends Context.Service<
       readonly attempt: RunAllocationAttempt;
       readonly expiresAt: string;
       readonly launchTemplate: RunLaunchTemplate;
+      readonly registrationCredential: string;
     }) => Effect.Effect<CloudWorkerInstance, CloudWorkerProviderError>;
     readonly terminate: (instanceId: string) => Effect.Effect<void, CloudWorkerProviderError>;
   }
@@ -97,6 +99,32 @@ function providerError(
   return new CloudWorkerProviderError({ reason, message });
 }
 
+function normalizeHttpsOrigin(value: string | undefined): string | null {
+  if (value === undefined || value.trim().length === 0) return null;
+  try {
+    const url = new URL(value);
+    const hostname = url.hostname.toLowerCase().replace(/^\[(.*)\]$/, "$1");
+    if (
+      url.protocol !== "https:" ||
+      url.username !== "" ||
+      url.password !== "" ||
+      hostname === "localhost" ||
+      hostname === "::1" ||
+      hostname === "0.0.0.0" ||
+      hostname === "::" ||
+      hostname.startsWith("127.")
+    ) {
+      return null;
+    }
+    url.pathname = "/";
+    url.search = "";
+    url.hash = "";
+    return url.toString();
+  } catch {
+    return null;
+  }
+}
+
 function classifyAwsFailure(stderr: string): CloudWorkerProviderError {
   const message = stderr.trim() || "The AWS CLI command failed without an error message.";
   const retryable =
@@ -119,6 +147,8 @@ function clientToken(input: {
 export const make = Effect.fn("CloudWorkerProvider.make")(function* (input: {
   readonly region: string;
   readonly project: string;
+  readonly controllerUrl?: string;
+  readonly workerRouteUrl?: string;
 }) {
   const runner = yield* ProcessRunner.ProcessRunner;
 
@@ -210,6 +240,14 @@ export const make = Effect.fn("CloudWorkerProvider.make")(function* (input: {
 
   const launch: CloudWorkerProvider["Service"]["launch"] = (launchInput) =>
     Effect.gen(function* () {
+      const controllerUrl = normalizeHttpsOrigin(input.controllerUrl);
+      const workerRouteUrl = normalizeHttpsOrigin(input.workerRouteUrl);
+      if (controllerUrl === null || workerRouteUrl === null) {
+        return yield* providerError(
+          "invalid-config",
+          "Cloud worker routing requires valid HTTPS T3CODE_CLOUD_CONTROLLER_URL and T3CODE_CLOUD_WORKER_ROUTE_URL values.",
+        );
+      }
       const expiresAtMillis = Date.parse(launchInput.expiresAt);
       if (!Number.isFinite(expiresAtMillis)) {
         return yield* providerError(
@@ -223,6 +261,9 @@ export const make = Effect.fn("CloudWorkerProvider.make")(function* (input: {
         { Key: "CloudAgentAllocationId", Value: launchInput.allocationId },
         { Key: "CloudAgentAttempt", Value: String(launchInput.attempt) },
         { Key: "CloudAgentExpiresAtEpoch", Value: String(Math.floor(expiresAtMillis / 1000)) },
+        { Key: "CloudAgentControllerUrl", Value: controllerUrl },
+        { Key: "CloudAgentWorkerRouteUrl", Value: workerRouteUrl },
+        { Key: "CloudAgentRegistrationCredential", Value: launchInput.registrationCredential },
       ];
       const output = yield* runAws([
         "run-instances",
@@ -265,9 +306,20 @@ export const make = Effect.fn("CloudWorkerProvider.make")(function* (input: {
 const AwsWorkerConfig = Config.all({
   region: Config.string("T3CODE_CLOUD_AWS_REGION").pipe(Config.withDefault("us-west-1")),
   project: Config.string("T3CODE_CLOUD_PROJECT").pipe(Config.withDefault("t3-cloud-agents")),
+  controllerUrl: Config.string("T3CODE_CLOUD_CONTROLLER_URL").pipe(Config.option),
+  workerRouteUrl: Config.string("T3CODE_CLOUD_WORKER_ROUTE_URL").pipe(Config.option),
 });
 
 export const layer = Layer.effect(
   CloudWorkerProvider,
-  Effect.flatMap(AwsWorkerConfig, (config) => make(config)),
+  Effect.flatMap(AwsWorkerConfig, (config) =>
+    make({
+      region: config.region,
+      project: config.project,
+      ...(Option.isSome(config.controllerUrl) ? { controllerUrl: config.controllerUrl.value } : {}),
+      ...(Option.isSome(config.workerRouteUrl)
+        ? { workerRouteUrl: config.workerRouteUrl.value }
+        : {}),
+    }),
+  ),
 );

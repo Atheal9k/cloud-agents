@@ -52,15 +52,19 @@ it.effect("pins the discovered template and reuses one AWS client token", () =>
         );
       },
     });
-    const provider = yield* make({ region: "us-west-1", project: "t3-cloud-agents" }).pipe(
-      Effect.provideService(ProcessRunner.ProcessRunner, runner),
-    );
+    const provider = yield* make({
+      region: "us-west-1",
+      project: "t3-cloud-agents",
+      controllerUrl: "https://controller.example.test/",
+      workerRouteUrl: "https://worker.example.test/",
+    }).pipe(Effect.provideService(ProcessRunner.ProcessRunner, runner));
     const launchTemplate = yield* provider.resolveLaunchTemplate("linux-web");
     const launchInput = {
       allocationId,
       attempt,
       expiresAt: "2026-09-17T05:00:00.000Z",
       launchTemplate,
+      registrationCredential: "registration-credential",
     };
 
     yield* provider.launch(launchInput);
@@ -76,6 +80,7 @@ it.effect("pins the discovered template and reuses one AWS client token", () =>
     expect(tokens[1]).toBe(tokens[0]);
     expect(launches[0]?.args.join(" ")).toContain("CloudAgentAllocationId");
     expect(launches[0]?.args.join(" ")).toContain("CloudAgentExpiresAtEpoch");
+    expect(launches[0]?.args.join(" ")).toContain("CloudAgentRegistrationCredential");
   }),
 );
 
@@ -90,18 +95,48 @@ it.effect("classifies AWS capacity failures as retryable", () =>
           }),
         ),
     });
-    const provider = yield* make({ region: "us-west-1", project: "t3-cloud-agents" }).pipe(
-      Effect.provideService(ProcessRunner.ProcessRunner, runner),
-    );
+    const provider = yield* make({
+      region: "us-west-1",
+      project: "t3-cloud-agents",
+      controllerUrl: "https://controller.example.test/",
+      workerRouteUrl: "https://worker.example.test/",
+    }).pipe(Effect.provideService(ProcessRunner.ProcessRunner, runner));
     const error = yield* provider
       .launch({
         allocationId,
         attempt,
         expiresAt: "2026-09-17T05:00:00.000Z",
         launchTemplate: { id: "lt-worker", version: 7 },
+        registrationCredential: "registration-credential",
       })
       .pipe(Effect.flip);
 
     expect(error.reason).toBe("retryable");
+  }),
+);
+
+it.effect("rejects controller-local routing before launching a worker", () =>
+  Effect.gen(function* () {
+    const runner = ProcessRunner.ProcessRunner.of({
+      run: () => Effect.die("AWS must not be called for invalid routing"),
+    });
+    const provider = yield* make({
+      region: "us-west-1",
+      project: "t3-cloud-agents",
+      controllerUrl: "https://localhost:3773/",
+      workerRouteUrl: "https://worker.example.test/",
+    }).pipe(Effect.provideService(ProcessRunner.ProcessRunner, runner));
+
+    const error = yield* provider
+      .launch({
+        allocationId,
+        attempt,
+        expiresAt: "2026-09-17T05:00:00.000Z",
+        launchTemplate: { id: "lt-worker", version: 7 },
+        registrationCredential: "registration-credential",
+      })
+      .pipe(Effect.flip);
+
+    expect(error.reason).toBe("invalid-config");
   }),
 );
