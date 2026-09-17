@@ -143,6 +143,7 @@ variable "worker_profiles" {
     architecture         = optional(string, "x86_64")
     capabilities         = optional(set(string), ["coding", "web-preview"])
     desktop_dependencies = optional(bool, false)
+    shared_browser       = optional(bool, false)
   }))
   default = {}
 
@@ -176,6 +177,16 @@ variable "worker_profiles" {
       for profile in values(var.worker_profiles) : profile.architecture == "x86_64"
     ])
     error_message = "CA-03 supports x86_64 Linux web workers only. Android and Mac profiles belong to CA-37 and CA-38."
+  }
+
+  validation {
+    condition = alltrue([
+      for profile in values(var.worker_profiles) :
+      !profile.shared_browser || (
+        profile.desktop_dependencies && contains(profile.capabilities, "shared-browser")
+      )
+    ])
+    error_message = "A shared-browser worker profile must enable desktop_dependencies and declare the shared-browser capability."
   }
 }
 

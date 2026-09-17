@@ -116,6 +116,7 @@ import { ProviderInstanceRegistry } from "./provider/Services/ProviderInstanceRe
 import { makeProviderInstallation } from "./provider/providerInstallation.ts";
 import * as ServerSelfUpdate from "./cloud/selfUpdate.ts";
 import * as CloudAllocationController from "./cloud/CloudAllocationController.ts";
+import * as SharedBrowserGateway from "./cloud/SharedBrowserGateway.ts";
 import * as ServerLifecycleEvents from "./serverLifecycleEvents.ts";
 import * as ServerRuntimeStartup from "./serverRuntimeStartup.ts";
 import * as ServerSettings from "./serverSettings.ts";
@@ -559,6 +560,7 @@ const makeWsRpcLayer = (
       const terminalManager = yield* TerminalManager.TerminalManager;
       const previewManager = yield* PreviewManager.PreviewManager;
       const previewGateway = yield* PreviewGateway.PreviewGateway;
+      const sharedBrowserGateway = yield* SharedBrowserGateway.SharedBrowserGateway;
       const deviceService = yield* DeviceService.DeviceService;
       const deviceHostContext =
         yield* Effect.context<Effect.Services<ReturnType<typeof remoteSshDeviceHosts>>>();
@@ -3412,6 +3414,22 @@ const makeWsRpcLayer = (
         [WS_METHODS.previewIssueGateway]: (input) =>
           observeRpcEffect(WS_METHODS.previewIssueGateway, previewGateway.issue(input), {
             "rpc.aggregate": "preview",
+          }),
+        [WS_METHODS.sharedBrowserIssue]: (input) =>
+          observeRpcEffect(WS_METHODS.sharedBrowserIssue, sharedBrowserGateway.issue(input), {
+            "rpc.aggregate": "shared-browser",
+          }),
+        [WS_METHODS.sharedBrowserKeepAlive]: (input) =>
+          observeRpcEffect(
+            WS_METHODS.sharedBrowserKeepAlive,
+            sharedBrowserGateway.keepAlive(input),
+            {
+              "rpc.aggregate": "shared-browser",
+            },
+          ),
+        [WS_METHODS.sharedBrowserRelease]: (input) =>
+          observeRpcEffect(WS_METHODS.sharedBrowserRelease, sharedBrowserGateway.release(input), {
+            "rpc.aggregate": "shared-browser",
           }),
         [WS_METHODS.previewAutomationConnect]: (input) =>
           observeRpcStreamEffect(

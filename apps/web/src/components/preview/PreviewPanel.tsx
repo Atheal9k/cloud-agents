@@ -1,10 +1,13 @@
 "use client";
 
 import type { PreviewAnnotationPayload, ScopedThreadRef } from "@t3tools/contracts";
+import { useState } from "react";
 
 import type { ComposerImageAttachment } from "~/composerDraftStore";
+import { Button } from "~/components/ui/button";
 import { PreviewPanelShell, type PreviewPanelMode } from "./PreviewPanelShell";
 import { PreviewView } from "./PreviewView";
+import { SharedBrowserView } from "./SharedBrowserView";
 
 interface Props {
   mode: PreviewPanelMode;
@@ -26,15 +29,39 @@ export function PreviewPanel({
   visible,
   onSendAnnotation,
 }: Props) {
+  const [surface, setSurface] = useState<"direct" | "agent">("direct");
+
   return (
     <PreviewPanelShell mode={mode}>
-      <PreviewView
-        threadRef={threadRef}
-        {...(tabId !== undefined ? { tabId } : {})}
-        configuredUrls={configuredUrls}
-        visible={visible}
-        {...(onSendAnnotation ? { onSendAnnotation } : {})}
-      />
+      <div className="flex h-9 shrink-0 items-center gap-1 border-b border-border bg-muted/30 px-2">
+        <Button
+          size="xs"
+          variant={surface === "direct" ? "secondary" : "ghost-muted"}
+          aria-pressed={surface === "direct"}
+          onClick={() => setSurface("direct")}
+        >
+          App preview
+        </Button>
+        <Button
+          size="xs"
+          variant={surface === "agent" ? "secondary" : "ghost-muted"}
+          aria-pressed={surface === "agent"}
+          onClick={() => setSurface("agent")}
+        >
+          Agent browser
+        </Button>
+      </div>
+      {surface === "direct" ? (
+        <PreviewView
+          threadRef={threadRef}
+          {...(tabId !== undefined ? { tabId } : {})}
+          configuredUrls={configuredUrls}
+          visible={visible}
+          {...(onSendAnnotation ? { onSendAnnotation } : {})}
+        />
+      ) : (
+        <SharedBrowserView threadRef={threadRef} visible={visible} />
+      )}
     </PreviewPanelShell>
   );
 }

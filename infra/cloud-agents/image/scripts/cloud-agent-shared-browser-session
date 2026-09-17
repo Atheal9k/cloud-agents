@@ -1,0 +1,6 @@
+#!/bin/bash
+set -euo pipefail
+
+# Xdcv owns the virtual display. Keep the session alive without a desktop
+# environment; Chromium launched by the provider is the only intended window.
+exec sleep infinity

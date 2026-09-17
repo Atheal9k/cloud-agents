@@ -1,0 +1,59 @@
+#!/bin/bash
+set -euo pipefail
+
+fail() {
+  echo "shared browser lifecycle failed: $*" >&2
+  exit 1
+}
+
+[[ -r /etc/t3/worker.env ]] || fail "worker environment is unavailable"
+source /etc/t3/worker.env
+: "${T3CODE_SHARED_BROWSER_THREAD_ID:?thread id is required}"
+: "${T3CODE_SHARED_BROWSER_ATTEMPT_KEY:?attempt key is required}"
+
+session_id="t3-${T3CODE_SHARED_BROWSER_ATTEMPT_KEY//:/-}"
+[[ "${session_id}" =~ ^[A-Za-z0-9_-]{1,128}$ ]] || fail "session id is invalid"
+
+exec 9>/run/t3-worker/shared-browser.lock
+flock 9
+
+if ! dcv describe-session "${session_id}" --json >/dev/null 2>&1; then
+  dcv create-session \
+    --type virtual \
+    --name "T3 agent browser" \
+    --permissions-file /etc/dcv/shared-browser.perm \
+    --max-concurrent-clients 1 \
+    --init /opt/t3/bin/cloud-agent-shared-browser-session \
+    "${session_id}" >/dev/null
+fi
+
+description=""
+display=""
+x_authority=""
+for _ in {1..30}; do
+  description="$(dcv describe-session "${session_id}" --json 2>/dev/null)" || true
+  display="$(jq --raw-output '."x11-display" | select(type == "string" and length > 0)' \
+    <<<"${description}" 2>/dev/null)" || true
+  x_authority="$(jq --raw-output '."x11-authority" | select(type == "string" and length > 0)' \
+    <<<"${description}" 2>/dev/null)" || true
+  [[ -n "${display}" && -n "${x_authority}" ]] && break
+  sleep 1
+done
+[[ -n "${display}" ]] || fail "X11 display is unavailable"
+[[ -n "${x_authority}" ]] || fail "X11 authority is unavailable"
+
+jq --null-input --compact-output \
+  --arg upstream_url "http://127.0.0.1:8090" \
+  --arg session_id "${session_id}" \
+  --arg display "${display}" \
+  --arg x_authority "${x_authority}" \
+  --arg attempt_key "${T3CODE_SHARED_BROWSER_ATTEMPT_KEY}" \
+  --arg thread_id "${T3CODE_SHARED_BROWSER_THREAD_ID}" \
+  '{
+    upstreamUrl: $upstream_url,
+    sessionId: $session_id,
+    display: $display,
+    xAuthority: $x_authority,
+    attemptKey: $attempt_key,
+    threadId: $thread_id
+  }'

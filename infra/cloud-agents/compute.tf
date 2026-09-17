@@ -136,6 +136,7 @@ resource "aws_launch_template" "worker" {
       CloudAgentCapabilities        = join(",", sort(tolist(each.value.capabilities)))
       CloudAgentDesktopDependencies = tostring(each.value.desktop_dependencies)
       CloudAgentImageVersion        = each.value.image_version
+      CloudAgentSharedBrowser       = tostring(each.value.shared_browser)
       Ephemeral                     = "true"
     }
   }

@@ -144,6 +144,12 @@ import * as CloudWorkerProvider from "./cloud/CloudWorkerProvider.ts";
 import * as CloudGitCredentials from "./cloud/CloudGitCredentials.ts";
 import * as CloudRepositoryPreparation from "./cloud/CloudRepositoryPreparation.ts";
 import * as CloudProviderExecution from "./cloud/CloudProviderExecution.ts";
+import * as SharedBrowserGateway from "./cloud/SharedBrowserGateway.ts";
+import * as SharedBrowserHost from "./cloud/SharedBrowserHost.ts";
+import {
+  sharedBrowserBootstrapRouteLayer,
+  sharedBrowserProxyMiddlewareLayer,
+} from "./cloud/SharedBrowserProxy.ts";
 import * as CloudRunControl from "./cloud/CloudRunControl.ts";
 import * as CloudRunPublication from "./cloud/CloudRunPublication.ts";
 import * as CloudRunResults from "./cloud/CloudRunResults.ts";
@@ -586,6 +592,7 @@ const RuntimeCoreDependenciesBaseLive = ReactorLayerLive.pipe(
   Layer.provideMerge(ServerEnvironmentLayerLive),
   Layer.provideMerge(AuthLayerLive),
   Layer.provideMerge(ServerSecretStore.layer),
+  Layer.provideMerge(SharedBrowserHost.layer.pipe(Layer.provide(ProcessRunner.layer))),
   Layer.provideMerge(
     Layer.mergeAll(
       CloudCliTokenManager.layer.pipe(
@@ -627,6 +634,13 @@ const commandReadinessLayer = HttpRouter.middleware(
   { global: true },
 );
 
+const PreviewGatewayLayerLive = PreviewGateway.layer;
+const SharedBrowserGatewayLayerLive = SharedBrowserGateway.layer;
+const BrowserGatewayLayersLive = Layer.mergeAll(
+  PreviewGatewayLayerLive,
+  SharedBrowserGatewayLayerLive,
+);
+
 export const makeRoutesLayer = Layer.mergeAll(
   Layer.mergeAll(
     HttpApiBuilder.layer(EnvironmentHttpApi).pipe(
@@ -644,6 +658,7 @@ export const makeRoutesLayer = Layer.mergeAll(
     cloudResultRouteLayer,
     deviceHubProxyRouteLayer,
     previewGatewayBootstrapRouteLayer,
+    sharedBrowserBootstrapRouteLayer,
     staticAndDevRouteLayer,
     websocketRpcRouteLayer,
   ),
@@ -657,8 +672,9 @@ export const makeRoutesLayer = Layer.mergeAll(
   Layer.provide(ServerSelfUpdate.layer.pipe(Layer.provide(DesktopAppUpdateLayerLive))),
   Layer.provide(commandReadinessLayer),
   Layer.provide(browserApiCorsLayer),
-  Layer.provide(previewGatewayProxyMiddlewareLayer),
-  Layer.provideMerge(PreviewGateway.layer),
+  Layer.provide(
+    Layer.mergeAll(sharedBrowserProxyMiddlewareLayer, previewGatewayProxyMiddlewareLayer),
+  ),
   Layer.provide(httpCompressionLayer),
 );
 
@@ -854,7 +870,10 @@ const makeServerLayer = Layer.unwrap(
     const routesLayer = HttpRouter.serve(makeRoutesLayer.pipe(Layer.provide(launcherLayer)), {
       disableLogger: !config.logWebSocketEvents,
       routerConfig: HTTP_ROUTER_CONFIG,
-    }).pipe(Layer.tap(() => Deferred.succeed(routesReady, undefined).pipe(Effect.orDie)));
+    }).pipe(
+      Layer.provide(BrowserGatewayLayersLive),
+      Layer.tap(() => Deferred.succeed(routesReady, undefined).pipe(Effect.orDie)),
+    );
     const serverApplicationLayer = Layer.mergeAll(
       routesLayer,
       httpListeningLayer,

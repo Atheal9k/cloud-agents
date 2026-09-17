@@ -32,9 +32,30 @@ variable "profile_name" {
 }
 
 variable "install_desktop_dependencies" {
-  description = "Install the dormant X11/browser library layer used by the later shared-browser profile."
+  description = "Install the X11 and browser runtime libraries used by a shared-browser profile."
   type        = bool
   default     = false
+}
+
+variable "install_shared_browser" {
+  description = "Install the pinned Chromium and Amazon DCV shared-browser stack."
+  type        = bool
+  default     = false
+}
+
+variable "dcv_archive_sha256" {
+  type    = string
+  default = "d98eb986f3b547af22a7732ca26cb6541c3842b9ed57218f503c9acc3b29e7e2"
+}
+
+variable "dcv_gpg_key_sha256" {
+  type    = string
+  default = "d772e9783689d014810ccd8f014169bdf1db37ebcf686c92f8423e44c6f81912"
+}
+
+variable "dcv_version" {
+  type    = string
+  default = "2025.0-20103"
 }
 
 variable "node_version" {
@@ -63,7 +84,7 @@ variable "claude_code_version" {
 }
 
 locals {
-  desktop_layer = var.install_desktop_dependencies ? "desktop" : "headless"
+  desktop_layer = var.install_shared_browser ? "shared-browser" : (var.install_desktop_dependencies ? "desktop" : "headless")
 }
 
 source "amazon-ebs" "worker" {
@@ -95,6 +116,7 @@ source "amazon-ebs" "worker" {
     CloudAgentProfile             = var.profile_name
     CloudAgentImageVersion        = var.image_version
     CloudAgentDesktopDependencies = var.install_desktop_dependencies ? "true" : "false"
+    CloudAgentSharedBrowser       = var.install_shared_browser ? "true" : "false"
     NodeVersion                   = var.node_version
     T3Version                     = var.t3_version
     CodexVersion                  = var.codex_version
@@ -109,6 +131,36 @@ build {
   provisioner "file" {
     source      = "${path.root}/files/cloud-agent-worker.service"
     destination = "/tmp/cloud-agent-worker.service"
+  }
+
+  provisioner "file" {
+    source      = "${path.root}/files/dcv.conf"
+    destination = "/tmp/dcv.conf"
+  }
+
+  provisioner "file" {
+    source      = "${path.root}/files/shared-browser.perm"
+    destination = "/tmp/shared-browser.perm"
+  }
+
+  provisioner "file" {
+    source      = "${path.root}/files/shared-browser-nginx.conf"
+    destination = "/tmp/shared-browser-nginx.conf"
+  }
+
+  provisioner "file" {
+    source      = "${path.root}/scripts/cloud-agent-shared-browser"
+    destination = "/tmp/cloud-agent-shared-browser"
+  }
+
+  provisioner "file" {
+    source      = "${path.root}/scripts/cloud-agent-shared-browser-session"
+    destination = "/tmp/cloud-agent-shared-browser-session"
+  }
+
+  provisioner "file" {
+    source      = "${path.root}/scripts/measure-shared-browser.sh"
+    destination = "/tmp/measure-shared-browser.sh"
   }
 
   provisioner "file" {
@@ -135,8 +187,12 @@ build {
     environment_vars = [
       "CLAUDE_CODE_VERSION=${var.claude_code_version}",
       "CODEX_VERSION=${var.codex_version}",
+      "DCV_ARCHIVE_SHA256=${var.dcv_archive_sha256}",
+      "DCV_GPG_KEY_SHA256=${var.dcv_gpg_key_sha256}",
+      "DCV_VERSION=${var.dcv_version}",
       "IMAGE_VERSION=${var.image_version}",
       "INSTALL_DESKTOP_DEPENDENCIES=${var.install_desktop_dependencies}",
+      "INSTALL_SHARED_BROWSER=${var.install_shared_browser}",
       "NODE_LINUX_X64_SHA256=${var.node_linux_x64_sha256}",
       "NODE_VERSION=${var.node_version}",
       "PROFILE_NAME=${var.profile_name}",
@@ -151,7 +207,9 @@ build {
     environment_vars = [
       "CLAUDE_CODE_VERSION=${var.claude_code_version}",
       "CODEX_VERSION=${var.codex_version}",
+      "DCV_VERSION=${var.dcv_version}",
       "INSTALL_DESKTOP_DEPENDENCIES=${var.install_desktop_dependencies}",
+      "INSTALL_SHARED_BROWSER=${var.install_shared_browser}",
       "NODE_VERSION=${var.node_version}",
       "T3_VERSION=${var.t3_version}",
     ]

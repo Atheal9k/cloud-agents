@@ -25,7 +25,25 @@ packer build `
   ./image
 ```
 
-The default `linux-web` image has no mobile SDK, X server, or display-stream service. To prepare the dormant desktop library layer for the CA-34 shared-browser profile, build a separate image with `profile_name=linux-web-browser` and `install_desktop_dependencies=true`. This installs Xvfb and browser runtime libraries but does not install or start a streaming service.
+The default `linux-web` image has no mobile SDK, X server, browser, or display-stream service. Build the on-demand viewer as a separate profile:
+
+```powershell
+packer build `
+  -var "source_ami_id=ami-0123456789abcdef0" `
+  -var "profile_name=linux-web-browser" `
+  -var "image_version=0.0.42-ca34.1" `
+  -var "install_desktop_dependencies=true" `
+  -var "install_shared_browser=true" `
+  ./image
+```
+
+The browser image pins Amazon DCV 2025.0-20103 by archive checksum and installs Chromium from the Amazon Linux SPAL repository. Use an AL2023 source release at or after `2023.9.20251117`, when SPAL is available. SPAL packages are outside standard AWS Support coverage. DCV on EC2 does not need a separate license server, and T3 uses the installed DCV web viewer rather than redistributing the Web Client SDK. Review the [Amazon DCV license guidance](https://docs.aws.amazon.com/dcv/latest/adminguide/setting-up-license.html) and [SPAL support policy](https://docs.aws.amazon.com/linux/al2023/ug/spal.html) before publishing an image.
+
+`dcvserver` and its loopback nginx bridge start with the instance, but no desktop session is created at boot. The first provider turn or visible Agent browser panel creates one virtual session for that allocation attempt. Provider-launched Chromium receives that session's `DISPLAY` and `XAUTHORITY`, so automation and the viewer observe the same browser. DCV listens only on `127.0.0.1:8443`; the authenticated T3 route proxies its HTTP and WebSocket traffic, and the worker security group has no DCV ingress. Viewer grants expire after 75 seconds without a visible-panel heartbeat, and a replacement worker cannot resolve a prior attempt's in-memory token.
+
+The Agent browser is view-only in CA-34. It works in the web client and the desktop app on the latest three major Chrome, Firefox, Edge, and Safari releases in the [Amazon DCV browser requirements](https://docs.aws.amazon.com/dcv/latest/userguide/requirements.html). Amazon DCV's bundled browser client does not support iOS or Android, so phones should use the direct app preview until a supported mobile transport is added. Direct app previews do not start or require DCV.
+
+To measure contention on an actual browser-profile worker, open the Agent browser panel, start Chromium in the agent workflow, then run `/opt/t3/bin/measure-shared-browser <build command>`. The command emits build exit status, elapsed time, average DCV/Xdcv/Chromium CPU, peak RSS, viewer first-byte latency, and network bytes. Capture an idle baseline and the same build without a visible viewer before accepting a profile size. This repository does not run that billable AWS measurement during offline verification.
 
 The worker service keeps package-manager downloads in `/var/cache/t3-worker-dependencies`. Cache entries are private to the worker user, keyed by the repository, dependency inputs, setup recipe, image version, operating system, and architecture. Installed dependency trees stay in their run workspaces. The server retains at most eight entries and 5 GiB by default. Set `T3CODE_CLOUD_DEPENDENCY_CACHE_MAX_ENTRIES` or `T3CODE_CLOUD_DEPENDENCY_CACHE_MAX_BYTES` in the worker runtime environment to lower those bounds. This does not keep workers warm.
 

@@ -439,6 +439,8 @@ Acceptance criteria:
 
 Dependencies: CA-07, CA-09, CA-18, CA-25.
 
+Status: Done on 18 September 2026 in [PR #20](https://github.com/Atheal9k/cloud-agents/pull/20).
+
 Description: Validate Amazon DCV and embed a view of the agent's actual worker browser/desktop. Reuse a tested simpler transport if DCV cannot satisfy the selected platform.
 
 Acceptance criteria:
