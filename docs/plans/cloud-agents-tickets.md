@@ -185,6 +185,8 @@ Acceptance criteria:
 
 Dependencies: CA-04A.
 
+Status: Done on 17 September 2026.
+
 Description: Add a production Docker image and Compose configuration for the T3 controller and built web application. Run it locally first, then reuse the same versioned image for the permanent EC2 controller in CA-04B. The existing development container remains contributor tooling.
 
 Acceptance criteria:
