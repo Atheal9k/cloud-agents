@@ -72,6 +72,12 @@ export class CloudGitCredentials extends Context.Service<
       readonly repository: string;
       readonly destination: string;
     }) => Effect.Effect<void, CloudGitCredentialError>;
+    readonly fetch: (input: {
+      readonly runId: string;
+      readonly repository: string;
+      readonly ref: string;
+      readonly cwd: string;
+    }) => Effect.Effect<void, CloudGitCredentialError>;
     readonly push: (input: {
       readonly runId: string;
       readonly repository: string;
@@ -119,7 +125,10 @@ function classifySecretReadFailure(stderr: string): CloudGitCredentialError {
   );
 }
 
-function classifyGitFailure(stderr: string, operation: "clone" | "push"): CloudGitCredentialError {
+function classifyGitFailure(
+  stderr: string,
+  operation: "clone" | "fetch" | "push",
+): CloudGitCredentialError {
   const normalized = stderr.toLowerCase();
   if (normalized.includes("host key verification failed")) {
     return error(
@@ -373,7 +382,7 @@ export const make = Effect.fn("CloudGitCredentials.make")(function* (input: {
     );
 
   const runGit = Effect.fn("CloudGitCredentials.runGit")(function* (input: {
-    readonly operation: "clone" | "push";
+    readonly operation: "clone" | "fetch" | "push";
     readonly runId: string;
     readonly repository: string;
     readonly cwd?: string;
@@ -392,7 +401,7 @@ export const make = Effect.fn("CloudGitCredentials.make")(function* (input: {
             `ssh://git@ssh.github.com:443/${repository}.git`,
             ...input.trailingArgs,
           ],
-          ...(input.operation === "push" && input.cwd !== undefined ? { cwd: input.cwd } : {}),
+          ...(input.operation !== "clone" && input.cwd !== undefined ? { cwd: input.cwd } : {}),
           env: gitEnvironment,
           timeout: DEFAULT_COMMAND_TIMEOUT,
           maxOutputBytes: 1024 * 1024,
@@ -419,22 +428,55 @@ export const make = Effect.fn("CloudGitCredentials.make")(function* (input: {
       runId: request.runId,
       repository: request.repository,
       cwd: request.destination,
-      args: ["clone", "--no-tags", "--origin", "origin", "--"],
+      args: ["clone", "--no-checkout", "--no-tags", "--origin", "origin", "--"],
       trailingArgs: [request.destination],
+    });
+
+  const fetch: CloudGitCredentials["Service"]["fetch"] = (request) =>
+    runGit({
+      operation: "fetch",
+      runId: request.runId,
+      repository: request.repository,
+      cwd: request.cwd,
+      args: ["fetch", "--no-tags", "--force", "--"],
+      trailingArgs: [request.ref],
     });
 
   const push: CloudGitCredentials["Service"]["push"] = (request) =>
     decodeBranch(request.branch).pipe(
       Effect.mapError(() => error("git-failed", "The requested publication branch is invalid.")),
       Effect.flatMap((branch) =>
-        runGit({
-          operation: "push",
-          runId: request.runId,
-          repository: request.repository,
-          cwd: request.cwd,
-          args: ["push", "--"],
-          trailingArgs: [`HEAD:refs/heads/${branch}`],
-        }),
+        withRunDirectory(request.runId, (directory) =>
+          Effect.gen(function* () {
+            const publicationRepository = path.join(directory, "publication.git");
+            const copy = yield* runner
+              .run({
+                command: "git",
+                args: ["clone", "--bare", "--no-local", "--", request.cwd, publicationRepository],
+                timeout: DEFAULT_COMMAND_TIMEOUT,
+                maxOutputBytes: 1024 * 1024,
+              })
+              .pipe(
+                Effect.mapError(() =>
+                  error("git-failed", "The controller could not copy the branch for publication."),
+                ),
+              );
+            if (copy.code !== ChildProcessSpawner.ExitCode(0)) {
+              return yield* error(
+                "git-failed",
+                "The controller could not copy the branch for publication.",
+              );
+            }
+            return yield* runGit({
+              operation: "push",
+              runId: request.runId,
+              repository: request.repository,
+              cwd: publicationRepository,
+              args: ["push", "--no-verify", "--"],
+              trailingArgs: [`HEAD:refs/heads/${branch}`],
+            });
+          }),
+        ),
       ),
     );
 
@@ -515,7 +557,7 @@ export const make = Effect.fn("CloudGitCredentials.make")(function* (input: {
       );
     });
 
-  return CloudGitCredentials.of({ clone, push, createDraftPullRequest });
+  return CloudGitCredentials.of({ clone, fetch, push, createDraftPullRequest });
 });
 
 const optionalReference = (name: string) =>

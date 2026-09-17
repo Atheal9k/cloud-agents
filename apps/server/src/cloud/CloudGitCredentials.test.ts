@@ -109,6 +109,7 @@ it.layer(NodeServices.layer)("CloudGitCredentials", (it) => {
       const git = invocations.find((entry) => entry.command === "git");
       assert.deepEqual(git?.args, [
         "clone",
+        "--no-checkout",
         "--no-tags",
         "--origin",
         "origin",
@@ -128,11 +129,13 @@ it.layer(NodeServices.layer)("CloudGitCredentials", (it) => {
       const path = yield* Path.Path;
       const root = yield* fs.makeTempDirectoryScoped({ prefix: "t3-cloud-git-push-" });
       let gitInput: ProcessRunner.ProcessRunInput | undefined;
+      let publicationCopy: ProcessRunner.ProcessRunInput | undefined;
       const runner = ProcessRunner.ProcessRunner.of({
         run: (input) => {
           if (input.command === "aws") return Effect.succeed(processOutput({ stdout: privateKey }));
           if (input.command === "ssh-keygen") return Effect.succeed(processOutput());
-          gitInput = input;
+          if (input.env?.GIT_SSH === undefined) publicationCopy = input;
+          else gitInput = input;
           return Effect.succeed(processOutput());
         },
       });
@@ -149,12 +152,61 @@ it.layer(NodeServices.layer)("CloudGitCredentials", (it) => {
         cwd: path.join(root, "workspace"),
       });
 
+      assert.deepEqual(publicationCopy?.args.slice(0, 5), [
+        "clone",
+        "--bare",
+        "--no-local",
+        "--",
+        path.join(root, "workspace"),
+      ]);
       assert.deepEqual(gitInput?.args, [
         "push",
+        "--no-verify",
         "--",
         "ssh://git@ssh.github.com:443/Atheal9k/cloud-agents.git",
         "HEAD:refs/heads/feat/ca-06",
       ]);
+      assert.notEqual(gitInput?.cwd, path.join(root, "workspace"));
+    }),
+  );
+
+  it.effect("fetches a selected ref from the trusted repository URL", () =>
+    Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const path = yield* Path.Path;
+      const root = yield* fs.makeTempDirectoryScoped({ prefix: "t3-cloud-git-fetch-" });
+      let gitInput: ProcessRunner.ProcessRunInput | undefined;
+      const runner = ProcessRunner.ProcessRunner.of({
+        run: (input) => {
+          if (input.command === "aws") return Effect.succeed(processOutput({ stdout: privateKey }));
+          if (input.command === "ssh-keygen") return Effect.succeed(processOutput());
+          gitInput = input;
+          return Effect.succeed(processOutput());
+        },
+      });
+      const credentials = yield* make({
+        credentialRoot: path.join(root, "credentials"),
+        sshSecretRef: "cloud-agent-victor-key",
+        githubTokenSecretRef: undefined,
+      }).pipe(Effect.provideService(ProcessRunner.ProcessRunner, runner));
+      const workspace = path.join(root, "workspace");
+
+      yield* credentials.fetch({
+        runId: "allocation-fetch",
+        repository: "Atheal9k/cloud-agents",
+        ref: "refs/heads/main",
+        cwd: workspace,
+      });
+
+      assert.deepEqual(gitInput?.args, [
+        "fetch",
+        "--no-tags",
+        "--force",
+        "--",
+        "ssh://git@ssh.github.com:443/Atheal9k/cloud-agents.git",
+        "refs/heads/main",
+      ]);
+      assert.equal(gitInput?.cwd, workspace);
     }),
   );
 

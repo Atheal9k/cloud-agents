@@ -19,6 +19,8 @@ type ChildProcessCommand = {
   readonly args: ReadonlyArray<string>;
   readonly options: {
     readonly shell?: boolean | string;
+    readonly env?: NodeJS.ProcessEnv;
+    readonly extendEnv?: boolean;
   };
 };
 
@@ -122,6 +124,28 @@ describe("runProcess", () => {
 
       expect(result.stdout).toBe("service ok");
     }).pipe(Effect.provide(layer));
+  });
+
+  it.effect("can replace the server environment for untrusted commands", () => {
+    const spawner = makeSpawner((command) =>
+      Effect.sync(() => {
+        expect(command.options.env).toEqual({ PATH: "/trusted/bin", CI: "1" });
+        expect(command.options.extendEnv).toBe(false);
+        return makeHandle({ stdout: "isolated" });
+      }),
+    );
+
+    return runWith(spawner)({
+      command: "fake",
+      args: [],
+      env: { PATH: "/trusted/bin", CI: "1" },
+      extendEnv: false,
+    }).pipe(
+      Effect.provideService(HostProcessEnvironment, { SERVER_SECRET: "must-not-leak" }),
+      Effect.map((result) => {
+        expect(result.stdout).toBe("isolated");
+      }),
+    );
   });
 
   it.effect("resolves and escapes Windows command shims before spawning", () => {
