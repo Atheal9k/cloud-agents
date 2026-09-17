@@ -268,6 +268,12 @@ import {
   SourceControlRepositoryLookupInput,
 } from "./sourceControl.ts";
 import { VcsError } from "./vcs.ts";
+import {
+  CloudAllocationControllerError,
+  CloudAllocationSnapshot,
+  RunAllocation,
+  RunAllocationCommand,
+} from "./cloudAllocation.ts";
 
 export const WS_METHODS = {
   // Project registry methods
@@ -383,6 +389,8 @@ export const WS_METHODS = {
   // Cloud environment methods
   cloudGetRelayClientStatus: "cloud.getRelayClientStatus",
   cloudInstallRelayClient: "cloud.installRelayClient",
+  cloudAllocationDispatch: "cloud.allocations.dispatch",
+  cloudAllocationList: "cloud.allocations.list",
 
   // Pull request methods
   pullRequestsList: "pullRequests.list",
@@ -433,6 +441,7 @@ export const WS_METHODS = {
   subscribeServerLifecycle: "subscribeServerLifecycle",
   subscribeAuthAccess: "subscribeAuthAccess",
   subscribeBackgroundPolicy: "subscribeBackgroundPolicy",
+  subscribeCloudAllocations: "subscribeCloudAllocations",
   subscribeResourceTelemetry: "subscribeResourceTelemetry",
 } as const;
 
@@ -655,6 +664,25 @@ const WsCloudInstallRelayClientRpc = Rpc.make(WS_METHODS.cloudInstallRelayClient
   payload: Schema.Struct({}),
   success: RelayClientInstallProgressEventSchema,
   error: Schema.Union([RelayClientInstallFailedError, EnvironmentAuthorizationError]),
+  stream: true,
+});
+
+const WsCloudAllocationDispatchRpc = Rpc.make(WS_METHODS.cloudAllocationDispatch, {
+  payload: RunAllocationCommand,
+  success: RunAllocation,
+  error: Schema.Union([CloudAllocationControllerError, EnvironmentAuthorizationError]),
+});
+
+const WsCloudAllocationListRpc = Rpc.make(WS_METHODS.cloudAllocationList, {
+  payload: Schema.Struct({}),
+  success: CloudAllocationSnapshot,
+  error: Schema.Union([CloudAllocationControllerError, EnvironmentAuthorizationError]),
+});
+
+const WsSubscribeCloudAllocationsRpc = Rpc.make(WS_METHODS.subscribeCloudAllocations, {
+  payload: Schema.Struct({}),
+  success: CloudAllocationSnapshot,
+  error: Schema.Union([CloudAllocationControllerError, EnvironmentAuthorizationError]),
   stream: true,
 });
 
@@ -1394,6 +1422,8 @@ export const WsRpcGroup = RpcGroup.make(
   WsServerGetBackgroundPolicyRpc,
   WsCloudGetRelayClientStatusRpc,
   WsCloudInstallRelayClientRpc,
+  WsCloudAllocationDispatchRpc,
+  WsCloudAllocationListRpc,
   WsPullRequestsListRpc,
   WsPullRequestsListStatsRpc,
   WsPullRequestsSummaryRpc,
@@ -1489,6 +1519,7 @@ export const WsRpcGroup = RpcGroup.make(
   WsSubscribeServerLifecycleRpc,
   WsSubscribeAuthAccessRpc,
   WsSubscribeBackgroundPolicyRpc,
+  WsSubscribeCloudAllocationsRpc,
   WsSubscribeResourceTelemetryRpc,
   WsOrchestrationDispatchCommandRpc,
   WsOrchestrationGetWorkflowScriptRpc,
