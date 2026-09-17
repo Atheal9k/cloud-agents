@@ -118,6 +118,7 @@ import {
 import { useThreadActions } from "../hooks/useThreadActions";
 import { useHandleNewThread } from "../hooks/useHandleNewThread";
 import { isCommandPaletteOpen, openCommandPalette } from "../commandPaletteBus";
+import { openCloudLaunchDialog } from "../cloud/cloudLaunchDialogBus";
 import { startNewThreadFromContext } from "../lib/chatThreadActions";
 import { useClientSettings } from "../hooks/useSettings";
 import { useCopyToClipboard } from "../hooks/useCopyToClipboard";
@@ -4366,6 +4367,10 @@ export default function Sidebar() {
     shortcutLabelForCommand(keybindings, "chat.new") ??
     (projectGroups.length <= 1 ? shortcutLabelForCommand(keybindings, "chat.newLocal") : undefined);
   const newThreadInProjectShortcutLabel = shortcutLabelForCommand(keybindings, "chat.newLocal");
+  const supportsCloudThreads =
+    primaryEnvironmentId !== null &&
+    serverConfigs.get(primaryEnvironmentId)?.environment.capabilities.cloudAllocations === true;
+  const newCloudThreadShortcutLabel = shortcutLabelForCommand(keybindings, "chat.newCloud");
   return (
     <>
       <SidebarChromeHeader isElectron={isElectron} />
@@ -4514,9 +4519,18 @@ export default function Sidebar() {
               }
               onNewProject={openAddProjectCommandPalette}
               onNewThread={handleNewThreadClick}
+              onNewCloudThread={
+                supportsCloudThreads
+                  ? () => {
+                      if (isMobile) setOpenMobile(false);
+                      openCloudLaunchDialog();
+                    }
+                  : undefined
+              }
               newThreadDisabled={projects.length === 0}
               newThreadShortcutLabel={newThreadShortcutLabel}
               newThreadInProjectShortcutLabel={newThreadInProjectShortcutLabel}
+              newCloudThreadShortcutLabel={newCloudThreadShortcutLabel}
               showNewThreadInProjectHint={projectGroups.length > 1}
               searchInputRef={threadSearchInputRef}
               searchQuery={threadSearchQuery}

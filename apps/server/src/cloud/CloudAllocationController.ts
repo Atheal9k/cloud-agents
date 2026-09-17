@@ -339,6 +339,16 @@ export const make = Effect.fn("CloudAllocationController.make")(function* (input
     }
     if (command.type !== "allocation.launch" && command.type !== "allocation.retry")
       return undefined;
+    if (
+      command.type === "allocation.launch" &&
+      command.execution !== undefined &&
+      command.execution.unansweredRequestSeconds > limits.maxInputWaitSeconds
+    ) {
+      return controllerError(
+        "invalid-request",
+        `Cloud input may wait at most ${limits.maxInputWaitSeconds} seconds.`,
+      );
+    }
     const occurredAt = Date.parse(command.occurredAt);
     const expiresAt = Date.parse(command.deadlines.expiresAt);
     const timestamps = [

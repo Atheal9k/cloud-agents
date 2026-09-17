@@ -111,6 +111,10 @@
       "types": "./src/state/connections.ts",
       "default": "./src/state/connections.ts"
     },
+    "./state/cloud-allocations": {
+      "types": "./src/state/cloudAllocations.ts",
+      "default": "./src/state/cloudAllocations.ts"
+    },
     "./state/entities": {
       "types": "./src/state/entities.ts",
       "default": "./src/state/entities.ts"

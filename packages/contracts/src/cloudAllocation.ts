@@ -15,6 +15,7 @@ import {
   TrimmedNonEmptyString,
 } from "./baseSchemas.ts";
 import { ExecutionEnvironmentPlatformArch, ExecutionEnvironmentPlatformOs } from "./environment.ts";
+import { CloudProviderTurnInput, CloudProviderUnansweredRequestSeconds } from "./cloudExecution.ts";
 
 export const RunWorkerDevice = Schema.Literals(["android", "ios"]);
 export type RunWorkerDevice = typeof RunWorkerDevice.Type;
@@ -99,6 +100,15 @@ export const RunPublicationIntent = Schema.Union([
   }),
 ]);
 export type RunPublicationIntent = typeof RunPublicationIntent.Type;
+
+export const RunExecutionIntent = Schema.Struct({
+  threadId: ThreadId,
+  title: TrimmedNonEmptyString,
+  selectedRef: TrimmedNonEmptyString,
+  unansweredRequestSeconds: CloudProviderUnansweredRequestSeconds,
+  turn: CloudProviderTurnInput,
+});
+export type RunExecutionIntent = typeof RunExecutionIntent.Type;
 
 const defaultPublicationIntent = RunPublicationIntent.make({ mode: "review-only" });
 const RunPublicationIntentWithDefault = RunPublicationIntent.pipe(
@@ -221,6 +231,8 @@ export const RunAllocation = Schema.Struct({
   attempt: RunAllocationAttempt,
   target: RunRepositoryTarget,
   publication: RunPublicationIntentWithDefault,
+  /** Missing on allocations requested before the web launch flow was added. */
+  execution: Schema.optionalKey(RunExecutionIntent),
   profile: RunWorkerProfile,
   deadlines: RunDeadlines,
   allocationState: RunAllocationState,
@@ -252,6 +264,7 @@ export const RunAllocationCommand = Schema.Union([
     type: Schema.Literal("allocation.launch"),
     target: RunRepositoryTarget,
     publication: RunPublicationIntentWithDefault,
+    execution: Schema.optionalKey(RunExecutionIntent),
     profile: RunWorkerProfile,
     deadlines: RunDeadlines,
   }),
@@ -341,6 +354,8 @@ export const RunAllocationEvent = Schema.Union([
     target: RunRepositoryTarget,
     /** Missing on allocation events written before CA-16. */
     publication: Schema.optionalKey(RunPublicationIntent),
+    /** Missing on allocation events written before CA-19. */
+    execution: Schema.optionalKey(RunExecutionIntent),
     profile: RunWorkerProfile,
     deadlines: RunDeadlines,
   }),

@@ -21,6 +21,22 @@ const launchInput = {
     baseCommit: "afd7667ed",
     branch: "ca-04a-local-controller",
   },
+  execution: {
+    threadId: "thread-allocation-1-1",
+    title: "Fix the cloud launch flow",
+    selectedRef: "main",
+    unansweredRequestSeconds: 900,
+    turn: {
+      commandId: "command-launch",
+      messageId: "message-allocation-1",
+      prompt: "Fix the cloud launch flow",
+      attachments: [],
+      modelSelection: { instanceId: "codex", model: "gpt-5.6-sol" },
+      runtimeMode: "approval-required",
+      interactionMode: "default",
+      createdAt: "2026-09-17T03:00:00.000Z",
+    },
+  },
   profile: { id: "linux-web", os: "linux", arch: "x64", instanceType: "t3.medium" },
   deadlines: {
     launchBy: "2026-09-17T03:05:00.000Z",
@@ -121,9 +137,23 @@ it.effect("rejects invalid shapes and run durations before allocation", () =>
         }),
       )
       .pipe(Effect.flip);
+    const invalidInputWait = yield* controller
+      .dispatch(
+        decodeCommand({
+          ...launchInput,
+          commandId: "command-long-input-wait",
+          allocationId: "allocation-long-input-wait",
+          execution: {
+            ...launchInput.execution,
+            unansweredRequestSeconds: 901,
+          },
+        }),
+      )
+      .pipe(Effect.flip);
 
     expect(invalidShape.reason).toBe("invalid-request");
     expect(invalidDuration.reason).toBe("invalid-request");
+    expect(invalidInputWait.reason).toBe("invalid-request");
     expect((yield* controller.snapshot).allocations).toEqual([]);
   }).pipe(Effect.provide(SqlitePersistenceMemory)),
 );

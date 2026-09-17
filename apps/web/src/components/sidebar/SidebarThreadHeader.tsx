@@ -10,7 +10,7 @@
  * of the sidebar's scope logic. `searchFieldRef` lands on the search field so
  * the picker's popup can anchor to that width rather than to its 28px trigger.
  */
-import { FolderPlusIcon, SearchIcon, SquarePenIcon, XIcon } from "lucide-react";
+import { CloudIcon, FolderPlusIcon, SearchIcon, SquarePenIcon, XIcon } from "lucide-react";
 import {
   type ComponentProps,
   type KeyboardEvent as ReactKeyboardEvent,
@@ -35,9 +35,11 @@ export interface SidebarThreadHeaderProps {
   onNewProject: () => void;
   /** Receives the click so Shift+click can skip the project picker. */
   onNewThread: (event: ReactMouseEvent) => void;
+  onNewCloudThread?: (() => void) | undefined;
   newThreadDisabled: boolean;
   newThreadShortcutLabel: string | null | undefined;
   newThreadInProjectShortcutLabel: string | null | undefined;
+  newCloudThreadShortcutLabel?: string | null | undefined;
   /** Shift+click only matters once there is more than one project to pick. */
   showNewThreadInProjectHint: boolean;
   searchInputRef: RefObject<HTMLInputElement | null>;
@@ -56,9 +58,11 @@ export function SidebarThreadHeader({
   projectScope,
   onNewProject,
   onNewThread,
+  onNewCloudThread,
   newThreadDisabled,
   newThreadShortcutLabel,
   newThreadInProjectShortcutLabel,
+  newCloudThreadShortcutLabel,
   showNewThreadInProjectHint,
   searchInputRef,
   searchQuery,
@@ -134,6 +138,19 @@ export function SidebarThreadHeader({
             </SidebarHeaderIconButton>
           </>
         ) : null}
+        {onNewCloudThread === undefined ? null : (
+          <SidebarHeaderIconButton
+            label="New cloud thread"
+            tooltip={
+              newCloudThreadShortcutLabel
+                ? `New cloud thread (${newCloudThreadShortcutLabel})`
+                : "New cloud thread"
+            }
+            onClick={onNewCloudThread}
+          >
+            <CloudIcon />
+          </SidebarHeaderIconButton>
+        )}
         <SidebarHeaderIconButton
           label="New thread"
           tooltip={
