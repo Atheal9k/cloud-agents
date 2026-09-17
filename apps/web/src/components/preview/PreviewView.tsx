@@ -59,9 +59,11 @@ import { revealInFileExplorerLabel } from "./fileExplorerLabel";
 import { shouldShowPreviewEmptyState } from "./previewEmptyStateLogic";
 import { Badge } from "~/components/ui/badge";
 import { BrowserSurfaceSlot } from "~/browser/BrowserSurfaceSlot";
+import { previewGatewayBootstrapUrl, previewGatewayRequest } from "~/browser/previewGatewayUrl";
 import { useBrowserSurfaceStore } from "~/browser/browserSurfaceStore";
 import { usePreviewSession } from "./usePreviewSession";
 import { ZoomIndicator } from "./ZoomIndicator";
+import { WebPreviewFrame } from "./WebPreviewFrame";
 import { AgentBrowserCursor } from "./AgentBrowserCursor";
 import {
   findActiveBrowserRecordingRuntimeTabId,
@@ -106,6 +108,13 @@ export function PreviewView({
 }: Props) {
   const [focusUrlNonce, setFocusUrlNonce] = useState<number | undefined>(undefined);
   const [pickActive, setPickActive] = useState(false);
+  const [webRefreshVersion, setWebRefreshVersion] = useState(0);
+  const [webLoading, setWebLoading] = useState(false);
+  const [webResolutionErrorUrl, setWebResolutionErrorUrl] = useState<string | null>(null);
+  const [webNavigation, setWebNavigation] = useState<{
+    readonly displayUrl: string;
+    readonly runtimeUrl: string;
+  } | null>(null);
   const activeRecordingTabIds = useActiveBrowserRecordingTabIds();
   const pickActiveRef = useRef(false);
   const isMountedRef = useRef(true);
@@ -129,6 +138,10 @@ export function PreviewView({
     : null;
   const open = useAtomCommand(previewEnvironment.open);
   const resize = useAtomCommand(previewEnvironment.resize, "preview viewport resize");
+  const issueGateway = useAtomCommand(previewEnvironment.issueGateway, { reportFailure: false });
+  const reportStatus = useAtomCommand(previewEnvironment.reportStatus, {
+    reportFailure: false,
+  });
 
   usePreviewSession(threadRef);
 
@@ -153,7 +166,10 @@ export function PreviewView({
   const desktopOverlay = tabId ? (previewState.desktopByTabId[tabId] ?? null) : null;
   const navStatus = snapshot?.navStatus ?? { _tag: "Idle" as const };
   const url = navStatus._tag === "Idle" ? "" : navStatus.url;
-  const loading = desktopOverlay?.loading ?? navStatus._tag === "Loading";
+  const webRuntimeUrl = webNavigation?.displayUrl === url ? webNavigation.runtimeUrl : null;
+  const loading = previewBridge
+    ? (desktopOverlay?.loading ?? navStatus._tag === "Loading")
+    : webLoading || (url !== "" && webRuntimeUrl === null && webResolutionErrorUrl !== url);
   const canGoBack = desktopOverlay?.canGoBack ?? snapshot?.canGoBack ?? false;
   const canGoForward = desktopOverlay?.canGoForward ?? snapshot?.canGoForward ?? false;
   const refreshDisabled = navStatus._tag === "Idle";
@@ -186,14 +202,14 @@ export function PreviewView({
   }, [environmentHostname, latestHistoryUrl, navTitle, navUrl, threadKey]);
 
   const navigateToResolvedUrl = useCallback(
-    async (resolvedUrl: string) => {
+    async (displayUrl: string, resolvedUrl: string) => {
       if (runtimeTabId && previewBridge) {
         // The bridge mirrors the resolved URL back to the server.
         await previewBridge.navigate(runtimeTabId, resolvedUrl);
         rememberPreviewUrl(threadRef, resolvedUrl);
         return true;
       }
-      const result = await openPreviewSession({ openPreview: open, threadRef, url: resolvedUrl });
+      const result = await openPreviewSession({ openPreview: open, threadRef, url: displayUrl });
       if (result._tag === "Failure" && !isAtomCommandInterrupted(result)) {
         const error = squashAtomCommandFailure(result);
         if (error instanceof BrowserSettingsReadError) {
@@ -204,42 +220,124 @@ export function PreviewView({
           });
         }
       }
+      if (result._tag === "Success") {
+        setWebNavigation({ displayUrl, runtimeUrl: resolvedUrl });
+      }
       return result._tag === "Success";
     },
     [open, runtimeTabId, threadRef],
+  );
+
+  const resolveNavigationUrl = useCallback(
+    async (next: string, discovered: boolean) => {
+      const directUrl = () =>
+        discovered ? resolveDiscoveredServerUrl(threadRef.environmentId, next) : next;
+      if (previewBridge) return directUrl();
+      if (environmentHttpBaseUrl === null) {
+        return directUrl();
+      }
+      const request = previewGatewayRequest(environmentHttpBaseUrl, threadRef.threadId, next);
+      if (request === null) {
+        return directUrl();
+      }
+      const result = await issueGateway({
+        environmentId: threadRef.environmentId,
+        input: request.input,
+      });
+      if (result._tag === "Failure") throw squashAtomCommandFailure(result);
+      return previewGatewayBootstrapUrl(environmentHttpBaseUrl, result.value, request.hash);
+    },
+    [environmentHttpBaseUrl, issueGateway, threadRef.environmentId, threadRef.threadId],
   );
 
   const handleSubmitUrl = useCallback(
     async (next: string) => {
       try {
         const normalized = normalizePreviewUrl(next);
-        if (await navigateToResolvedUrl(normalized)) {
+        const resolved = await resolveNavigationUrl(normalized, false);
+        if (await navigateToResolvedUrl(normalized, resolved)) {
           recordVisitForThread(threadRef, normalized);
         }
-      } catch {
-        // Server-side `failed` event renders the unreachable view.
+      } catch (error) {
+        toastManager.add({
+          type: "error",
+          title: "Unable to open preview",
+          description: error instanceof Error ? error.message : "The app preview is unavailable.",
+        });
       }
     },
-    [navigateToResolvedUrl, threadRef],
+    [navigateToResolvedUrl, resolveNavigationUrl, threadRef],
   );
 
   const handleOpenServerUrl = useCallback(
     async (next: string) => {
       try {
-        const resolved = resolveDiscoveredServerUrl(threadRef.environmentId, next);
-        if (await navigateToResolvedUrl(resolved)) {
+        const resolved = await resolveNavigationUrl(next, true);
+        if (await navigateToResolvedUrl(next, resolved)) {
           recordVisitForThread(threadRef, next);
         }
-      } catch {
-        // Server-side `failed` event renders the unreachable view.
+      } catch (error) {
+        toastManager.add({
+          type: "error",
+          title: "Unable to open preview",
+          description: error instanceof Error ? error.message : "The app preview is unavailable.",
+        });
       }
     },
-    [navigateToResolvedUrl, threadRef],
+    [navigateToResolvedUrl, resolveNavigationUrl, threadRef],
   );
 
   const handleRefresh = useCallback(() => {
-    if (previewBridge && runtimeTabId) void previewBridge.refresh(runtimeTabId);
+    if (previewBridge && runtimeTabId) {
+      void previewBridge.refresh(runtimeTabId);
+      return;
+    }
+    if (runtimeTabId) {
+      setWebLoading(true);
+      setWebRefreshVersion((version) => version + 1);
+    }
   }, [runtimeTabId]);
+
+  const handleWebFrameLoad = useCallback(() => {
+    setWebLoading(false);
+    if (!tabId || !url) return;
+    void reportStatus({
+      environmentId: threadRef.environmentId,
+      input: {
+        threadId: threadRef.threadId,
+        tabId,
+        navStatus: { _tag: "Success", url, title: "Direct app preview" },
+        canGoBack: false,
+        canGoForward: false,
+      },
+    });
+  }, [reportStatus, tabId, threadRef.environmentId, threadRef.threadId, url]);
+
+  useEffect(() => {
+    if (previewBridge || !url || webRuntimeUrl) return;
+    let cancelled = false;
+    void resolveNavigationUrl(url, false).then(
+      (runtimeUrl) => {
+        if (!cancelled) {
+          setWebResolutionErrorUrl(null);
+          setWebNavigation({ displayUrl: url, runtimeUrl });
+        }
+      },
+      (error) => {
+        if (cancelled) return;
+        setWebLoading(false);
+        setWebResolutionErrorUrl(url);
+        toastManager.add({
+          type: "error",
+          title: "Unable to reconnect preview",
+          description: error instanceof Error ? error.message : "The app preview is unavailable.",
+        });
+      },
+    );
+    return () => {
+      cancelled = true;
+    };
+  }, [resolveNavigationUrl, url, webRuntimeUrl]);
 
   const handleZoomIn = useCallback(() => {
     if (previewBridge && runtimeTabId) void previewBridge.zoomIn(runtimeTabId);
@@ -309,9 +407,14 @@ export function PreviewView({
   }, [runtimeTabId]);
 
   const handleOpenInBrowser = useCallback(() => {
-    if (!localApi || !url) return;
-    void localApi.shell.openExternal(url).catch(() => undefined);
-  }, [url]);
+    const target = previewBridge ? url : webRuntimeUrl;
+    if (!target) return;
+    if (localApi) {
+      void localApi.shell.openExternal(target).catch(() => undefined);
+      return;
+    }
+    window.open(target, "_blank", "noopener,noreferrer");
+  }, [url, webRuntimeUrl]);
 
   const handlePictureInPicture = useCallback(() => {
     if (!tabId) return;
@@ -738,24 +841,29 @@ export function PreviewView({
           isUnreachable ? "Page didn't load — pick unavailable until the page renders" : undefined
         }
         leadingActions={
-          // Only when it differs from the default: labelling every tab
-          // "Default" would be noise on the common case, while a tab in
-          // another profile is exactly what needs calling out.
-          activeProfileId !== browserDefaults.profileId ? (
-            // Capped: profile names run to 48 characters, and an unbounded
-            // badge in this row takes its width from the URL input, the only
-            // flexible element in the compact chrome. The cap sits on the
-            // badge and the truncation on an inner span, because `Badge` is an
-            // `inline-flex` with `whitespace-nowrap` — `text-overflow` never
-            // reaches a bare text node inside it, so the name would be cut off
-            // at both ends with no ellipsis.
+          <>
             <Tooltip>
-              <TooltipTrigger render={<Badge variant="outline" className="max-w-28 shrink-0" />}>
-                <span className="truncate">{activeProfileName}</span>
+              <TooltipTrigger render={<Badge variant="outline" className="shrink-0" />}>
+                Direct app
               </TooltipTrigger>
-              <TooltipPopup side="top">{activeProfileName}</TooltipPopup>
+              <TooltipPopup side="top">
+                Your interactive app preview. This is not the agent's browser session.
+              </TooltipPopup>
             </Tooltip>
-          ) : null
+            {/*
+              Only when it differs from the default: labelling every tab "Default" would be
+              noise on the common case, while a tab in another profile is exactly what needs
+              calling out. The inner span owns truncation because Badge is a nowrap inline-flex.
+            */}
+            {activeProfileId !== browserDefaults.profileId ? (
+              <Tooltip>
+                <TooltipTrigger render={<Badge variant="outline" className="max-w-28 shrink-0" />}>
+                  <span className="truncate">{activeProfileName}</span>
+                </TooltipTrigger>
+                <TooltipPopup side="top">{activeProfileName}</TooltipPopup>
+              </Tooltip>
+            ) : null}
+          </>
         }
         trailingActions={
           previewBridge ? (
@@ -778,12 +886,21 @@ export function PreviewView({
 
       <div className="relative min-h-0 flex-1 overflow-hidden">
         {runtimeTabId && snapshot && !showEmptyState ? (
-          <BrowserSurfaceSlot
-            key={runtimeTabId}
-            tabId={runtimeTabId}
-            visible={visible && !isUnreachable}
-            className="absolute inset-0 h-full w-full"
-          />
+          previewBridge ? (
+            <BrowserSurfaceSlot
+              key={runtimeTabId}
+              tabId={runtimeTabId}
+              visible={visible && !isUnreachable}
+              className="absolute inset-0 h-full w-full"
+            />
+          ) : webRuntimeUrl ? (
+            <WebPreviewFrame
+              url={webRuntimeUrl}
+              visible={visible && !isUnreachable}
+              refreshVersion={webRefreshVersion}
+              onLoad={handleWebFrameLoad}
+            />
+          ) : null
         ) : null}
         {showEmptyState ? (
           <PreviewEmptyState

@@ -1,15 +1,20 @@
 /**
  * Preview - Schemas for the in-app browser preview surface.
  *
- * The preview is desktop-only (Chromium <webview>); the server tracks per-thread
- * tab metadata so it survives client reconnects and multi-window. The desktop
- * renderer mediates: it owns the actual <webview> and reports navigation back to
- * the server via these RPCs, the server fans events to all subscribers.
+ * The server tracks per-thread tab metadata so previews survive reconnects and
+ * multi-window use. Desktop owns a Chromium <webview>; web renders the approved
+ * app through the environment preview gateway.
  *
  * @module Preview
  */
 import { Schema } from "effect";
-import { NonNegativeInt, PositiveInt, ThreadId, TrimmedNonEmptyString } from "./baseSchemas.ts";
+import {
+  IsoDateTime,
+  NonNegativeInt,
+  PositiveInt,
+  ThreadId,
+  TrimmedNonEmptyString,
+} from "./baseSchemas.ts";
 import { BrowserProfileId } from "./browserProfile.ts";
 
 export const PREVIEW_URL_MAX_LENGTH = 2_048;
@@ -322,6 +327,31 @@ export const DiscoveredLocalServerList = Schema.Struct({
   configuredUrlProbing: Schema.optional(Schema.Literal(true)),
 });
 export type DiscoveredLocalServerList = typeof DiscoveredLocalServerList.Type;
+
+export const PreviewGatewayProtocol = Schema.Literals(["http", "https"]);
+export type PreviewGatewayProtocol = typeof PreviewGatewayProtocol.Type;
+
+export const PreviewGatewayIssueInput = Schema.Struct({
+  threadId: ThreadId,
+  port: PositiveInt.pipe(Schema.check(Schema.isLessThan(65_536))),
+  protocol: PreviewGatewayProtocol,
+  path: Schema.String.check(Schema.isMaxLength(PREVIEW_URL_MAX_LENGTH)),
+});
+export type PreviewGatewayIssueInput = typeof PreviewGatewayIssueInput.Type;
+
+export const PreviewGatewayGrant = Schema.Struct({
+  bootstrapPath: TrimmedNonEmptyString,
+  expiresAt: IsoDateTime,
+});
+export type PreviewGatewayGrant = typeof PreviewGatewayGrant.Type;
+
+export class PreviewGatewayError extends Schema.TaggedError<PreviewGatewayError>()(
+  "PreviewGatewayError",
+  {
+    reason: Schema.Literals(["invalid-path", "port-not-approved", "protocol-mismatch"]),
+    message: TrimmedNonEmptyString,
+  },
+) {}
 
 export class PreviewSessionLookupError extends Schema.TaggedError<PreviewSessionLookupError>()(
   "PreviewSessionLookupError",
