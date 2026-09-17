@@ -254,6 +254,8 @@ Acceptance criteria:
 
 Dependencies: CA-02, CA-04A, CA-07, CA-08.
 
+Status: Done on 17 September 2026 in [PR #9](https://github.com/Atheal9k/cloud-agents/pull/9).
+
 Description: Extend existing environment discovery/connection paths with an authenticated outbound worker route. Keep normal execution in T3's typed RPC and provider runtime.
 
 Acceptance criteria:
