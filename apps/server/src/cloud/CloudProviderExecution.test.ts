@@ -146,7 +146,7 @@ it.effect("starts Codex through ordinary project and turn orchestration commands
       attempt: 1,
       projectId: "cloud:allocation-11:1",
       threadId: "thread-allocation-11",
-      acceptedSequence: 2,
+      acceptedSequence: 3,
     });
     expect(commands).toEqual([
       {
@@ -156,6 +156,21 @@ it.effect("starts Codex through ordinary project and turn orchestration commands
         title: "Atheal9k/cloud-agents",
         workspaceRoot: "/work/cloud-run-ca11",
         createdAt: "2026-09-17T05:01:00.000Z",
+      },
+      {
+        type: "project.meta.update",
+        commandId: "cloud:allocation-11:1:preview-scripts",
+        projectId: "cloud:allocation-11:1",
+        scripts: [
+          {
+            id: "cloud-dev-1",
+            name: "web",
+            command: "vp run dev",
+            icon: "play",
+            runOnWorktreeCreate: false,
+            previewUrl: "http://localhost:5173",
+          },
+        ],
       },
       {
         type: "thread.turn.start",

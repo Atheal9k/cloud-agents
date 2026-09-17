@@ -411,9 +411,7 @@ export const ProjectScript = Schema.Struct({
    */
   async: Schema.optional(Schema.Boolean),
   /**
-   * URL to open in the in-app browser preview when this script runs (or
-   * when the user explicitly requests a preview). Optional; only honored on
-   * the desktop build.
+   * URL offered by the web and desktop in-app preview while this script runs.
    */
   previewUrl: Schema.optional(TrimmedNonEmptyString),
   /**

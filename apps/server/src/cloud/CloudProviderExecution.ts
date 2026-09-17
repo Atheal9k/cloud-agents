@@ -12,6 +12,7 @@ import {
   type OrchestrationEvent,
   ProjectId,
   ProviderDriverKind,
+  type ProjectScript,
   type ServerProvider,
 } from "@t3tools/contracts";
 import * as Context from "effect/Context";
@@ -59,6 +60,25 @@ function executionError(
 
 function projectId(preparation: CloudProviderExecutionStartInput["preparation"]) {
   return ProjectId.make(`cloud:${preparation.allocationId}:${preparation.attempt}`);
+}
+
+const SAFE_SHELL_WORD = /^[A-Za-z0-9_@%+=:,./-]+$/;
+
+function quotePosixShellWord(value: string): string {
+  return SAFE_SHELL_WORD.test(value) ? value : `'${value.replaceAll("'", `'\\''`)}'`;
+}
+
+function devServerScripts(
+  preparation: CloudProviderExecutionStartInput["preparation"],
+): ReadonlyArray<ProjectScript> {
+  return preparation.devServers.map((server, index) => ({
+    id: `cloud-dev-${index + 1}`,
+    name: server.name,
+    command: [server.command.command, ...server.command.args].map(quotePosixShellWord).join(" "),
+    icon: "play",
+    runOnWorktreeCreate: false,
+    previewUrl: `http://localhost:${server.port}`,
+  }));
 }
 
 function hasActiveExhaustedWindow(provider: ServerProvider, createdAt: string): boolean {
@@ -283,6 +303,14 @@ const build = Effect.fn("CloudProviderExecution.build")(function* (input?: {
       title: request.preparation.repository,
       workspaceRoot: request.preparation.workspacePath,
       createdAt: request.turn.createdAt,
+    });
+    yield* dispatch({
+      type: "project.meta.update",
+      commandId: CommandId.make(
+        `cloud:${request.preparation.allocationId}:${request.preparation.attempt}:preview-scripts`,
+      ),
+      projectId: executionProjectId,
+      scripts: [...devServerScripts(request.preparation)],
     });
     const receipt = yield* dispatch({
       type: "thread.turn.start",
