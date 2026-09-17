@@ -9,6 +9,7 @@ fail() {
 [[ "$(id -u)" -ne 0 ]] || fail "the worker service must not run as root"
 [[ -r /opt/t3/worker-image-manifest.json ]] || fail "the image manifest is missing"
 [[ -d /var/lib/t3-worker/t3 ]] || fail "the T3 state directory is missing"
+[[ -d /var/cache/t3-worker-dependencies ]] || fail "the dependency cache directory is missing"
 [[ -d /work ]] || fail "the workspace directory is missing"
 
 expected_node="$(jq -r '.runtime.node' /opt/t3/worker-image-manifest.json)"

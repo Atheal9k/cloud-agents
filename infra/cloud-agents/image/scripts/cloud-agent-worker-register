@@ -58,6 +58,29 @@ done
 environment_id="$(jq --exit-status --raw-output '.environmentId | select(type == "string" and length > 0)' \
   <<<"${descriptor}")" || fail 'local T3 descriptor is unavailable'
 
+startup_pending=/var/lib/t3-worker/startup-timings.pending.json
+startup_timings=/var/lib/t3-worker/startup-timings.json
+if [[ -r "${startup_pending}" ]]; then
+  service_ready_ms="$(date +%s%3N)"
+  node -e '
+    const fs = require("node:fs");
+    const [pendingPath, outputPath, serviceReadyMs] = process.argv.slice(1);
+    const pending = JSON.parse(fs.readFileSync(pendingPath, "utf8"));
+    const timing = (startedMs, completedMs) => ({
+      startedAt: new Date(startedMs).toISOString(),
+      completedAt: new Date(completedMs).toISOString(),
+      durationMs: Math.max(0, completedMs - startedMs)
+    });
+    fs.writeFileSync(outputPath, `${JSON.stringify({
+      imageBoot: timing(pending.bootStartedMs, pending.bootCompletedMs),
+      serviceStartup: timing(pending.serviceStartedMs, Number(serviceReadyMs))
+    })}\n`, { mode: 0o640 });
+  ' "${startup_pending}" "${startup_timings}" "${service_ready_ms}" \
+    || fail 'worker startup timings could not be recorded'
+  chown root:cloudagent "${startup_timings}"
+  rm -f "${startup_pending}"
+fi
+
 access_token="$(runuser --user cloudagent -- \
   t3 auth session issue \
   --base-dir /var/lib/t3-worker/t3 \

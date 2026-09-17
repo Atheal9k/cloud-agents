@@ -66,6 +66,34 @@ export const CloudRepositoryCommandResult = Schema.Struct({
 });
 export type CloudRepositoryCommandResult = typeof CloudRepositoryCommandResult.Type;
 
+export const CloudRunStageTiming = Schema.Struct({
+  startedAt: IsoDateTime,
+  completedAt: IsoDateTime,
+  durationMs: NonNegativeInt,
+});
+export type CloudRunStageTiming = typeof CloudRunStageTiming.Type;
+
+export const CloudWorkerStartupTimings = Schema.Struct({
+  imageBoot: CloudRunStageTiming,
+  serviceStartup: CloudRunStageTiming,
+});
+export type CloudWorkerStartupTimings = typeof CloudWorkerStartupTimings.Type;
+
+export const CloudRepositoryDependencyCache = Schema.Struct({
+  key: Schema.String.check(Schema.isPattern(/^[a-f0-9]{64}$/)),
+  outcome: Schema.Literals(["miss", "hit", "rebuilt"]),
+  inputFiles: Schema.Array(TrimmedNonEmptyString),
+  imageVersion: TrimmedNonEmptyString,
+  platform: Schema.Struct({
+    os: TrimmedNonEmptyString,
+    arch: TrimmedNonEmptyString,
+    nodeVersion: TrimmedNonEmptyString,
+  }),
+  sizeBytes: NonNegativeInt,
+  evictedEntries: NonNegativeInt,
+});
+export type CloudRepositoryDependencyCache = typeof CloudRepositoryDependencyCache.Type;
+
 export const CloudRepositoryPreparationInput = Schema.Struct({
   allocationId: RunAllocationId,
   attempt: RunAllocationAttempt,
@@ -88,6 +116,14 @@ export const CloudRepositoryPreparationRecord = Schema.Struct({
   devServers: Schema.Array(CloudRepositoryDevServer),
   verification: Schema.Array(CloudRepositoryCommand),
   permittedSecretReferences: Schema.Array(CloudRepositorySecretReference),
+  dependencyCache: Schema.optionalKey(CloudRepositoryDependencyCache),
+  timings: Schema.optionalKey(
+    Schema.Struct({
+      workerStartup: Schema.optionalKey(CloudWorkerStartupTimings),
+      clone: CloudRunStageTiming,
+      setup: CloudRunStageTiming,
+    }),
+  ),
   preparedAt: IsoDateTime,
 });
 export type CloudRepositoryPreparationRecord = typeof CloudRepositoryPreparationRecord.Type;

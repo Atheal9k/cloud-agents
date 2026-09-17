@@ -283,6 +283,7 @@ const build = Effect.fn("CloudProviderExecution.build")(function* (input?: {
   const start: CloudProviderExecution["Service"]["start"] = Effect.fn(
     "CloudProviderExecution.start",
   )(function* (request) {
+    const providerStartStartedAt = yield* DateTime.now;
     const maxInputWaitSeconds = input?.maxInputWaitSeconds ?? 15 * 60;
     if (request.unansweredRequestSeconds > maxInputWaitSeconds) {
       return yield* executionError(
@@ -339,12 +340,23 @@ const build = Effect.fn("CloudProviderExecution.build")(function* (input?: {
       },
       createdAt: request.turn.createdAt,
     });
+    const providerStartCompletedAt = yield* DateTime.now;
+    const providerStartTiming = {
+      startedAt: DateTime.formatIso(providerStartStartedAt),
+      completedAt: DateTime.formatIso(providerStartCompletedAt),
+      durationMs: Math.max(
+        0,
+        DateTime.toEpochMillis(providerStartCompletedAt) -
+          DateTime.toEpochMillis(providerStartStartedAt),
+      ),
+    };
 
     yield* Effect.logInfo("Cloud provider execution started.", {
       allocationId: request.preparation.allocationId,
       attempt: request.preparation.attempt,
       threadId: request.threadId,
       providerInstanceId: request.turn.modelSelection.instanceId,
+      providerStartDurationMs: providerStartTiming.durationMs,
     });
 
     return {
@@ -357,6 +369,7 @@ const build = Effect.fn("CloudProviderExecution.build")(function* (input?: {
       interactionMode: request.turn.interactionMode,
       unansweredRequestSeconds: request.unansweredRequestSeconds,
       acceptedSequence: receipt.sequence,
+      providerStartTiming,
       startedAt: request.turn.createdAt,
     } satisfies CloudProviderExecutionRecord;
   });

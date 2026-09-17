@@ -21,11 +21,15 @@ packer init ./image
 packer validate -var "source_ami_id=ami-0123456789abcdef0" ./image
 packer build `
   -var "source_ami_id=ami-0123456789abcdef0" `
-  -var "image_version=0.0.42-ca07.2" `
+  -var "image_version=0.0.42-ca27.1" `
   ./image
 ```
 
 The default `linux-web` image has no mobile SDK, X server, or display-stream service. To prepare the dormant desktop library layer for the CA-34 shared-browser profile, build a separate image with `profile_name=linux-web-browser` and `install_desktop_dependencies=true`. This installs Xvfb and browser runtime libraries but does not install or start a streaming service.
+
+The worker service keeps package-manager downloads in `/var/cache/t3-worker-dependencies`. Cache entries are private to the worker user, keyed by the repository, dependency inputs, setup recipe, image version, operating system, and architecture. Installed dependency trees stay in their run workspaces. The server retains at most eight entries and 5 GiB by default. Set `T3CODE_CLOUD_DEPENDENCY_CACHE_MAX_ENTRIES` or `T3CODE_CLOUD_DEPENDENCY_CACHE_MAX_BYTES` in the worker runtime environment to lower those bounds. This does not keep workers warm.
+
+Cloud run records include image boot, service startup, clone, setup, and provider-start timing data. The image writes the boot and service measurements to `/var/lib/t3-worker/startup-timings.json`; run workspaces and provider credentials stay outside the dependency cache.
 
 The image enables `cloud-agent-worker.service` and the root-only `cloud-agent-worker-registration.service`. T3, Codex, Claude Code, and every child process run as `cloudagent` in one systemd cgroup. Claude Code uses `/run/t3-worker/credentials/claude` and does not check for automatic updates. The worker unit drops capabilities, blocks EC2 metadata for the cgroup, restricts writable paths, kills the whole cgroup on stop, and clears `/run/t3-worker/credentials` after success or failure. Its preflight checks the pinned tools and confirms an IMDSv2 token cannot be obtained before T3 starts. The registration unit alone reads the short-lived allocation tags, verifies the local T3 service, and registers its configured HTTPS route. The worker role has no access to the controller's Git or GitHub secrets.
 
