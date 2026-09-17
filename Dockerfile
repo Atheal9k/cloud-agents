@@ -39,7 +39,7 @@ LABEL org.opencontainers.image.title="T3 Code controller" \
       org.opencontainers.image.version="${T3CODE_IMAGE_VERSION}"
 
 RUN apt-get update \
-    && apt-get install --yes --no-install-recommends ca-certificates git openssh-client tini \
+    && apt-get install --yes --no-install-recommends awscli ca-certificates gh git openssh-client tini \
     && rm -rf /var/lib/apt/lists/* \
     && groupadd --gid 10001 t3 \
     && useradd --uid 10001 --gid 10001 --create-home --shell /usr/sbin/nologin t3 \

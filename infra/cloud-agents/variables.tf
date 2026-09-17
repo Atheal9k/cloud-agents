@@ -193,6 +193,20 @@ variable "controller_termination_protection" {
   default     = true
 }
 
+variable "controller_credential_secret_arns" {
+  description = "Secrets Manager ARNs the controller may read for Git SSH and GitHub API authentication. Workers receive no access to these master credentials."
+  type        = set(string)
+  default     = []
+
+  validation {
+    condition = alltrue([
+      for arn in var.controller_credential_secret_arns :
+      can(regex("^arn:[^:]+:secretsmanager:[^:]+:[0-9]{12}:secret:.+$", arn))
+    ])
+    error_message = "controller_credential_secret_arns must contain full AWS Secrets Manager ARNs."
+  }
+}
+
 variable "allow_retained_data_destroy" {
   description = "Allow OpenTofu to delete retained controller data and artifact objects. Set only for an isolated sandbox teardown."
   type        = bool

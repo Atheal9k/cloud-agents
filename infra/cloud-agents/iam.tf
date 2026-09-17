@@ -70,6 +70,26 @@ resource "aws_iam_role_policy" "controller_artifacts" {
   policy = data.aws_iam_policy_document.controller_artifacts.json
 }
 
+data "aws_iam_policy_document" "controller_credentials" {
+  count = length(var.controller_credential_secret_arns) == 0 ? 0 : 1
+
+  statement {
+    sid = "ReadConfiguredControllerCredentials"
+    actions = [
+      "secretsmanager:DescribeSecret",
+      "secretsmanager:GetSecretValue",
+    ]
+    resources = var.controller_credential_secret_arns
+  }
+}
+
+resource "aws_iam_role_policy" "controller_credentials" {
+  count  = length(var.controller_credential_secret_arns) == 0 ? 0 : 1
+  name   = "controller-credentials"
+  role   = aws_iam_role.controller.id
+  policy = data.aws_iam_policy_document.controller_credentials[0].json
+}
+
 data "aws_iam_policy_document" "worker_artifacts" {
   statement {
     sid = "WriteRunArtifacts"

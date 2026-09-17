@@ -204,6 +204,8 @@ Acceptance criteria:
 
 Dependencies: CA-03, CA-04A, CA-04C.
 
+Status: Done on 17 September 2026.
+
 Description: Reuse the prototype's controlled clone/push boundary and configure GitHub API access on the active controller for draft PR creation.
 
 Acceptance criteria:

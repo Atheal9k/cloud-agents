@@ -62,9 +62,21 @@ run "protected_plan" {
     aws     = aws.mock
   }
 
+  variables {
+    controller_credential_secret_arns = [
+      "arn:aws:secretsmanager:us-west-1:123456789012:secret:cloud-agent-victor-key-AbCdEf",
+      "arn:aws:secretsmanager:us-west-1:123456789012:secret:cloud-agent-github-token-AbCdEf",
+    ]
+  }
+
   assert {
     condition     = aws_iam_role.controller.name_prefix != aws_iam_role.worker.name_prefix
     error_message = "The controller and workers must use separate IAM roles."
+  }
+
+  assert {
+    condition     = length(aws_iam_role_policy.controller_credentials) == 1
+    error_message = "Configured Git and GitHub master credentials must be readable only by the controller role."
   }
 
   assert {

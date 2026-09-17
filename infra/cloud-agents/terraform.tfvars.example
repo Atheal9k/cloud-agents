@@ -19,3 +19,9 @@ worker_profiles = {
 }
 
 artifact_retention_days = 30
+
+# Grant only the controller access to the existing SSH key and the GitHub API token.
+# Use full Secrets Manager ARNs here, then set their secret names or ARNs in the
+# controller's T3CODE_CLOUD_GIT_SSH_SECRET_REF and
+# T3CODE_CLOUD_GITHUB_TOKEN_SECRET_REF environment variables.
+controller_credential_secret_arns = []
