@@ -1,9 +1,5 @@
 locals {
   controller_image_id = coalesce(var.controller_ami_id, data.aws_ami.amazon_linux_2023.id)
-  worker_image_ids = {
-    for name, profile in var.worker_profiles :
-    name => coalesce(profile.ami_id, data.aws_ami.amazon_linux_2023.id)
-  }
 }
 
 resource "aws_instance" "controller" {
@@ -79,7 +75,7 @@ resource "aws_launch_template" "worker" {
   for_each = var.worker_profiles
 
   name_prefix   = "${var.name_prefix}-${each.key}-"
-  image_id      = local.worker_image_ids[each.key]
+  image_id      = each.value.ami_id
   instance_type = each.value.instance_type
 
   update_default_version               = true
@@ -93,7 +89,7 @@ resource "aws_launch_template" "worker" {
     http_endpoint               = "enabled"
     http_tokens                 = "required"
     http_put_response_hop_limit = 1
-    instance_metadata_tags      = "enabled"
+    instance_metadata_tags      = "disabled"
   }
 
   network_interfaces {
@@ -116,24 +112,25 @@ resource "aws_launch_template" "worker" {
   }
 
   user_data = base64encode(templatefile("${path.module}/templates/worker-cloud-init.sh.tftpl", {
-    artifact_bucket = aws_s3_bucket.artifacts.id
-    aws_region      = var.aws_region
-    profile_name    = each.key
-    service_port    = var.worker_control_port
-    ttl_minutes     = var.worker_default_ttl_minutes
+    image_version = each.value.image_version
+    profile_name  = each.key
+    service_port  = var.worker_control_port
+    ttl_minutes   = var.worker_default_ttl_minutes
   }))
 
   tag_specifications {
     resource_type = "instance"
 
     tags = {
-      Name                        = "${var.name_prefix}-${each.key}"
-      CloudAgentProject           = var.name_prefix
-      CloudAgentRole              = "worker"
-      CloudAgentProfile           = each.key
-      CloudAgentDefaultTtlMinutes = tostring(var.worker_default_ttl_minutes)
-      CloudAgentCapabilities      = join(",", sort(tolist(each.value.capabilities)))
-      Ephemeral                   = "true"
+      Name                          = "${var.name_prefix}-${each.key}"
+      CloudAgentProject             = var.name_prefix
+      CloudAgentRole                = "worker"
+      CloudAgentProfile             = each.key
+      CloudAgentDefaultTtlMinutes   = tostring(var.worker_default_ttl_minutes)
+      CloudAgentCapabilities        = join(",", sort(tolist(each.value.capabilities)))
+      CloudAgentDesktopDependencies = tostring(each.value.desktop_dependencies)
+      CloudAgentImageVersion        = each.value.image_version
+      Ephemeral                     = "true"
     }
   }
 

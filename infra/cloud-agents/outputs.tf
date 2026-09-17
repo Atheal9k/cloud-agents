@@ -22,8 +22,10 @@ output "worker" {
     subnet_id         = aws_subnet.workers.id
     launch_templates = {
       for name, template in aws_launch_template.worker : name => {
-        id      = template.id
-        version = template.latest_version
+        id            = template.id
+        version       = template.latest_version
+        image_id      = var.worker_profiles[name].ami_id
+        image_version = var.worker_profiles[name].image_version
       }
     }
   }

@@ -220,6 +220,8 @@ Acceptance criteria:
 
 Dependencies: CA-01, CA-03, CA-06.
 
+Status: Done on 17 September 2026 in [PR #7](https://github.com/Atheal9k/cloud-agents/pull/7).
+
 Description: Preinstall the selected T3 runtime, provider, and common build tools in a versioned image. Avoid downloading the entire toolchain for every run.
 
 Acceptance criteria:
@@ -235,11 +237,12 @@ Acceptance criteria:
 
 Dependencies: CA-02, CA-03, CA-04A, CA-07.
 
-Description: Replace the local orchestrator with a small durable allocation queue. First-release concurrency is one worker.
+Description: Replace the prototype's local PowerShell orchestration loop with a small durable allocation queue owned by the active T3 controller. For the first release, the queue runs in the local controller from CA-04A/CA-04C. CA-04B later moves the same queue and state to the permanent EC2 controller. First-release concurrency is one worker.
 
 Acceptance criteria:
 
-- Accepted jobs survive controller restart, with a bounded queue and one active allocation lease.
+- Accepted jobs and allocation intent survive a local controller process or container restart. Reconciliation resumes when the controller returns, with a bounded queue and one active allocation lease.
+- The browser and desktop client may disconnect after admission, but the local controller host and Docker engine must remain online to launch, reconcile, and finalize work. CA-08 does not require an EC2 controller.
 - AWS client tokens and tags identify run attempts; a lost launch response cannot produce duplicate instances on retry.
 - Boot/service-registration deadlines are distinct from agent runtime deadlines and have actionable failure states.
 - Cancelling before launch creates nothing; cancelling during launch still discovers and cleans up a late-created instance.
@@ -413,7 +416,7 @@ Description: Validate Amazon DCV and embed a view of the agent's actual worker b
 Acceptance criteria:
 
 - Prove browser automation and the streamed view target the same browser/session. Each thread is isolated.
-- Validate image/OS support, certificates, authentication, WebSocket routing, and reconnect through the approved external HTTPS route without public worker ingress.
+- Validate image/OS support, certificates, authentication, WebSocket routing, and reconnect through the approved HTTPS route to the active controller without public worker ingress. The first release uses the local-controller ingress or tunnel from CA-09; it does not require CA-04B.
 - The viewer embeds in web and desktop. Verify the selected browser matrix and document phone-browser limitations; native T3 mobile WebViews are deferred.
 - Stream only for visible viewers or an explicitly required agent workflow. Hidden/disconnected viewers stop decoding/receiving frames, while an active agent browser is allowed to keep running.
 - Session access is short-lived and attempt-bound. Replacing a worker invalidates old viewer access.
@@ -544,7 +547,7 @@ Acceptance criteria:
 
 Dependencies: CA-05, CA-12, CA-18, CA-19, CA-24.
 
-Description: Add richer repository, recipe, provider-account, and worker operations to the web/desktop settings. Basic remote control already ships in CA-04A, CA-04B, and CA-19.
+Description: Add richer repository, recipe, provider-account, and worker operations to the web/desktop settings. Basic control ships in CA-04A and CA-19. CA-04B moves that control path to the permanent host so it no longer depends on the local controller machine.
 
 Acceptance criteria:
 
@@ -605,7 +608,7 @@ Acceptance criteria:
 - Default to one active job per Mac worker, with isolated checkout, simulator data, credentials, and targeted process cleanup. Reuse the allocated host for queued jobs only after the previous job is cleaned.
 - Record dedicated-host allocation time, earliest release time, availability/scrubbing state, and continuing host cost separately from job runtime. Cancelling a two-hour job must not claim that the 24-hour host allocation or charges ended.
 - Stop new jobs when release is requested, finish/cancel active work according to policy, and retry host release when eligible. Never apply the disposable Linux worker shutdown policy blindly to the Mac host.
-- The provider, simulator, and display route function without a local Mac or the initiating laptop online. Where a desktop session/login is needed, provision and validate it explicitly.
+- The provider, simulator, and display route do not require a local Mac. Under CA-04A, the local controller machine must remain online even after the initiating client disconnects. CA-04B later allows that machine to be off. Where the Mac worker needs a desktop session or login, provision and validate it explicitly.
 
 ### CA-39: Embed live simulator display and control in each thread
 
@@ -652,6 +655,7 @@ Acceptance criteria:
 - Scoped authenticated APIs support idempotent launch, status, input, and cancel without exposing arbitrary infrastructure operations.
 - Schedules record timezone, prompt, ref policy, recipe, provider, publication, and limits.
 - Define daylight-saving, overlap, missed-run, and restart behavior.
+- Under CA-04A, schedules run only while the local controller host and Docker engine are online. Missed-run behavior must not imply an always-on service. CA-04B later removes that local-machine dependency.
 - Pause/resume/edit/delete actions are available remotely; retries remain bounded.
 - Durable web/desktop activity records notify of meaningful outcomes. Native push is optional and not a dependency.
 
@@ -664,6 +668,7 @@ Description: Add opted-in issue/PR triggers and bounded repair of review feedbac
 Acceptance criteria:
 
 - Validate webhook signatures, delivery IDs, repositories, and authorized trigger actors.
+- Under CA-04A, webhook delivery requires the configured authenticated route to the local controller, and the controller machine must be online. CA-04B later provides the always-on endpoint; this ticket does not require it.
 - Retain source issue/comment/PR and base revision; task text cannot widen credentials or permissions.
 - Follow-up targets the correct branch head and avoids duplicate delivery or agent-comment loops.
 - Bound attempts, time, and compute; report unresolved failures.

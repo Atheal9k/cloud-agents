@@ -134,19 +134,33 @@ variable "worker_default_ttl_minutes" {
 }
 
 variable "worker_profiles" {
-  description = "Linux worker launch profiles. Later tickets may add separate Android and Mac infrastructure without changing this map's consumers."
+  description = "Versioned Linux worker images and launch settings. Changing an AMI affects new workers only, which permits rollback without mutating active runs."
   type = map(object({
-    ami_id               = optional(string)
+    ami_id               = string
+    image_version        = string
     instance_type        = string
     root_volume_size_gib = number
     architecture         = optional(string, "x86_64")
     capabilities         = optional(set(string), ["coding", "web-preview"])
+    desktop_dependencies = optional(bool, false)
   }))
-  default = {
-    linux-web = {
-      instance_type        = "t3.medium"
-      root_volume_size_gib = 30
-    }
+  default = {}
+
+  validation {
+    condition = alltrue([
+      for name in keys(var.worker_profiles) :
+      can(regex("^[a-z0-9][a-z0-9-]{0,31}$", name))
+    ])
+    error_message = "Worker profile names must contain at most 32 lowercase letters, numbers, or hyphens."
+  }
+
+  validation {
+    condition = alltrue([
+      for profile in values(var.worker_profiles) :
+      can(regex("^ami-[0-9a-f]{8,17}$", profile.ami_id)) &&
+      can(regex("^[0-9A-Za-z][0-9A-Za-z._-]{0,63}$", profile.image_version))
+    ])
+    error_message = "Each worker profile must use an explicit AMI ID and a short image version."
   }
 
   validation {
