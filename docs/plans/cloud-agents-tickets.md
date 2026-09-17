@@ -130,6 +130,9 @@ Acceptance criteria:
 
 Dependencies: CA-01.
 
+Status: Done on 17 September 2026 in
+[PR #2](https://github.com/Atheal9k/cloud-agents/pull/2).
+
 Description: Add only the infrastructure lifecycle and references missing from T3. Existing thread events continue to represent conversation and provider execution.
 
 Acceptance criteria:
