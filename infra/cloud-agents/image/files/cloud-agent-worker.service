@@ -15,6 +15,8 @@ Environment=CODEX_HOME=/run/t3-worker/credentials/codex
 Environment=DISABLE_AUTOUPDATER=1
 Environment=NODE_ENV=production
 Environment=T3CODE_AUTO_BOOTSTRAP_PROJECT_FROM_CWD=0
+Environment=T3CODE_CLOUD_DEPENDENCY_CACHE_DIR=/var/cache/t3-worker-dependencies
+Environment=T3CODE_CLOUD_STARTUP_TIMINGS_PATH=/var/lib/t3-worker/startup-timings.json
 Environment=T3CODE_HOME=/var/lib/t3-worker/t3
 Environment=T3CODE_HOST=0.0.0.0
 Environment=T3CODE_NO_BROWSER=1
@@ -23,6 +25,8 @@ EnvironmentFile=-/etc/t3/worker.env
 EnvironmentFile=-/run/t3-worker/runtime.env
 RuntimeDirectory=t3-worker
 RuntimeDirectoryMode=0700
+CacheDirectory=t3-worker-dependencies
+CacheDirectoryMode=0700
 StateDirectory=t3-worker
 StateDirectoryMode=0700
 ExecStartPre=/opt/t3/bin/cloud-agent-worker-preflight

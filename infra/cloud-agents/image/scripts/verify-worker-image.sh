@@ -42,6 +42,8 @@ systemctl is-active --quiet cloud-agent-worker.service \
   || fail "worker service did not stay active: $(systemctl status cloud-agent-worker.service --no-pager)"
 curl --silent --show-error --fail --max-time 2 http://127.0.0.1:3773/ >/dev/null \
   || fail "worker HTTP endpoint is unavailable"
+[[ "$(stat --format '%U:%G:%a' /var/cache/t3-worker-dependencies)" == "cloudagent:cloudagent:700" ]] \
+  || fail "dependency cache permissions are not isolated"
 
 service_uid="$(id -u cloudagent)"
 main_pid="$(systemctl show --property MainPID --value cloud-agent-worker.service)"

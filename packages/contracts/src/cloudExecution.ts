@@ -15,7 +15,7 @@ import {
   TrimmedNonEmptyString,
   TurnId,
 } from "./baseSchemas.ts";
-import { CloudRepositoryPreparationRecord } from "./cloudRepository.ts";
+import { CloudRepositoryPreparationRecord, CloudRunStageTiming } from "./cloudRepository.ts";
 import {
   ChatAttachment,
   ModelSelection,
@@ -76,6 +76,7 @@ export const CloudProviderExecutionRecord = Schema.Struct({
     Schema.withDecodingDefault(Effect.succeed(defaultUnansweredRequestSeconds)),
   ),
   acceptedSequence: NonNegativeInt,
+  providerStartTiming: Schema.optionalKey(CloudRunStageTiming),
   startedAt: IsoDateTime,
 });
 export type CloudProviderExecutionRecord = typeof CloudProviderExecutionRecord.Type;

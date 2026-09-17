@@ -147,6 +147,7 @@ it.effect("starts Codex through ordinary project and turn orchestration commands
       projectId: "cloud:allocation-11:1",
       threadId: "thread-allocation-11",
       acceptedSequence: 3,
+      providerStartTiming: { durationMs: 0 },
     });
     expect(commands).toEqual([
       {

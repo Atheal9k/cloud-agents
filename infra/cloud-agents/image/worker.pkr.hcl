@@ -22,7 +22,7 @@ variable "source_ami_id" {
 variable "image_version" {
   description = "Immutable worker image version recorded in the AMI and on launched instances."
   type        = string
-  default     = "0.0.42-ca07.2"
+  default     = "0.0.42-ca27.1"
 }
 
 variable "profile_name" {
