@@ -1,0 +1,42 @@
+#!/bin/bash
+set -euo pipefail
+
+fail() {
+  echo "cloud-agent worker preflight failed: $*" >&2
+  exit 1
+}
+
+[[ "$(id -u)" -ne 0 ]] || fail "the worker service must not run as root"
+[[ -r /opt/t3/worker-image-manifest.json ]] || fail "the image manifest is missing"
+[[ -d /var/lib/t3-worker/t3 ]] || fail "the T3 state directory is missing"
+[[ -d /work ]] || fail "the workspace directory is missing"
+
+expected_node="$(jq -r '.runtime.node' /opt/t3/worker-image-manifest.json)"
+expected_t3="$(jq -r '.runtime.t3' /opt/t3/worker-image-manifest.json)"
+expected_codex="$(jq -r '.runtime.codex' /opt/t3/worker-image-manifest.json)"
+
+[[ "$(node --version)" == "v${expected_node}" ]] || fail "Node.js ${expected_node} is unavailable"
+[[ "$(t3 --version)" == *"${expected_t3}"* ]] || fail "T3 ${expected_t3} is unavailable"
+[[ "$(codex --version)" == *"${expected_codex}"* ]] || fail "Codex ${expected_codex} is unavailable"
+command -v git >/dev/null || fail "git is unavailable"
+command -v make >/dev/null || fail "make is unavailable"
+command -v g++ >/dev/null || fail "g++ is unavailable"
+ldconfig -p | grep -q 'libatomic\.so' || fail "libatomic is unavailable"
+
+for environment_file in /etc/t3/worker.env /run/t3-worker/runtime.env; do
+  [[ -f "${environment_file}" ]] || continue
+  [[ -r "${environment_file}" ]] || fail "${environment_file} is not readable by the worker service"
+  if grep -Eq '^(AWS_ACCESS_KEY_ID|AWS_SECRET_ACCESS_KEY|AWS_SESSION_TOKEN|GH_TOKEN|GITHUB_TOKEN|T3CODE_CLOUD_GITHUB_TOKEN_SECRET_REF|T3CODE_CLOUD_GIT_SSH_SECRET_REF)=' "${environment_file}"; then
+    fail "${environment_file} contains controller, publication, or instance credentials"
+  fi
+done
+
+install -d -m 0700 "${CODEX_HOME}"
+
+metadata_url='http://169.254.169.254/latest/api/token'
+if curl --noproxy '*' --silent --show-error --fail --max-time 2 \
+  --request PUT \
+  --header 'X-aws-ec2-metadata-token-ttl-seconds: 60' \
+  "${metadata_url}" >/dev/null 2>&1; then
+  fail "EC2 instance metadata is reachable from the worker service"
+fi

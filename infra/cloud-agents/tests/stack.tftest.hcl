@@ -67,6 +67,14 @@ run "protected_plan" {
       "arn:aws:secretsmanager:us-west-1:123456789012:secret:cloud-agent-victor-key-AbCdEf",
       "arn:aws:secretsmanager:us-west-1:123456789012:secret:cloud-agent-github-token-AbCdEf",
     ]
+    worker_profiles = {
+      linux-web = {
+        ami_id               = "ami-0123456789abcdef0"
+        image_version        = "0.0.42-ca07.1"
+        instance_type        = "t3.medium"
+        root_volume_size_gib = 30
+      }
+    }
   }
 
   assert {
@@ -110,6 +118,25 @@ run "protected_plan" {
   }
 
   assert {
+    condition     = aws_launch_template.worker["linux-web"].image_id == "ami-0123456789abcdef0"
+    error_message = "Workers must launch from the explicitly selected baked image."
+  }
+
+  assert {
+    condition     = aws_launch_template.worker["linux-web"].metadata_options[0].instance_metadata_tags == "disabled"
+    error_message = "Workers must not expose instance tags through metadata."
+  }
+
+  assert {
+    condition = alltrue([
+      strcontains(base64decode(aws_launch_template.worker["linux-web"].user_data), "0.0.42-ca07.1"),
+      strcontains(base64decode(aws_launch_template.worker["linux-web"].user_data), "systemctl start cloud-agent-worker.service"),
+      !strcontains(base64decode(aws_launch_template.worker["linux-web"].user_data), aws_s3_bucket.artifacts.id),
+    ])
+    error_message = "Worker bootstrap must validate the pinned image, start its baked service, and omit controller-owned configuration."
+  }
+
+  assert {
     condition     = aws_vpc_security_group_ingress_rule.worker_control.referenced_security_group_id == aws_security_group.controller.id
     error_message = "Worker control ingress must be scoped to the controller security group."
   }
@@ -142,6 +169,14 @@ run "sandbox_apply" {
     allow_retained_data_destroy       = true
     controller_termination_protection = false
     name_prefix                       = "t3-ca03-test"
+    worker_profiles = {
+      linux-web = {
+        ami_id               = "ami-0123456789abcdef0"
+        image_version        = "0.0.42-ca07.1"
+        instance_type        = "t3.medium"
+        root_volume_size_gib = 30
+      }
+    }
   }
 
   assert {
