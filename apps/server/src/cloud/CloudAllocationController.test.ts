@@ -23,6 +23,8 @@ const launch = decodeCommand({
   profile: { id: "linux-web", os: "linux", arch: "x64" },
   deadlines: {
     launchBy: "2026-09-17T03:05:00.000Z",
+    bootBy: "2026-09-17T03:10:00.000Z",
+    registerBy: "2026-09-17T03:15:00.000Z",
     expiresAt: "2026-09-17T05:00:00.000Z",
     cleanupBy: "2026-09-17T05:05:00.000Z",
   },
@@ -34,6 +36,24 @@ it.effect("keeps the local allocation controller opt-in", () =>
     const error = yield* controller.snapshot.pipe(Effect.flip);
 
     expect(error.reason).toBe("controller-disabled");
+  }).pipe(Effect.provide(SqlitePersistenceMemory)),
+);
+
+it.effect("rejects admission beyond the durable queue bound", () =>
+  Effect.gen(function* () {
+    const controller = yield* make({ enabled: true, maxQueueDepth: 1 });
+    yield* controller.dispatch(launch);
+    const error = yield* controller
+      .dispatch(
+        decodeCommand({
+          ...launch,
+          commandId: "command-launch-2",
+          allocationId: "allocation-2",
+        }),
+      )
+      .pipe(Effect.flip);
+
+    expect(error.reason).toBe("queue-full");
   }).pipe(Effect.provide(SqlitePersistenceMemory)),
 );
 

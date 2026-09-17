@@ -28,11 +28,15 @@ const profile = {
 } satisfies typeof RunWorkerProfile.Encoded;
 const deadlines = {
   launchBy: "2026-09-17T03:05:00.000Z",
+  bootBy: "2026-09-17T03:10:00.000Z",
+  registerBy: "2026-09-17T03:15:00.000Z",
   expiresAt: "2026-09-17T05:00:00.000Z",
   cleanupBy: "2026-09-17T05:05:00.000Z",
 };
 const retryDeadlines = {
   launchBy: "2026-09-17T04:05:00.000Z",
+  bootBy: "2026-09-17T04:10:00.000Z",
+  registerBy: "2026-09-17T04:15:00.000Z",
   expiresAt: "2026-09-17T06:00:00.000Z",
   cleanupBy: "2026-09-17T06:05:00.000Z",
 };
@@ -80,13 +84,29 @@ function runningAllocation(): {
       allocationId: "allocation-1",
       attempt: 1,
       occurredAt: "2026-09-17T03:00:01.000Z",
+      launchTemplate: { id: "lt-worker", version: 7 },
+    }),
+    command({
+      type: "allocation.instance-launched",
+      commandId: "command-instance-launched",
+      allocationId: "allocation-1",
+      attempt: 1,
+      occurredAt: "2026-09-17T03:00:02.000Z",
+      instanceId: "i-worker",
+    }),
+    command({
+      type: "allocation.worker-booted",
+      commandId: "command-worker-booted",
+      allocationId: "allocation-1",
+      attempt: 1,
+      occurredAt: "2026-09-17T03:00:03.000Z",
     }),
     command({
       type: "allocation.worker-assigned",
       commandId: "command-worker-assigned",
       allocationId: "allocation-1",
       attempt: 1,
-      occurredAt: "2026-09-17T03:00:02.000Z",
+      occurredAt: "2026-09-17T03:00:04.000Z",
       references,
     }),
     command({
@@ -94,7 +114,7 @@ function runningAllocation(): {
       commandId: "command-agent-started",
       allocationId: "allocation-1",
       attempt: 1,
-      occurredAt: "2026-09-17T03:00:03.000Z",
+      occurredAt: "2026-09-17T03:00:05.000Z",
     }),
   ];
 
@@ -168,6 +188,7 @@ describe("cloud allocation transitions", () => {
         allocationId: "allocation-1",
         attempt: 1,
         occurredAt: "2026-09-17T03:00:01.000Z",
+        launchTemplate: { id: "lt-worker", version: 7 },
       }),
     ).allocation;
     allocation = applyAccepted(
@@ -247,6 +268,7 @@ describe("cloud allocation transitions", () => {
         allocationId: "allocation-1",
         attempt: 2,
         occurredAt: "2026-09-17T03:00:08.000Z",
+        launchTemplate: { id: "lt-worker", version: 7 },
       }),
     ).allocation;
     expect(nextAttempt.allocationState.status).toBe("launching");
@@ -305,8 +327,9 @@ describe("cloud allocation transitions", () => {
     expect(replayRunAllocationEvents(events)).toEqual(allocation);
     expect(allocation.allocationState).toEqual({
       status: "ready",
+      instanceId: "i-worker",
       references,
-      readyAt: "2026-09-17T03:00:02.000Z",
+      readyAt: "2026-09-17T03:00:04.000Z",
     });
     expect(allocation.agentOutcome).toEqual({
       status: "succeeded",

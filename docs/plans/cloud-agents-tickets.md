@@ -237,6 +237,8 @@ Acceptance criteria:
 
 Dependencies: CA-02, CA-03, CA-04A, CA-07.
 
+Status: Done on 17 September 2026 in [PR #8](https://github.com/Atheal9k/cloud-agents/pull/8).
+
 Description: Replace the prototype's local PowerShell orchestration loop with a small durable allocation queue owned by the active T3 controller. For the first release, the queue runs in the local controller from CA-04A/CA-04C. CA-04B later moves the same queue and state to the permanent EC2 controller. First-release concurrency is one worker.
 
 Acceptance criteria:

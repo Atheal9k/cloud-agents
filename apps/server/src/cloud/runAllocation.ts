@@ -57,17 +57,46 @@ export function decideRunAllocationCommand(
       return allocation.allocationState.status === "queued" &&
         allocation.agentOutcome.status === "not-started" &&
         allocation.cleanupState.status === "not-requested"
+        ? [{ ...base, type: command.type, launchTemplate: command.launchTemplate }]
+        : [];
+    case "allocation.launch-retry-scheduled":
+      return allocation.allocationState.status === "launching" &&
+        command.failures === allocation.allocationState.retry.failures + 1 &&
+        allocation.agentOutcome.status === "not-started" &&
+        allocation.cleanupState.status === "not-requested"
+        ? [
+            {
+              ...base,
+              type: command.type,
+              failures: command.failures,
+              retryAt: command.retryAt,
+              reason: command.reason,
+            },
+          ]
+        : [];
+    case "allocation.instance-launched":
+      return allocation.allocationState.status === "launching" &&
+        allocation.agentOutcome.status === "not-started" &&
+        allocation.cleanupState.status === "not-requested"
+        ? [{ ...base, type: command.type, instanceId: command.instanceId }]
+        : [];
+    case "allocation.worker-booted":
+      return allocation.allocationState.status === "booting" &&
+        allocation.agentOutcome.status === "not-started" &&
+        allocation.cleanupState.status === "not-requested"
         ? [{ ...base, type: command.type }]
         : [];
     case "allocation.worker-assigned":
-      return allocation.allocationState.status === "launching" &&
+      return allocation.allocationState.status === "registering" &&
         allocation.agentOutcome.status === "not-started" &&
         allocation.cleanupState.status === "not-requested"
         ? [{ ...base, type: command.type, references: command.references }]
         : [];
     case "allocation.launch-failed":
       return (allocation.allocationState.status === "queued" ||
-        allocation.allocationState.status === "launching") &&
+        allocation.allocationState.status === "launching" ||
+        allocation.allocationState.status === "booting" ||
+        allocation.allocationState.status === "registering") &&
         allocation.agentOutcome.status === "not-started" &&
         allocation.cleanupState.status === "not-requested"
         ? [{ ...base, type: command.type, reason: command.reason }]
@@ -206,22 +235,72 @@ export function projectRunAllocationEvent(
   switch (event.type) {
     case "allocation.launch-started":
       return projectUpdate(allocation, event, {
-        allocationState: { status: "launching", startedAt: event.occurredAt },
+        allocationState: {
+          status: "launching",
+          startedAt: event.occurredAt,
+          launchTemplate: event.launchTemplate,
+          retry: { status: "ready", failures: 0 },
+        },
+      });
+    case "allocation.launch-retry-scheduled":
+      if (allocation.allocationState.status !== "launching") {
+        throw new Error("A launch retry requires a launching allocation");
+      }
+      return projectUpdate(allocation, event, {
+        allocationState: {
+          ...allocation.allocationState,
+          retry: {
+            status: "waiting",
+            failures: event.failures,
+            retryAt: event.retryAt,
+            reason: event.reason,
+          },
+        },
+      });
+    case "allocation.instance-launched":
+      return projectUpdate(allocation, event, {
+        allocationState: {
+          status: "booting",
+          instanceId: event.instanceId,
+          launchedAt: event.occurredAt,
+        },
+      });
+    case "allocation.worker-booted":
+      if (allocation.allocationState.status !== "booting") {
+        throw new Error("A boot receipt requires a booting allocation");
+      }
+      return projectUpdate(allocation, event, {
+        allocationState: {
+          status: "registering",
+          instanceId: allocation.allocationState.instanceId,
+          bootedAt: event.occurredAt,
+        },
       });
     case "allocation.worker-assigned":
+      if (allocation.allocationState.status !== "registering") {
+        throw new Error("Worker assignment requires a registering allocation");
+      }
       return projectUpdate(allocation, event, {
         allocationState: {
           status: "ready",
+          instanceId: allocation.allocationState.instanceId,
           references: event.references,
           readyAt: event.occurredAt,
         },
       });
     case "allocation.launch-failed":
+      const instanceId =
+        allocation.allocationState.status === "booting" ||
+        allocation.allocationState.status === "registering" ||
+        allocation.allocationState.status === "ready"
+          ? allocation.allocationState.instanceId
+          : undefined;
       return projectUpdate(allocation, event, {
         allocationState: {
           status: "failed",
           reason: event.reason,
           failedAt: event.occurredAt,
+          ...(instanceId === undefined ? {} : { instanceId }),
         },
       });
     case "allocation.agent-started":

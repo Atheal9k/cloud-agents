@@ -130,6 +130,8 @@ import * as CloudManagedEndpointRuntime from "./cloud/ManagedEndpointRuntime.ts"
 import * as CloudCliTokenManager from "./cloud/CliTokenManager.ts";
 import * as CloudCliState from "./cloud/CliState.ts";
 import * as CloudAllocationController from "./cloud/CloudAllocationController.ts";
+import * as CloudAllocationReconciler from "./cloud/CloudAllocationReconciler.ts";
+import * as CloudWorkerProvider from "./cloud/CloudWorkerProvider.ts";
 import * as CloudGitCredentials from "./cloud/CloudGitCredentials.ts";
 import * as ServerSelfUpdate from "./cloud/selfUpdate.ts";
 import * as DesktopAppUpdate from "./desktopUpdate/DesktopAppUpdate.ts";
@@ -275,6 +277,15 @@ const PersistenceLayerLive = Layer.empty.pipe(Layer.provideMerge(SqlitePersisten
 
 const CloudAllocationControllerLayerLive = CloudAllocationController.layer.pipe(
   Layer.provide(PersistenceLayerLive),
+);
+
+const CloudWorkerProviderLayerLive = CloudWorkerProvider.layer.pipe(
+  Layer.provide(ProcessRunner.layer),
+);
+
+const CloudAllocationRuntimeLayerLive = CloudAllocationReconciler.layer.pipe(
+  Layer.provide(CloudWorkerProviderLayerLive),
+  Layer.provideMerge(CloudAllocationControllerLayerLive),
 );
 
 const CloudGitCredentialsLayerLive = CloudGitCredentials.layer.pipe(
@@ -594,7 +605,7 @@ export const makeRoutesLayer = Layer.mergeAll(
   ),
   McpHttpServer.layer.pipe(Layer.provide(McpSessionRegistry.layer)),
 ).pipe(
-  Layer.provide(CloudAllocationControllerLayerLive),
+  Layer.provide(CloudAllocationRuntimeLayerLive),
   // Both transports consume the same service instance, so caches single-flight across clients
   // and mutations observed on WebSocket invalidate patches subsequently read over HTTP.
   Layer.provide(PullRequestServiceLive),
