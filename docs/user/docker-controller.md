@@ -57,6 +57,19 @@ transfer separately when their costs are unknown. The estimate excludes taxes an
 does not turn an AWS billing alert into a live spending cap. AWS documents current price-list
 lookups in its [Price List API guide](https://docs.aws.amazon.com/awsaccountbilling/latest/aboutv2/price-changes.html).
 
+## Launch a cloud thread
+
+After the controller reports cloud allocation support, open the command palette and choose **New
+cloud thread**, or press <kbd>Ctrl</kbd>+<kbd>Alt</kbd>+<kbd>N</kbd> on Windows/Linux and
+<kbd>Command</kbd>+<kbd>Option</kbd>+<kbd>N</kbd> on macOS. Choose the repository ref, task,
+available provider model, permission policy, worker and time limits, and whether the result stays
+review-only or opens a draft pull request. The same dialog is available in locally served web and
+desktop clients.
+
+The controller continues provisioning, observing, and cleaning up the run if the client
+disconnects. Keep the controller host and Docker running. Reopen the dialog to see recent runs,
+stop one, or open a registered worker as an ordinary T3 thread.
+
 Set two HTTPS routes before launching a worker:
 
 ```bash

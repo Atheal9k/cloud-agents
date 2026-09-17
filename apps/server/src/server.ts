@@ -133,6 +133,7 @@ import * as CloudCliState from "./cloud/CliState.ts";
 import * as CloudAllocationController from "./cloud/CloudAllocationController.ts";
 import * as CloudAllocationReconciler from "./cloud/CloudAllocationReconciler.ts";
 import * as CloudWorkerRegistration from "./cloud/CloudWorkerRegistration.ts";
+import * as CloudWorkerRunClient from "./cloud/CloudWorkerRunClient.ts";
 import { cloudWorkerRegistrationHttpApiLayer } from "./cloud/CloudWorkerRegistrationHttp.ts";
 import * as CloudWorkerProvider from "./cloud/CloudWorkerProvider.ts";
 import * as CloudGitCredentials from "./cloud/CloudGitCredentials.ts";
@@ -298,6 +299,7 @@ const CloudWorkerRegistrationLayerLive = CloudWorkerRegistration.layer.pipe(
 
 const CloudAllocationRuntimeLayerLive = CloudAllocationReconciler.layer.pipe(
   Layer.provide(CloudWorkerProviderLayerLive),
+  Layer.provideMerge(CloudWorkerRunClient.layer),
   Layer.provideMerge(CloudWorkerRegistrationLayerLive),
 );
 
@@ -315,6 +317,8 @@ const CloudRunPublicationLayerLive = CloudRunPublication.layer.pipe(
   Layer.provideMerge(CloudGitCredentialsLayerLive),
   Layer.provideMerge(CloudAllocationControllerLayerLive),
 );
+
+const CloudRunResultsLayerLive = CloudRunResults.layer.pipe(Layer.provide(ProcessRunner.layer));
 
 const VcsDriverRegistryLayerLive = VcsDriverRegistry.layer.pipe(
   Layer.provide(VcsProjectConfig.layer),
@@ -591,7 +595,7 @@ const RuntimeCoreDependenciesBaseLive = ReactorLayerLive.pipe(
 );
 
 const RuntimeCoreDependenciesLive = CloudRunControl.layer.pipe(
-  Layer.provideMerge(CloudRunResults.layer),
+  Layer.provideMerge(CloudRunResultsLayerLive),
   Layer.provideMerge(CloudProviderExecution.layer),
   Layer.provideMerge(CloudAllocationControllerLayerLive),
   Layer.provideMerge(RuntimeCoreDependenciesBaseLive),

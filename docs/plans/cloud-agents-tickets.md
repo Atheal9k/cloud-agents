@@ -388,6 +388,8 @@ Acceptance criteria:
 
 Dependencies: CA-02, CA-04A, CA-10, CA-15, CA-18.
 
+Status: Done on 17 September 2026 in [PR #17](https://github.com/Atheal9k/cloud-agents/pull/17).
+
 Description: Expose the one-repository/provider workflow through T3's existing web UI and the owner's desktop build.
 
 Acceptance criteria:

@@ -8,6 +8,7 @@ import { SqlitePersistenceMemory } from "../persistence/Layers/Sqlite.ts";
 import * as CloudAllocationController from "./CloudAllocationController.ts";
 import * as CloudAllocationReconciler from "./CloudAllocationReconciler.ts";
 import { CloudWorkerRegistration } from "./CloudWorkerRegistration.ts";
+import { CloudWorkerRunClient } from "./CloudWorkerRunClient.ts";
 import {
   CloudWorkerProvider,
   CloudWorkerProviderError,
@@ -18,7 +19,7 @@ const decodeCommand = Schema.decodeSync(RunAllocationCommand);
 const startAt = Date.parse("2026-09-17T03:00:00.000Z");
 const secondAttempt = Schema.decodeSync(RunAllocationAttempt)(2);
 
-function launchCommand(allocationId: string) {
+function launchCommand(allocationId: string, withExecution = false) {
   return decodeCommand({
     type: "allocation.launch",
     commandId: `launch-${allocationId}`,
@@ -30,6 +31,26 @@ function launchCommand(allocationId: string) {
       baseCommit: "afd7667ed",
       branch: "ca-08-durable-worker-allocation",
     },
+    ...(withExecution
+      ? {
+          execution: {
+            threadId: `thread-${allocationId}`,
+            title: "Cloud task",
+            selectedRef: "afd7667ed",
+            unansweredRequestSeconds: 900,
+            turn: {
+              commandId: `turn-${allocationId}`,
+              messageId: `message-${allocationId}`,
+              prompt: "Fix the failing test",
+              attachments: [],
+              modelSelection: { instanceId: "codex", model: "gpt-5.6-sol" },
+              runtimeMode: "approval-required",
+              interactionMode: "default",
+              createdAt: "2026-09-17T03:00:00.000Z",
+            },
+          },
+        }
+      : {}),
     profile: { id: "linux-web", os: "linux", arch: "x64", instanceType: "t3.medium" },
     deadlines: {
       launchBy: "2026-09-17T03:05:00.000Z",
@@ -54,12 +75,16 @@ function fixture(
       findCalls: number;
       revokeCalls: number;
       terminateCalls: number;
+      startCalls: number;
+      statusCalls: number;
     } = {
       instance: undefined,
       launchCalls: 0,
       findCalls: 0,
       revokeCalls: 0,
       terminateCalls: 0,
+      startCalls: 0,
+      statusCalls: 0,
     };
     const controller = yield* CloudAllocationController.make({ enabled: true });
     const provider = CloudWorkerProvider.of({
@@ -123,7 +148,18 @@ function fixture(
           }
         }),
     });
-    const reconciler = yield* CloudAllocationReconciler.make().pipe(
+    const runClient = CloudWorkerRunClient.of({
+      start: () =>
+        Effect.sync(() => {
+          state.startCalls += 1;
+        }),
+      status: () =>
+        Effect.sync(() => {
+          state.statusCalls += 1;
+          return "succeeded" as const;
+        }),
+    });
+    const reconciler = yield* CloudAllocationReconciler.make({ runClient }).pipe(
       Effect.provideService(CloudAllocationController.CloudAllocationController, controller),
       Effect.provideService(
         CloudWorkerRegistration,
@@ -137,6 +173,49 @@ function fixture(
     return { controller, provider, reconciler, state };
   });
 }
+
+it.effect("starts and observes a registered cloud thread without a connected client", () =>
+  Effect.gen(function* () {
+    yield* TestClock.setTime(startAt);
+    const { controller, reconciler, state } = yield* fixture();
+    yield* controller.dispatch(launchCommand("allocation-1", true));
+    yield* reconciler.reconcileOnce();
+    yield* reconciler.reconcileOnce();
+    yield* reconciler.reconcileOnce();
+
+    const registering = (yield* controller.snapshot).allocations[0];
+    expect(registering?.allocationState.status).toBe("registering");
+    if (registering === undefined) return;
+    yield* controller.dispatch(
+      decodeCommand({
+        type: "allocation.worker-assigned",
+        commandId: "assign-allocation-1",
+        allocationId: registering.id,
+        attempt: registering.attempt,
+        occurredAt: "2026-09-17T03:00:01.000Z",
+        references: {
+          workerId: "worker-1",
+          environmentId: "environment-1",
+          threadId: "thread-allocation-1",
+        },
+      }),
+    );
+
+    yield* reconciler.reconcileOnce();
+    expect(state.startCalls).toBe(1);
+    expect((yield* controller.snapshot).allocations[0]?.agentOutcome.status).toBe("running");
+
+    yield* reconciler.reconcileOnce();
+    const completed = (yield* controller.snapshot).allocations[0];
+    expect(state.statusCalls).toBe(1);
+    expect(completed?.agentOutcome.status).toBe("succeeded");
+    if (completed?.agentOutcome.status === "succeeded") {
+      expect(completed.agentOutcome.resultLocation.uri).toBe(
+        "t3://environment-1/thread-allocation-1",
+      );
+    }
+  }).pipe(Effect.provide(SqlitePersistenceMemory)),
+);
 
 it.effect("recovers a lost launch response without creating another instance", () =>
   Effect.gen(function* () {

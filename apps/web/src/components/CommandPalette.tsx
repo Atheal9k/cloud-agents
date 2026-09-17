@@ -42,6 +42,7 @@ import { useLocation, useNavigate, useParams } from "@tanstack/react-router";
 import * as Option from "effect/Option";
 import {
   ArrowLeftIcon,
+  CloudIcon,
   CornerLeftUpIcon,
   FileSearchIcon,
   FolderIcon,
@@ -98,6 +99,7 @@ import {
   resolveProjectPathForDispatch,
 } from "../lib/projectPaths";
 import { onOpenCommandPalette } from "../commandPaletteBus";
+import { openCloudLaunchDialog } from "../cloud/cloudLaunchDialogBus";
 import { isPreviewFocused } from "../lib/previewFocus";
 import { isTerminalFocused } from "../lib/terminalFocus";
 import {
@@ -653,6 +655,7 @@ function OpenCommandPaletteDialog(props: {
   const { activeDraftThread, activeThread, defaultProjectRef, handleNewThread } =
     useHandleNewThread();
   const projects = useProjects();
+  const serverConfigs = useServerConfigs();
   const referenceThreadRef =
     pathname === "/pull-requests"
       ? environments.some(
@@ -664,7 +667,7 @@ function OpenCommandPaletteDialog(props: {
         ? scopeThreadRef(activeThread.environmentId, activeThread.id)
         : null;
   const openPanelPullRequestUrl = useOpenPanelPullRequestUrl(referenceThreadRef);
-  const activeThreadServerConfig = useServerConfigs().get(
+  const activeThreadServerConfig = serverConfigs.get(
     activeThread?.environmentId ?? ("" as EnvironmentId),
   );
   const activeThreadReferenceCopyTarget =
@@ -1648,6 +1651,24 @@ function OpenCommandPaletteDialog(props: {
   ]);
 
   const actionItems: Array<CommandPaletteActionItem | CommandPaletteSubmenuItem> = [];
+
+  if (
+    primaryEnvironmentId !== null &&
+    serverConfigs.get(primaryEnvironmentId)?.environment.capabilities.cloudAllocations === true
+  ) {
+    actionItems.push({
+      kind: "action",
+      value: "action:new-cloud-thread",
+      searchTerms: ["new thread", "cloud", "remote", "worker", "launch"],
+      title: "New cloud thread",
+      description: "Choose a task, model, limits, and publication policy",
+      icon: <CloudIcon className={ITEM_ICON_CLASS} />,
+      shortcutCommand: "chat.newCloud",
+      run: async () => {
+        openCloudLaunchDialog();
+      },
+    });
+  }
 
   if (projects.length > 0) {
     const activeProjectTitle =

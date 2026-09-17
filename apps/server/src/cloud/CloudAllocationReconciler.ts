@@ -10,6 +10,7 @@ import * as ServerConfig from "../config.ts";
 import * as CloudAllocationController from "./CloudAllocationController.ts";
 import * as CloudWorkerRegistration from "./CloudWorkerRegistration.ts";
 import * as CloudWorkerProvider from "./CloudWorkerProvider.ts";
+import * as CloudWorkerRunClient from "./CloudWorkerRunClient.ts";
 import type { CloudWorkerResource } from "./CloudWorkerProvider.ts";
 
 const MAX_LAUNCH_FAILURES = 3;
@@ -69,10 +70,12 @@ function reviewDeadline(allocation: RunAllocation, reviewGraceMillis: number): n
 
 export const make = Effect.fn("CloudAllocationReconciler.make")(function* (input?: {
   readonly reviewGraceMillis?: number;
+  readonly runClient?: CloudWorkerRunClient.CloudWorkerRunClient["Service"];
 }) {
   const controller = yield* CloudAllocationController.CloudAllocationController;
   const registrations = yield* CloudWorkerRegistration.CloudWorkerRegistration;
   const workers = yield* CloudWorkerProvider.CloudWorkerProvider;
+  const runClient = input?.runClient;
   const dispatch = Effect.fn("CloudAllocationReconciler.dispatch")(function* (
     allocation: RunAllocation,
     occurredAt: string,
@@ -405,8 +408,54 @@ export const make = Effect.fn("CloudAllocationReconciler.make")(function* (input
           commandId: commandId(allocation, "cleanup-after-failure"),
         });
         return;
-      case "ready":
+      case "ready": {
+        if (allocation.execution === undefined || runClient === undefined) return;
+        if (allocation.agentOutcome.status === "not-started") {
+          const started = yield* runClient.start(allocation).pipe(Effect.result);
+          if (Result.isFailure(started)) {
+            yield* Effect.logWarning("Could not start the cloud thread on its worker.", {
+              allocationId: allocation.id,
+              attempt: allocation.attempt,
+              error: started.failure.message,
+            });
+            return;
+          }
+          yield* dispatch(allocation, occurredAt, {
+            type: "allocation.agent-started",
+            commandId: commandId(allocation, "agent-started"),
+          });
+          return;
+        }
+        if (allocation.agentOutcome.status !== "running") return;
+        const status = yield* runClient.status(allocation).pipe(Effect.result);
+        if (Result.isFailure(status)) {
+          yield* Effect.logWarning("Could not read the cloud thread status from its worker.", {
+            allocationId: allocation.id,
+            attempt: allocation.attempt,
+            error: status.failure.message,
+          });
+          return;
+        }
+        if (status.success === "running") return;
+        const resultLocation = {
+          uri: `t3://${allocation.allocationState.references.environmentId}/${allocation.execution.threadId}`,
+        };
+        if (status.success === "succeeded") {
+          yield* dispatch(allocation, occurredAt, {
+            type: "allocation.agent-succeeded",
+            commandId: commandId(allocation, "agent-succeeded"),
+            resultLocation,
+          });
+          return;
+        }
+        yield* dispatch(allocation, occurredAt, {
+          type: "allocation.agent-failed",
+          commandId: commandId(allocation, "agent-failed"),
+          reason: "The worker provider turn ended with an error or interruption.",
+          resultLocation,
+        });
         return;
+      }
     }
   });
 
@@ -494,7 +543,8 @@ export const layer = Layer.effectDiscard(
   Effect.gen(function* () {
     const config = yield* ServerConfig.ServerConfig;
     if (config.cloudControllerEnabled !== true) return;
-    const reconciler = yield* make();
+    const runClient = yield* CloudWorkerRunClient.CloudWorkerRunClient;
+    const reconciler = yield* make({ runClient });
     yield* reconciler.reconcileOnce().pipe(
       Effect.catchCause((cause) =>
         Effect.logError("Cloud allocation reconciliation failed", { cause }),

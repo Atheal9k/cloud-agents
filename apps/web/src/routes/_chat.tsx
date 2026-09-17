@@ -7,6 +7,7 @@ import { ThreadRouteView } from "../components/ThreadRouteView";
 import { resolveThreadRouteTarget } from "../threadRoutes";
 import { useClientSettings, useLegacySidebarEnabled } from "../hooks/useSettings";
 import { openCommandPalette } from "../commandPaletteBus";
+import { openCloudLaunchDialog } from "../cloud/cloudLaunchDialogBus";
 import { useProjects } from "../state/entities";
 import { usePrimaryEnvironmentId } from "../state/environments";
 import { selectProjectGroupingSettings } from "../logicalProject";
@@ -107,6 +108,13 @@ function ChatRouteGlobalShortcuts() {
           defaultProjectRef,
           handleNewThread,
         });
+        return;
+      }
+
+      if (command === "chat.newCloud") {
+        event.preventDefault();
+        event.stopPropagation();
+        openCloudLaunchDialog();
         return;
       }
 
