@@ -53,6 +53,12 @@ data "aws_iam_policy_document" "expired_worker_cleanup" {
       variable = "ec2:ResourceTag/CloudAgentRole"
       values   = ["worker"]
     }
+
+    condition {
+      test     = "StringEquals"
+      variable = "ec2:ResourceTag/Ephemeral"
+      values   = ["true"]
+    }
   }
 
   statement {

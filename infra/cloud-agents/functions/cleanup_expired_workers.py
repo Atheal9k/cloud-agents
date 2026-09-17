@@ -25,6 +25,7 @@ def handler(_event, _context):
         Filters=[
             {"Name": "tag:CloudAgentProject", "Values": [project]},
             {"Name": "tag:CloudAgentRole", "Values": ["worker"]},
+            {"Name": "tag:Ephemeral", "Values": ["true"]},
             {
                 "Name": "instance-state-name",
                 "Values": ["pending", "running", "stopping", "stopped"],
@@ -36,6 +37,12 @@ def handler(_event, _context):
         for reservation in page["Reservations"]:
             for instance in reservation["Instances"]:
                 tags = {tag["Key"]: tag["Value"] for tag in instance.get("Tags", [])}
+                if (
+                    tags.get("CloudAgentProject") != project
+                    or tags.get("CloudAgentRole") != "worker"
+                    or tags.get("Ephemeral") != "true"
+                ):
+                    continue
                 ttl_minutes = tag_integer(
                     tags, "CloudAgentDefaultTtlMinutes", default_ttl_minutes
                 )

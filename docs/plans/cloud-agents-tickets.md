@@ -354,6 +354,8 @@ Acceptance criteria:
 
 Dependencies: CA-03, CA-04A, CA-08, CA-14, CA-15.
 
+Status: Done on 17 September 2026 in [PR #15](https://github.com/Atheal9k/cloud-agents/pull/15).
+
 Description: Bound infrastructure lifetime even if bootstrap, the controller, or a client fails.
 
 Acceptance criteria:

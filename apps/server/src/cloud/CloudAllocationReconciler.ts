@@ -10,8 +10,10 @@ import * as ServerConfig from "../config.ts";
 import * as CloudAllocationController from "./CloudAllocationController.ts";
 import * as CloudWorkerRegistration from "./CloudWorkerRegistration.ts";
 import * as CloudWorkerProvider from "./CloudWorkerProvider.ts";
+import type { CloudWorkerResource } from "./CloudWorkerProvider.ts";
 
 const MAX_LAUNCH_FAILURES = 3;
+const DEFAULT_REVIEW_GRACE_MILLIS = 15 * 60 * 1_000;
 const decodeCommand = Schema.decodeUnknownEffect(RunAllocationCommand);
 
 function commandId(
@@ -28,7 +30,7 @@ function hasPassed(now: DateTime.Utc, deadline: string): boolean {
   return DateTime.toEpochMillis(now) >= Date.parse(deadline);
 }
 
-function instanceIdOf(allocation: RunAllocation): string | undefined {
+function recordedInstanceId(allocation: RunAllocation): string | undefined {
   switch (allocation.allocationState.status) {
     case "booting":
     case "registering":
@@ -51,10 +53,28 @@ function orderedAllocations(
   );
 }
 
-export const make = Effect.fn("CloudAllocationReconciler.make")(function* () {
+function reviewDeadline(allocation: RunAllocation, reviewGraceMillis: number): number | undefined {
+  switch (allocation.agentOutcome.status) {
+    case "succeeded":
+    case "failed":
+      return Math.min(
+        Date.parse(allocation.agentOutcome.completedAt) + reviewGraceMillis,
+        Date.parse(allocation.deadlines.expiresAt),
+      );
+    case "not-started":
+    case "running":
+    case "cancelled":
+      return undefined;
+  }
+}
+
+export const make = Effect.fn("CloudAllocationReconciler.make")(function* (input?: {
+  readonly reviewGraceMillis?: number;
+}) {
   const controller = yield* CloudAllocationController.CloudAllocationController;
   const registrations = yield* CloudWorkerRegistration.CloudWorkerRegistration;
   const workers = yield* CloudWorkerProvider.CloudWorkerProvider;
+  const reviewGraceMillis = input?.reviewGraceMillis ?? DEFAULT_REVIEW_GRACE_MILLIS;
 
   const dispatch = Effect.fn("CloudAllocationReconciler.dispatch")(function* (
     allocation: RunAllocation,
@@ -92,58 +112,69 @@ export const make = Effect.fn("CloudAllocationReconciler.make")(function* () {
     occurredAt: string,
   ) {
     if (allocation.cleanupState.status === "requested") {
+      if (allocation.previewState.status === "available") {
+        yield* dispatch(allocation, occurredAt, {
+          type: "allocation.preview-withdrawn",
+          commandId: commandId(allocation, "preview-withdrawn"),
+        });
+        return;
+      }
       yield* dispatch(allocation, occurredAt, {
         type: "allocation.cleanup-started",
-        commandId: commandId(allocation, "cleanup-started"),
+        commandId: commandId(allocation, "cleanup-started", allocation.cleanupState.requestedAt),
       });
       return;
     }
     if (allocation.cleanupState.status !== "running") return;
 
-    if (hasPassed(now, allocation.deadlines.cleanupBy)) {
-      yield* dispatch(allocation, occurredAt, {
-        type: "allocation.cleanup-failed",
-        commandId: commandId(allocation, "cleanup-deadline"),
-        reason: "The worker did not terminate before its cleanup deadline.",
-      });
-      return;
-    }
-
-    const knownInstanceId = instanceIdOf(allocation);
-    if (knownInstanceId === undefined && allocation.allocationState.status === "queued") {
-      yield* dispatch(allocation, occurredAt, {
-        type: "allocation.cleanup-succeeded",
-        commandId: commandId(allocation, "cleanup-succeeded"),
-      });
-      return;
-    }
-
-    const found = yield* workers.findAttempt({
+    const resources = yield* workers.findAttemptResources({
       allocationId: allocation.id,
       attempt: allocation.attempt,
     });
-    if (found === undefined) {
+    if (resources.length === 0) {
       if (
         allocation.allocationState.status !== "launching" ||
         hasPassed(now, allocation.deadlines.launchBy)
       ) {
         yield* dispatch(allocation, occurredAt, {
           type: "allocation.cleanup-succeeded",
-          commandId: commandId(allocation, "cleanup-succeeded"),
+          commandId: commandId(allocation, "cleanup-succeeded", allocation.cleanupState.startedAt),
         });
       }
       return;
     }
-    if (found.state === "terminated") {
+
+    const liveResources = resources.filter((resource) => resource.state !== "terminated");
+    if (liveResources.length === 0) {
       yield* dispatch(allocation, occurredAt, {
         type: "allocation.cleanup-succeeded",
-        commandId: commandId(allocation, "cleanup-succeeded"),
+        commandId: commandId(allocation, "cleanup-succeeded", allocation.cleanupState.startedAt),
       });
       return;
     }
-    if (found.state !== "shutting-down" && found.state !== "stopping") {
-      yield* workers.terminate(found.instanceId);
+
+    if (hasPassed(now, allocation.deadlines.cleanupBy)) {
+      yield* dispatch(allocation, occurredAt, {
+        type: "allocation.cleanup-failed",
+        commandId: commandId(allocation, "cleanup-deadline", allocation.cleanupState.startedAt),
+        reason: "The worker did not terminate before its cleanup deadline.",
+      });
+      return;
     }
+
+    yield* Effect.forEach(
+      liveResources,
+      (resource) =>
+        Effect.gen(function* () {
+          if (resource.registrationCredentialPresent) {
+            yield* workers.revokeRegistrationCredential(resource.instanceId);
+          }
+          if (resource.state !== "shutting-down" && resource.state !== "stopping") {
+            yield* workers.terminate(resource.instanceId);
+          }
+        }),
+      { discard: true },
+    );
   });
 
   const reconcileAllocation = Effect.fn("CloudAllocationReconciler.reconcileAllocation")(function* (
@@ -154,6 +185,19 @@ export const make = Effect.fn("CloudAllocationReconciler.make")(function* () {
 
     if (allocation.cleanupState.status !== "not-requested") {
       yield* cleanup(allocation, now, occurredAt);
+      return;
+    }
+
+    const completedReviewDeadline = reviewDeadline(allocation, reviewGraceMillis);
+    if (
+      hasPassed(now, allocation.deadlines.expiresAt) ||
+      (completedReviewDeadline !== undefined &&
+        DateTime.toEpochMillis(now) >= completedReviewDeadline)
+    ) {
+      yield* dispatch(allocation, occurredAt, {
+        type: "allocation.cancel",
+        commandId: commandId(allocation, "expire"),
+      });
       return;
     }
 
@@ -184,7 +228,7 @@ export const make = Effect.fn("CloudAllocationReconciler.make")(function* () {
       }
       case "launching": {
         const findResult = yield* workers
-          .findAttempt({
+          .findAttemptResources({
             allocationId: allocation.id,
             attempt: allocation.attempt,
           })
@@ -198,7 +242,16 @@ export const make = Effect.fn("CloudAllocationReconciler.make")(function* () {
           }
           return;
         }
-        const existing = findResult.success;
+        const existingResources = findResult.success;
+        if (existingResources.length > 1) {
+          yield* failLaunch(
+            allocation,
+            occurredAt,
+            "AWS returned more than one worker for this allocation attempt.",
+          );
+          return;
+        }
+        const existing = existingResources[0];
         if (existing !== undefined && existing.state !== "terminated") {
           yield* dispatch(allocation, occurredAt, {
             type: "allocation.instance-launched",
@@ -271,8 +324,9 @@ export const make = Effect.fn("CloudAllocationReconciler.make")(function* () {
         return;
       }
       case "booting": {
+        const instanceId = allocation.allocationState.instanceId;
         const findResult = yield* workers
-          .findAttempt({
+          .findAttemptResources({
             allocationId: allocation.id,
             attempt: allocation.attempt,
           })
@@ -286,7 +340,7 @@ export const make = Effect.fn("CloudAllocationReconciler.make")(function* () {
           }
           return;
         }
-        const instance = findResult.success;
+        const instance = findResult.success.find((resource) => resource.instanceId === instanceId);
         if (instance?.state === "running") {
           yield* dispatch(allocation, occurredAt, {
             type: "allocation.worker-booted",
@@ -345,7 +399,66 @@ export const make = Effect.fn("CloudAllocationReconciler.make")(function* () {
     if (next !== undefined) yield* reconcileAllocation(next);
   });
 
-  return { reconcileOnce } as const;
+  const removeAbandonedResource = Effect.fn("CloudAllocationReconciler.removeAbandonedResource")(
+    function* (resource: CloudWorkerResource) {
+      if (resource.registrationCredentialPresent) {
+        yield* workers.revokeRegistrationCredential(resource.instanceId);
+      }
+      if (resource.state !== "shutting-down" && resource.state !== "stopping") {
+        yield* workers.terminate(resource.instanceId);
+      }
+    },
+  );
+
+  const reconcileWorkersOnce = Effect.fn("CloudAllocationReconciler.reconcileWorkersOnce")(
+    function* () {
+      const [snapshot, resources] = yield* Effect.all([controller.snapshot, workers.listWorkers()]);
+      const allocations = new Map(
+        snapshot.allocations.map((allocation) => [allocation.id, allocation]),
+      );
+
+      yield* Effect.forEach(
+        resources,
+        (resource) =>
+          Effect.gen(function* () {
+            if (resource.identity.status === "unmatched") {
+              yield* removeAbandonedResource(resource);
+              return;
+            }
+
+            const allocation = allocations.get(resource.identity.allocationId);
+            if (allocation === undefined) {
+              yield* removeAbandonedResource(resource);
+              return;
+            }
+            if (resource.identity.attempt > allocation.attempt) return;
+            if (
+              resource.identity.attempt < allocation.attempt ||
+              allocation.cleanupState.status === "succeeded"
+            ) {
+              yield* removeAbandonedResource(resource);
+              return;
+            }
+            const expectedInstanceId = recordedInstanceId(allocation);
+            if (expectedInstanceId !== undefined && resource.instanceId !== expectedInstanceId) {
+              yield* removeAbandonedResource(resource);
+              return;
+            }
+            if (
+              resource.registrationCredentialPresent &&
+              (allocation.allocationState.status === "ready" ||
+                allocation.allocationState.status === "failed" ||
+                allocation.cleanupState.status !== "not-requested")
+            ) {
+              yield* workers.revokeRegistrationCredential(resource.instanceId);
+            }
+          }),
+        { discard: true },
+      );
+    },
+  );
+
+  return { reconcileOnce, reconcileWorkersOnce } as const;
 });
 
 export const layer = Layer.effectDiscard(
@@ -358,6 +471,13 @@ export const layer = Layer.effectDiscard(
         Effect.logError("Cloud allocation reconciliation failed", { cause }),
       ),
       Effect.repeat(Schedule.spaced("2 seconds")),
+      Effect.forkScoped,
+    );
+    yield* reconciler.reconcileWorkersOnce().pipe(
+      Effect.catchCause((cause) =>
+        Effect.logError("Cloud worker resource reconciliation failed", { cause }),
+      ),
+      Effect.repeat(Schedule.spaced("30 seconds")),
       Effect.forkScoped,
     );
   }),
