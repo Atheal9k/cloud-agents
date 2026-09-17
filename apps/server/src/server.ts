@@ -136,6 +136,7 @@ import { cloudWorkerRegistrationHttpApiLayer } from "./cloud/CloudWorkerRegistra
 import * as CloudWorkerProvider from "./cloud/CloudWorkerProvider.ts";
 import * as CloudGitCredentials from "./cloud/CloudGitCredentials.ts";
 import * as CloudRepositoryPreparation from "./cloud/CloudRepositoryPreparation.ts";
+import * as CloudProviderExecution from "./cloud/CloudProviderExecution.ts";
 import * as ServerSelfUpdate from "./cloud/selfUpdate.ts";
 import * as DesktopAppUpdate from "./desktopUpdate/DesktopAppUpdate.ts";
 import * as ServiceLauncherClient from "./cloud/serviceLauncherClient.ts";
@@ -513,7 +514,7 @@ const AntigravityInstallationRefreshLive = Layer.effectDiscard(
   }),
 );
 
-const RuntimeCoreDependenciesLive = ReactorLayerLive.pipe(
+const RuntimeCoreDependenciesBaseLive = ReactorLayerLive.pipe(
   Layer.provideMerge(AntigravityInstallationRefreshLive),
   Layer.provideMerge(ProviderAuthServiceLive),
   // Core Services
@@ -576,6 +577,10 @@ const RuntimeCoreDependenciesLive = ReactorLayerLive.pipe(
       CloudRepositoryPreparationLayerLive,
     ),
   ),
+);
+
+const RuntimeCoreDependenciesLive = CloudProviderExecution.layer.pipe(
+  Layer.provideMerge(RuntimeCoreDependenciesBaseLive),
 );
 
 const RuntimeDependenciesLive = RuntimeCoreDependenciesLive.pipe(

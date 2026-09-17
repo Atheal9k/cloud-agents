@@ -27,6 +27,7 @@ export * from "./vcs.ts";
 export * from "./sourceControl.ts";
 export * from "./projectClone.ts";
 export * from "./cloudAllocation.ts";
+export * from "./cloudExecution.ts";
 export * from "./cloudRepository.ts";
 export * from "./pullRequest.ts";
 export * from "./orchestration.ts";
