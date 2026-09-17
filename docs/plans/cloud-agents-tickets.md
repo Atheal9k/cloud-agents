@@ -1,15 +1,15 @@
 # Cloud agents for T3 Code: implementation tickets
 
-Revised 17 September 2026. Planning only. This revision narrows the first release, defers the native T3 mobile app, and adds Android emulator and iOS Simulator workers. No application code, AWS deployment, app publication, or issue creation is authorized by this document.
+Revised 17 September 2026. Planning only. This revision makes the existing local T3 environment the first controller host, moves permanent hosting behind a proven local workflow, defers the native T3 mobile app, and includes Android emulator and iOS Simulator workers. No application code, AWS deployment, app publication, or issue creation is authorized by this document.
 
 ## Agreed scope
 
-One permanent EC2 host serves the T3 web application and coordinates cloud workers. The owner controls it through a web browser or their desktop build. Responsive web access from a phone or tablet remains useful; publishing a modified T3 app to the App Store or Google Play is not required.
+The existing local T3 environment serves the web application and coordinates cloud workers first. The local machine must stay online while it is the controller, but web and desktop clients may disconnect without stopping a worker. After that workflow passes end to end, the same controller can move to a permanent EC2 host with stable remote access and no dependency on the local machine.
 
-The first usable release proves one complete workflow with one provider, one GitHub repository per run, and one worker at a time:
+The first usable local-host release proves one complete workflow with one provider, one GitHub repository per run, and one worker at a time:
 
 1. Submit a coding task from the web or desktop.
-2. Let the worker run independently of the initiating computer.
+2. Let the worker continue after the initiating client disconnects, while the local T3 controller remains online.
 3. Open the frontend inside the thread and interact with it.
 4. Observe the agent's actual browser, take control, and return control.
 5. Receive a saved diff, test results, and a draft PR.
@@ -21,13 +21,13 @@ Your own mobile app development is a separate requirement. The next committed de
 
 ## Architecture and efficiency decisions
 
-### Keep one permanent entry point and reuse T3
+### Use local T3 first, then add one permanent entry point
 
-The permanent EC2 host serves the UI, authentication, a small worker-allocation catalog, infrastructure operations, and retained-result access. Give it stable DNS, TLS, and durable storage. It stays running when no tasks are active. Repository code executes on workers, not with the permanent host's permissions.
+The controller serves the UI, authentication, a small worker-allocation catalog, infrastructure operations, and retained-result access. CA-04A runs that controller in the existing local T3 environment so the cloud workflow can be built and used before another always-on server exists. CA-04B later moves the same responsibilities to EC2 with stable DNS, TLS, durable storage, and service auto-start. Repository code executes on workers, not with either controller host's permissions.
 
 CA-01 must prove the smallest extension of T3's existing environment model before fixing a new execution protocol. The starting candidate is an ordinary T3 environment on a worker, reached through existing typed RPC and subscriptions. Reuse its provider adapters, project/thread ownership, event store, terminal, checkpoints, and permissions.
 
-There must be one writable authority for each thread. If the worker is that authority, the permanent host stores allocation records, explicit environment/thread references, and consistent archives. It does not maintain a second live orchestration event log or duplicate the worker's decider/projector. A saved archive is a recovery/read-only artifact, not another active writer. If a smaller execution bridge is demonstrably preferable, CA-01 must show how it preserves those ownership boundaries before adopting it.
+There must be one writable authority for each thread. If the worker is that authority, the active controller host stores allocation records, explicit environment/thread references, and consistent archives. It does not maintain a second live orchestration event log or duplicate the worker's decider/projector. A saved archive is a recovery/read-only artifact, not another active writer. Moving from the local controller to EC2 requires a deliberate cutover with only one writable controller. If a smaller execution bridge is demonstrably preferable, CA-01 must show how it preserves those ownership boundaries before adopting it.
 
 This is a personal single-controller deployment. Multi-controller consensus, a new general-purpose scheduler framework, Kubernetes, and transparent migration of arbitrary running processes are outside the initial scope.
 
@@ -66,7 +66,7 @@ iOS Simulator requires macOS and Xcode. Use an appropriate Apple Silicon Mac wor
 
 EC2 Mac bills the Dedicated Host, has a 24-hour minimum allocation, and permits one Mac instance per host. Reuse an allocated Mac for serial, isolated jobs instead of allocating a host per short task. Task cancellation stops the job; it does not imply the host has been released or billing has ended. [EC2 Mac considerations](https://docs.aws.amazon.com/AWSEC2/latest/UserGuide/ec2-mac-instances.html).
 
-Simulator workers do not change the permanent controller's Linux hosting role. Each profile has explicit capability checks and region selection. If a required Mac or Android type is unavailable in us-west-1, report it and configure a supported region; do not silently provision elsewhere or substitute a web build.
+Simulator workers do not change the controller's role or require CA-04B. Each profile has explicit capability checks and region selection. If a required Mac or Android type is unavailable in us-west-1, report it and configure a supported region; do not silently provision elsewhere or substitute a web build.
 
 ## Existing work to reuse
 
@@ -91,22 +91,23 @@ The repo also has an [iOS simulator streaming workflow](C:/Users/Victor/Desktop/
 
 ## Delivery order and scope boundaries
 
-Ticket IDs are preserved from the previous revision. CA-37 to CA-39 are new. Order below is intentional; ticket numbering does not indicate priority.
+Existing ticket IDs are preserved except CA-04, which is split into CA-04A and CA-04B. CA-37 to CA-39 are new. Order below is intentional; ticket numbering does not indicate priority.
 
-| Delivery                           | Tickets                                                                                                                                           | Required result                                                                                                               |
-| ---------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------- |
-| Architecture proof                 | CA-01                                                                                                                                             | Select one provider and prove T3 reuse, ownership, offline execution, and the basic worker route.                             |
-| First usable web/desktop release   | CA-02, CA-03, CA-04, CA-06, CA-07, CA-08, CA-09, CA-10, CA-11, CA-14, CA-15, CA-16, CA-17, CA-18, CA-19, CA-23, CA-24, CA-25, CA-27, CA-34, CA-35 | One configured repository/provider, bounded single-worker execution, preview/takeover, PR, saved results, and basic recovery. |
-| Review and operations improvements | CA-05, CA-12, CA-13, CA-21, CA-33, CA-36                                                                                                          | Rich setup, history, review retention/reopen, and remote administration without expanding provider scope.                     |
-| Mobile development workers         | CA-37, CA-38, CA-39                                                                                                                               | Build, boot, view, control, and test your Android/iOS app from web/desktop; no T3 native-app publication.                     |
-| Optional product expansion         | CA-26, CA-28, CA-29, CA-30, CA-31, CA-32                                                                                                          | Handoff, automation, assistants, additional providers, and private-network/dependency support.                                |
-| Deferred native T3 app work        | CA-20, CA-22                                                                                                                                      | Native T3 iOS/Android client and push integration only when you choose to maintain/distribute those builds.                   |
+| Delivery                           | Tickets                                                                                                                                            | Required result                                                                                                                     |
+| ---------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------- |
+| Architecture proof                 | CA-01                                                                                                                                              | Select one provider and prove T3 reuse, ownership, offline execution, and the basic worker route.                                   |
+| Local-hosted web/desktop release   | CA-02, CA-03, CA-04A, CA-06, CA-07, CA-08, CA-09, CA-10, CA-11, CA-14, CA-15, CA-16, CA-17, CA-18, CA-19, CA-23, CA-24, CA-25, CA-27, CA-34, CA-35 | Run the complete single-worker workflow from the existing local T3 environment. The controller machine must remain online.          |
+| Permanent controller deployment    | CA-04B                                                                                                                                             | Move the proven controller to an always-on EC2 host with stable access, safe state cutover, and no dependency on the local machine. |
+| Review and operations improvements | CA-05, CA-12, CA-13, CA-21, CA-33, CA-36                                                                                                           | Add richer setup, history, review retention/reopen, and remote administration without expanding provider scope.                     |
+| Mobile development workers         | CA-37, CA-38, CA-39                                                                                                                                | Build, boot, view, control, and test your Android/iOS app from web/desktop; no T3 native-app publication.                           |
+| Optional product expansion         | CA-26, CA-28, CA-29, CA-30, CA-31, CA-32                                                                                                           | Add handoff, automation, assistants, additional providers, and private-network/dependency support.                                  |
+| Deferred native T3 app work        | CA-20, CA-22                                                                                                                                       | Add native T3 iOS/Android client and push integration only when you choose to maintain and distribute those builds.                 |
 
 Mobile development is committed follow-on scope, not dependent on the optional product expansion or deferred native T3 app work. Run platform feasibility checks early before spending time on simulator UI. Android and iOS can be implemented independently; CA-39 passes separately for each and both must pass before claiming support for both platforms.
 
 The first release must not inherit deferred requirements through dependencies. In particular, it does not require repository discovery, full settings wizards, every provider, native T3 mobile testing/publication, push notification credentials, warm pools, complete historical conversation migration, or transparent live-process resume.
 
-## First usable web/desktop release
+## First usable local-host release
 
 ### CA-01: Prove the smallest T3 extension and one remote provider
 
@@ -123,7 +124,7 @@ Acceptance criteria:
 - Record the authoritative location of thread events, workspace, provider session, and allocation state. There is one writer per thread and no second live decider/projector on the controller.
 - Compare reusing an ordinary worker T3 environment with a smaller execution bridge. Choose based on actual required changes, reconnect behavior, and operational complexity, without building both.
 - Verify the selected provider's Linux support, remote authentication, expiry/refresh behavior, interruption, and supported resume behavior. Other providers remain unsupported for cloud execution until CA-31.
-- Prove an authenticated worker connection from the permanent host without a local PowerShell loop or per-turn SSM commands. Document any API-key cost instead of assuming subscription credentials can be copied.
+- Prove an authenticated worker connection from the active controller host without a local PowerShell orchestration loop or per-turn SSM commands. Document any API-key cost instead of assuming subscription credentials can be copied.
 - Keep native T3 mobile changes outside this proof. Allow later worker profiles to declare OS/architecture/device capabilities without implementing a general scheduler.
 
 ### CA-02: Add allocation contracts around existing T3 state
@@ -161,33 +162,37 @@ Acceptance criteria:
 - Sandbox plan/apply/destroy verifies ownership and retention. Worker teardown cannot remove the permanent host or retained records.
 - Leave extension points for profile-specific launch configuration; Mac infrastructure and emulator sizing belong to CA-37/CA-38.
 
-### CA-04: Host T3 permanently with remote setup and durable identity
+### CA-04A: Use the existing local T3 environment as the controller
 
 Dependencies: CA-02, CA-03.
 
-Description: Serve the personal web UI and controller from one always-on EC2 instance. Reuse normal T3 access and service behavior.
+Status: Done on 17 September 2026 in
+[PR #4](https://github.com/Atheal9k/cloud-agents/pull/4).
+
+Description: Run cloud allocation and control from the existing local T3 environment before deploying a permanent host. Reuse the same controller contracts and state layout that CA-04B will run on EC2.
 
 Acceptance criteria:
 
-- Stable DNS, TLS renewal, service auto-start, and durable T3 identity survive a host reboot. The desktop build connects to the same host.
-- Initial repository/provider/deployment settings can be supplied through a documented protected server configuration and existing remote setup paths. No settings wizard or native app is required.
-- Supported provider authentication completes remotely through a validated device-code, callback, or explicit credential-entry flow. An EC2 localhost callback is not mistaken for the viewer's localhost.
-- A consistent backup/restore of controller state is demonstrated; no live SQLite file is copied unsafely.
-- Responsive web access works from another network with the originating computer off. The deployment does not require T3's production Clerk, relay, push credentials, or app-store publication.
-- A single-host outage and recovery procedure are explicit. HA, controller replication, and a full admin dashboard are deferred.
+- The existing local T3 server can own allocation records, AWS operations, retained-result references, and worker registrations without an EC2 controller instance.
+- Locally served web and the desktop build use the same cloud commands, subscriptions, and capability checks. Cloud execution is not a separate local-only orchestration path.
+- Initial repository, provider, and AWS deployment settings use protected controller-side configuration. Browser clients never receive AWS provisioning credentials.
+- Supported provider authentication uses an existing local callback, device-code flow, or explicit protected credential entry. Authentication behavior is recorded so CA-04B can replace local callbacks where needed.
+- Closing a browser or desktop client does not stop an accepted job. The local T3 process and machine must stay online for allocation, control, finalization, and normal cleanup; the UI states that limitation plainly.
+- Controller restart recovers durable intent and acknowledged results from the local T3 state directory. A consistent backup/restore is demonstrated without copying a live SQLite file unsafely.
+- No stable public DNS, permanent TLS endpoint, production T3 Connect service, or EC2 controller is required for this ticket. Worker connectivity through NAT or a protected tunnel belongs to CA-09.
 
 ### CA-06: Supply protected Git and GitHub credentials
 
-Dependencies: CA-03, CA-04.
+Dependencies: CA-03, CA-04A.
 
-Description: Reuse the prototype's controlled clone/push boundary and configure GitHub API access on the server for draft PR creation.
+Description: Reuse the prototype's controlled clone/push boundary and configure GitHub API access on the active controller for draft PR creation.
 
 Acceptance criteria:
 
 - Support a configurable SSH secret reference including cloud-agent-victor-key, with validated raw OpenSSH or the reference's single-field JSON form and correct multiline handling.
 - Clone/push uses the trusted wrapper and verified GitHub host keys over port 443. Task code cannot read the key or its SSH agent socket.
 - Bootstrap credentials are scoped to the assigned run. Neither the master secret nor another run's secret is readable by the worker task.
-- Server-owned GitHub API authentication creates a PR with the laptop offline. No dependency on the initiating device's gh login remains.
+- Controller-owned GitHub API authentication creates a PR after the initiating UI closes. It does not depend on that client's gh login. While CA-04A hosts the controller locally, its machine must remain online; CA-04B removes that limitation.
 - Permission denial, expiry, revocation, and rotation produce useful errors without logging values. The account-wide scope of an SSH account key is explicit.
 
 ### CA-07: Bake a minimal worker image and isolate execution
@@ -207,7 +212,7 @@ Acceptance criteria:
 
 ### CA-08: Allocate one worker with durable intent
 
-Dependencies: CA-02, CA-03, CA-04, CA-07.
+Dependencies: CA-02, CA-03, CA-04A, CA-07.
 
 Description: Replace the local orchestrator with a small durable allocation queue. First-release concurrency is one worker.
 
@@ -221,16 +226,16 @@ Acceptance criteria:
 
 ### CA-09: Route normal T3 traffic to the worker
 
-Dependencies: CA-02, CA-04, CA-07, CA-08.
+Dependencies: CA-02, CA-04A, CA-07, CA-08.
 
 Description: Extend existing environment discovery/connection paths with an authenticated outbound worker route. Keep normal execution in T3's typed RPC and provider runtime.
 
 Acceptance criteria:
 
-- Workers register with short-lived attempt-bound credentials over an approved outward route. No public worker ingress or user-machine port-forwarding command is needed.
+- Workers register with short-lived attempt-bound credentials over an approved route. No public worker ingress is needed. Local hosting may use one explicitly configured authenticated ingress or controller-managed tunnel, but it must not require manual forwarding for each worker.
 - Existing T3 subscriptions carry conversation/tool events, approvals, terminals, and control; no SSM command-output polling participates in the interaction.
 - Reconnect preserves environment identity and uses existing T3 snapshot/subscription behavior. The controller does not become a second writable thread event store.
-- Revoked and obsolete workers cannot reconnect as the current attempt. Routing never substitutes a client-local path or localhost endpoint.
+- Revoked and obsolete workers cannot reconnect as the current attempt. Routing never interprets a controller, worker, or browser localhost endpoint as belonging to a different machine.
 - A healthy session continues if SSM is unavailable. Do not change the T3 Connect relay into an application proxy or require access to its production services.
 
 ### CA-10: Prepare one repository and a trusted setup recipe
@@ -263,7 +268,7 @@ Acceptance criteria:
 
 ### CA-14: Retain results and support explicit recovery
 
-Dependencies: CA-02, CA-04, CA-10, CA-11.
+Dependencies: CA-02, CA-04A, CA-10, CA-11.
 
 Description: Save enough authoritative environment/workspace state to recover interrupted work and review the result after compute ends. Avoid continuous replication of the full domain model.
 
@@ -294,7 +299,7 @@ Acceptance criteria:
 
 Dependencies: CA-06, CA-10, CA-11, CA-14, CA-15.
 
-Description: Complete the first launch-to-PR workflow with a trusted publication step independent of the local device.
+Description: Complete the first launch-to-PR workflow with a trusted publication step owned by the controller rather than the initiating client.
 
 Acceptance criteria:
 
@@ -302,11 +307,11 @@ Acceptance criteria:
 - Validate repository, base, and branch against recorded intent. Privileged Git operations do not run task-controlled hooks or credential configuration.
 - Persist test outcomes and distinguish empty change, failed verification, rejected push, and failed PR creation.
 - Finalization retries inspect the existing branch and PR first. Remote divergence does not trigger an implicit force push.
-- Link the PR and saved diff to the run. Publication succeeds with the initiating computer offline; a publication failure does not erase the work.
+- Link the PR and saved diff to the run. Publication succeeds after the initiating UI disconnects as long as the active controller stays online; a publication failure does not erase the work.
 
 ### CA-17: Clean up workers independently of clients
 
-Dependencies: CA-03, CA-04, CA-08, CA-14, CA-15.
+Dependencies: CA-03, CA-04A, CA-08, CA-14, CA-15.
 
 Description: Bound infrastructure lifetime even if bootstrap, the controller, or a client fails.
 
@@ -315,7 +320,7 @@ Acceptance criteria:
 - A small reconciler matches tagged resources to attempts and handles abandoned, expired, cancelled, and partially provisioned workers.
 - An AWS-side backstop catches a worker whose guest timer never started. Cleanup is idempotent and cannot delete a newer attempt's resources.
 - Remove temporary credentials, disposable storage, and preview routes according to their retention policies. Keep cleanup status separate from agent success.
-- The permanent host and retained archives are explicitly excluded from worker expiry.
+- The active controller host and retained archives are explicitly excluded from worker expiry.
 - The first release uses a bounded review grace period before web-worker termination. Rich preview leases/reopen are CA-36; Mac Dedicated Host lifecycle is CA-38.
 - Failed deletion stays visible and retryable; requesting termination is not reported as completed cleanup.
 
@@ -329,13 +334,13 @@ Acceptance criteria:
 
 - Configure one-worker concurrency, queue length, run/input-wait duration, preview grace period, and allowed instance sizes. Admission rejects invalid requests before allocating compute.
 - Show elapsed worker time, shape, deadlines, and a cost estimate with stated assumptions. Unknown provider usage remains unknown.
-- Distinguish permanent-host costs, worker time, storage, model use, and streaming transfer. Billing alerts are not represented as an exact live spending cap.
+- Distinguish controller-host costs, worker time, storage, model use, and streaming transfer. A local controller has no attributed EC2 host charge. Billing alerts are not represented as an exact live spending cap.
 - Correlate run, attempt, worker, provider, and cleanup diagnostics without routinely logging credentials or complete prompts.
 - A stop-admission control leaves running jobs, saved results, and cleanup manageable. Expanded budgets and fleet charts are deferred.
 
 ### CA-19: Add cloud launch and control to web and desktop
 
-Dependencies: CA-02, CA-04, CA-10, CA-15, CA-18.
+Dependencies: CA-02, CA-04A, CA-10, CA-15, CA-18.
 
 Description: Expose the one-repository/provider workflow through T3's existing web UI and the owner's desktop build.
 
@@ -344,7 +349,7 @@ Acceptance criteria:
 - The user sees the cloud destination and selects task, ref, supported model, limits, and publication policy before launching.
 - New-thread UI and relevant command-palette/keybinding actions use the same validation and request identity.
 - Provisioning, setup, running, waiting, finalizing, failure, and cleanup states are accurate; a double-submit does not allocate twice.
-- The permanent host's web UI, locally served web, and desktop build work without baked localhost origins or a local backend dependency.
+- Locally served web and the desktop build work against CA-04A without baked origins. The same client configuration can target CA-04B later without a separate cloud-only UI.
 - The thread exposes terminal/logs, ordinary app preview, and shared browser view through CA-25/CA-34. Native T3 iOS/Android UI is not part of this ticket.
 - Responsive browser access remains possible from phones/tablets; private desktop installation is sufficient, with no app-store publication prerequisite.
 
@@ -417,9 +422,9 @@ Description: Validate the complete first workflow without turning every later ca
 
 Acceptance criteria:
 
-- With the initiating computer disconnected, one task changes the configured private repository, runs its checks, and produces a linked draft PR and retained results.
+- With the initiating web/desktop client closed and the local controller still online, one task changes the configured private repository, runs its checks, and produces a linked draft PR and retained results.
 - Web and the owner's desktop build show the app preview, observe the actual agent browser, take control, return control, and cancel a run.
-- Controller restart, worker failure, lost launch response, expired auth, failed archive upload, and failed/retried publication have recorded recovery outcomes without unexplained AWS resources.
+- Local controller restart, worker failure, lost launch response, expired auth, failed archive upload, and failed/retried publication have recorded recovery outcomes without unexplained AWS resources.
 - Verify bounded idle/compute cleanup and that an ordinary preview or hidden thread does not maintain unnecessary desktop streaming.
 - Compare measured cold/cached startup, and verify existing T3 reconnect/state authority rather than a duplicate event replication system.
 - Scope backend tests to changed behavior and use receipts/drains rather than sleeps. Native T3 mobile testing, push delivery, all-provider qualification, and simulator workloads are separate tickets.
@@ -432,17 +437,35 @@ Description: Provide the minimum instructions needed to install, use, recover, a
 
 Acceptance criteria:
 
-- Document the permanent URL, protected initial configuration, selected provider authentication, GitHub access, private desktop setup, and first run.
+- Document local-controller startup, its stay-online requirement, protected initial configuration, selected provider authentication, GitHub access, desktop setup, and the first run.
 - Explain direct app preview versus shared-browser control, review timeout, saved results, cancellation, retry, and explicit recovery.
 - Include backup/restore, image rollback, credential rotation, stuck-worker cleanup, and teardown with retained-data behavior.
 - The release is opt-in and capability-gated. Disabling admission leaves active jobs and results manageable.
 - State the supported provider/repository configuration and web/desktop scope; no claim of native T3 mobile or simulator support until the corresponding tickets pass.
 
+## Permanent controller deployment
+
+### CA-04B: Move the proven controller to a permanent T3 host
+
+Dependencies: CA-03, CA-04A, CA-23, CA-24.
+
+Description: Move the controller proven by CA-23 to one always-on EC2 instance. Keep the local and permanent modes on the same T3 code path.
+
+Acceptance criteria:
+
+- Stable DNS, TLS renewal, service auto-start, and durable T3 identity survive a host reboot. Web and desktop connect to the same host without baked localhost origins.
+- A documented cutover stops admission on the local controller, drains or explicitly terminates active work, takes a consistent backup, restores the required controller state, and starts the EC2 controller with only one writable authority. Arbitrary live processes do not migrate.
+- Initial repository, provider, AWS, and GitHub settings use protected server configuration and existing remote setup paths. No settings wizard or native app is required.
+- Supported provider authentication completes through a validated device-code, remote callback, or explicit protected credential-entry flow. The permanent host never treats its own localhost callback as the viewer's localhost.
+- Responsive web access works from another network with the original computer off. The deployment does not require T3's production Clerk, relay, push credentials, or app-store publication.
+- A consistent backup/restore and single-host outage procedure are demonstrated. HA, controller replication, and a full admin dashboard remain deferred.
+- The local-controller mode remains supported for development and fallback. Switching back also requires an explicit single-writer cutover.
+
 ## Review and operations improvements
 
 ### CA-05: Add a guided AWS readiness/settings screen
 
-Dependencies: CA-03, CA-04, CA-19, CA-24.
+Dependencies: CA-03, CA-04B, CA-19, CA-24.
 
 Description: Replace manual deployment configuration with a useful remote settings workflow after the first run is proven.
 
@@ -500,7 +523,7 @@ Acceptance criteria:
 
 Dependencies: CA-05, CA-12, CA-18, CA-19, CA-24.
 
-Description: Add richer repository, recipe, provider-account, and worker operations to the web/desktop settings. Basic remote control already ships in CA-04/CA-19.
+Description: Add richer repository, recipe, provider-account, and worker operations to the web/desktop settings. Basic remote control already ships in CA-04A, CA-04B, and CA-19.
 
 Acceptance criteria:
 
@@ -547,9 +570,9 @@ Acceptance criteria:
 
 ### CA-38: Build and launch iOS apps on EC2 Mac workers
 
-Dependencies: CA-02, CA-03, CA-04, CA-06, CA-08, CA-10, CA-14, CA-17, CA-18, CA-27.
+Dependencies: CA-02, CA-03, CA-04A, CA-06, CA-08, CA-10, CA-14, CA-17, CA-18, CA-27.
 
-Description: Add a macOS worker profile for native iOS/iPadOS builds and Simulator execution. Keep the permanent controller on Linux and give the Mac its own host allocation policy.
+Description: Add a macOS worker profile for native iOS/iPadOS builds and Simulator execution. Keep controller hosting separate from the Mac worker and give the Mac its own host allocation policy.
 
 Acceptance criteria:
 
@@ -577,7 +600,7 @@ Acceptance criteria:
 - Keep display/control endpoints local to the worker and expose only authorized capabilities through the thread route. Do not forward a simulator service's general shell endpoint, public ADB, arbitrary filesystem access, or unrelated desktop sessions.
 - Reuse the human/agent input lease from CA-35. Agent automation targets exact devices through supported tools; delayed human input cannot reach a different job.
 - Stream on demand, suspend hidden viewers, and make build/device startup independent of whether someone is watching. Recordings are explicit bounded artifacts.
-- Android and iOS each pass a full build-install-launch-test-takeover-return-cleanup scenario from web/desktop, with the initiating computer offline. A browser-rendered mobile website does not satisfy native-app testing.
+- Android and iOS each pass a full build-install-launch-test-takeover-return-cleanup scenario after the initiating client disconnects. Under CA-04A the local controller machine stays online; under CA-04B the original computer may be off. A browser-rendered mobile website does not satisfy native-app testing.
 - Run Android/iOS implementation independently as capacity allows. Report each platform's verified status separately; do not label both supported when only one passes.
 - Existing T3 native mobile app navigation, stores, push services, and publication are not involved.
 

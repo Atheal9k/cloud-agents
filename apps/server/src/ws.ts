@@ -115,6 +115,7 @@ import { ProviderAuthService } from "./provider/Services/ProviderAuthService.ts"
 import { ProviderInstanceRegistry } from "./provider/Services/ProviderInstanceRegistry.ts";
 import { makeProviderInstallation } from "./provider/providerInstallation.ts";
 import * as ServerSelfUpdate from "./cloud/selfUpdate.ts";
+import * as CloudAllocationController from "./cloud/CloudAllocationController.ts";
 import * as ServerLifecycleEvents from "./serverLifecycleEvents.ts";
 import * as ServerRuntimeStartup from "./serverRuntimeStartup.ts";
 import * as ServerSettings from "./serverSettings.ts";
@@ -496,6 +497,7 @@ const makeWsRpcLayer = (
   clientOrigin: OrchestrationClientOrigin,
   clientAnalyticsProps: Readonly<Record<string, unknown>>,
   previewAutomationBroker: PreviewAutomationBroker.PreviewAutomationBroker["Service"],
+  cloudAllocations: CloudAllocationController.CloudAllocationController["Service"],
 ) =>
   WsRpcGroup.toLayer(
     Effect.gen(function* () {
@@ -2659,6 +2661,14 @@ const makeWsRpcLayer = (
             ),
             { "rpc.aggregate": "cloud" },
           ),
+        [WS_METHODS.cloudAllocationDispatch]: (command) =>
+          observeRpcEffect(WS_METHODS.cloudAllocationDispatch, cloudAllocations.dispatch(command), {
+            "rpc.aggregate": "cloud-allocation",
+          }),
+        [WS_METHODS.cloudAllocationList]: (_input) =>
+          observeRpcEffect(WS_METHODS.cloudAllocationList, cloudAllocations.snapshot, {
+            "rpc.aggregate": "cloud-allocation",
+          }),
         [WS_METHODS.pullRequestsList]: (input) =>
           observeRpcEffect(WS_METHODS.pullRequestsList, pullRequests.list(input), {
             "rpc.aggregate": "pull-requests",
@@ -3650,6 +3660,10 @@ const makeWsRpcLayer = (
             ),
             { "rpc.aggregate": "server" },
           ),
+        [WS_METHODS.subscribeCloudAllocations]: (_input) =>
+          observeRpcStream(WS_METHODS.subscribeCloudAllocations, cloudAllocations.stream, {
+            "rpc.aggregate": "cloud-allocation",
+          }),
         [WS_METHODS.subscribeResourceTelemetry]: (_input) =>
           observeRpcStream(
             WS_METHODS.subscribeResourceTelemetry,
@@ -3694,6 +3708,7 @@ export const websocketRpcRouteLayer = Layer.unwrap(
         ),
     });
     const pullRequests = yield* PullRequestService.PullRequestService;
+    const cloudAllocations = yield* CloudAllocationController.CloudAllocationController;
     const sql = yield* SqlClient.SqlClient;
     return HttpRouter.add(
       "GET",
@@ -3733,6 +3748,7 @@ export const websocketRpcRouteLayer = Layer.unwrap(
               clientOrigin,
               clientAnalyticsProps,
               previewAutomationBroker,
+              cloudAllocations,
             ).pipe(
               Layer.provideMerge(RpcSerialization.layerJson),
               Layer.provide(Layer.succeed(SqlClient.SqlClient, sql)),

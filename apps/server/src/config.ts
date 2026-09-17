@@ -95,6 +95,8 @@ export class ServerConfig extends Context.Service<
     readonly logWebSocketEvents: boolean;
     readonly tailscaleServeEnabled: boolean;
     readonly tailscaleServePort: number;
+    /** Enables this T3 environment as the single local cloud-allocation controller. */
+    readonly cloudControllerEnabled?: boolean;
   }
 >()("t3/config/ServerConfig") {
   /** @deprecated Import and use `layerTest` from this module. */
@@ -210,6 +212,7 @@ const makeTest = Effect.fn("ServerConfig.makeTest")(function* (
     logWebSocketEvents: false,
     tailscaleServeEnabled: false,
     tailscaleServePort: 443,
+    cloudControllerEnabled: false,
     port: 0,
     host: undefined,
     desktopBootstrapToken: undefined,

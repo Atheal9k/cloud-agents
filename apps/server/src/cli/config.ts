@@ -76,6 +76,12 @@ const tailscaleServePortFlag = Flag.integer("tailscale-serve-port").pipe(
   Flag.withDescription("HTTPS port for Tailscale Serve when --tailscale-serve is enabled."),
   Flag.optional,
 );
+const cloudControllerFlag = Flag.boolean("cloud-controller").pipe(
+  Flag.withDescription(
+    "Use this T3 environment as the local cloud-agent controller. The process and host must remain online.",
+  ),
+  Flag.optional,
+);
 
 const EnvServerConfig = Config.all({
   logLevel: Config.logLevel("T3CODE_LOG_LEVEL").pipe(Config.withDefault("Info")),
@@ -148,6 +154,10 @@ const EnvServerConfig = Config.all({
     Config.option,
     Config.map(Option.getOrUndefined),
   ),
+  cloudControllerEnabled: Config.boolean("T3CODE_CLOUD_CONTROLLER").pipe(
+    Config.option,
+    Config.map(Option.getOrUndefined),
+  ),
 });
 
 const DevAuthTokenConfig = Config.redacted("T3CODE_DEV_AUTH_TOKEN").pipe(
@@ -183,6 +193,7 @@ export interface CliServerFlags {
   readonly logWebSocketEvents: Option.Option<boolean>;
   readonly tailscaleServeEnabled: Option.Option<boolean>;
   readonly tailscaleServePort: Option.Option<number>;
+  readonly cloudControllerEnabled?: Option.Option<boolean>;
 }
 
 export interface CliAuthLocationFlags {
@@ -217,6 +228,7 @@ export const sharedServerCommandFlags = {
   logWebSocketEvents: logWebSocketEventsFlag,
   tailscaleServeEnabled: tailscaleServeFlag,
   tailscaleServePort: tailscaleServePortFlag,
+  cloudControllerEnabled: cloudControllerFlag,
 } as const;
 
 const resolveOptionPrecedence = <Value>(
@@ -260,6 +272,7 @@ export const resolveServerConfig = (
       logWebSocketEvents: flags.logWebSocketEvents ?? Option.none(),
       tailscaleServeEnabled: flags.tailscaleServeEnabled ?? Option.none(),
       tailscaleServePort: flags.tailscaleServePort ?? Option.none(),
+      cloudControllerEnabled: flags.cloudControllerEnabled ?? Option.none(),
     } satisfies CliServerFlags;
     const bootstrapFd = Option.getOrUndefined(normalizedFlags.bootstrapFd) ?? env.bootstrapFd;
     const bootstrapEnvelope =
@@ -367,6 +380,13 @@ export const resolveServerConfig = (
       ),
       () => 443,
     );
+    const cloudControllerEnabled = Option.getOrElse(
+      resolveOptionPrecedence(
+        normalizedFlags.cloudControllerEnabled,
+        Option.fromUndefinedOr(env.cloudControllerEnabled),
+      ),
+      () => false,
+    );
     const staticDir = devUrl ? undefined : yield* ServerConfig.resolveStaticDir();
     const host = Option.getOrElse(
       resolveOptionPrecedence(
@@ -418,6 +438,7 @@ export const resolveServerConfig = (
       logWebSocketEvents,
       tailscaleServeEnabled,
       tailscaleServePort,
+      cloudControllerEnabled,
     };
 
     return config;
@@ -441,6 +462,7 @@ export const resolveCliAuthConfig = (
       logWebSocketEvents: Option.none(),
       tailscaleServeEnabled: Option.none(),
       tailscaleServePort: Option.none(),
+      cloudControllerEnabled: Option.none(),
     },
     cliLogLevel,
   );

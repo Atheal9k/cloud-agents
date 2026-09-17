@@ -249,3 +249,32 @@ export const RunAllocationEvent = Schema.Union([
   }),
 ]);
 export type RunAllocationEvent = typeof RunAllocationEvent.Type;
+
+export const CloudAllocationControllerMode = Schema.Literal("local");
+export type CloudAllocationControllerMode = typeof CloudAllocationControllerMode.Type;
+
+export const CloudAllocationControllerStatus = Schema.Struct({
+  mode: CloudAllocationControllerMode,
+  /** A local controller can outlive clients, but not the machine hosting T3. */
+  requiresHostOnline: Schema.Literal(true),
+});
+export type CloudAllocationControllerStatus = typeof CloudAllocationControllerStatus.Type;
+
+export const CloudAllocationSnapshot = Schema.Struct({
+  controller: CloudAllocationControllerStatus,
+  allocations: Schema.Array(RunAllocation),
+});
+export type CloudAllocationSnapshot = typeof CloudAllocationSnapshot.Type;
+
+export class CloudAllocationControllerError extends Schema.TaggedError<CloudAllocationControllerError>()(
+  "CloudAllocationControllerError",
+  {
+    reason: Schema.Literals([
+      "controller-disabled",
+      "allocation-not-found",
+      "persistence-failed",
+      "invalid-persisted-event",
+    ]),
+    message: TrimmedNonEmptyString,
+  },
+) {}

@@ -247,6 +247,7 @@ export const make = Effect.gen(function* () {
           }
         : {}),
       ...(desktopAppUpdate ? { desktopAppUpdate: true } : {}),
+      ...(serverConfig.cloudControllerEnabled === true ? { cloudAllocations: true } : {}),
     },
   };
 

@@ -176,6 +176,32 @@ it.layer(NodeServices.layer)("ServerEnvironmentLive", (it) => {
       expect(second.capabilities.threadPullRequests).toBe(true);
       expect(second.capabilities.threadPullRequestLinking).toBe(true);
       expect(second.capabilities.agentActivityPublishing).toBe(false);
+      expect(second.capabilities.cloudAllocations).toBeUndefined();
+    }),
+  );
+
+  it.effect("advertises cloud allocations only when the local controller is enabled", () =>
+    Effect.gen(function* () {
+      const fileSystem = yield* FileSystem.FileSystem;
+      const baseDir = yield* fileSystem.makeTempDirectoryScoped({
+        prefix: "t3-server-environment-cloud-controller-test-",
+      });
+      const serverConfig = {
+        ...(yield* makeServerConfig(baseDir)),
+        cloudControllerEnabled: true,
+      } satisfies ServerConfig.ServerConfig["Service"];
+      yield* fileSystem.makeDirectory(serverConfig.stateDir, { recursive: true });
+      const testLayer = ServerEnvironment.layer.pipe(
+        Layer.provide(emptySecretStoreLayer),
+        Layer.provide(Layer.succeed(ServerConfig.ServerConfig, serverConfig)),
+      );
+
+      const descriptor = yield* ServerEnvironment.ServerEnvironment.pipe(
+        Effect.flatMap((environment) => environment.getDescriptor),
+        Effect.provide(testLayer),
+      );
+
+      expect(descriptor.capabilities.cloudAllocations).toBe(true);
     }),
   );
 
