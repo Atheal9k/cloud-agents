@@ -1,6 +1,7 @@
 #!/bin/bash
 set -euo pipefail
 
+: "${CLAUDE_CODE_VERSION:?CLAUDE_CODE_VERSION is required}"
 : "${CODEX_VERSION:?CODEX_VERSION is required}"
 : "${IMAGE_VERSION:?IMAGE_VERSION is required}"
 : "${INSTALL_DESKTOP_DEPENDENCIES:?INSTALL_DESKTOP_DEPENDENCIES is required}"
@@ -45,6 +46,7 @@ tar --extract --file "/tmp/${node_archive}" --directory /usr/local --strip-compo
 rm -f "/tmp/${node_archive}"
 
 npm install --global --omit=dev --no-audit --no-fund \
+  "@anthropic-ai/claude-code@${CLAUDE_CODE_VERSION}" \
   "@openai/codex@${CODEX_VERSION}" \
   "t3@${T3_VERSION}"
 npm cache clean --force
@@ -67,6 +69,7 @@ jq --null-input \
   --arg source_ami_id "${SOURCE_AMI_ID}" \
   --arg node "${NODE_VERSION}" \
   --arg t3 "${T3_VERSION}" \
+  --arg claude_code "${CLAUDE_CODE_VERSION}" \
   --arg codex "${CODEX_VERSION}" \
   --argjson desktop_dependencies "${INSTALL_DESKTOP_DEPENDENCIES}" \
   '{
@@ -76,6 +79,7 @@ jq --null-input \
     runtime: {
       node: $node,
       t3: $t3,
+      claudeCode: $claude_code,
       codex: $codex
     },
     capabilities: {

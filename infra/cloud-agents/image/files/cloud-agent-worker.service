@@ -10,7 +10,9 @@ User=cloudagent
 Group=cloudagent
 WorkingDirectory=/work
 Environment=HOME=/home/cloudagent
+Environment=CLAUDE_CONFIG_DIR=/run/t3-worker/credentials/claude
 Environment=CODEX_HOME=/run/t3-worker/credentials/codex
+Environment=DISABLE_AUTOUPDATER=1
 Environment=NODE_ENV=production
 Environment=T3CODE_AUTO_BOOTSTRAP_PROJECT_FROM_CWD=0
 Environment=T3CODE_HOME=/var/lib/t3-worker/t3

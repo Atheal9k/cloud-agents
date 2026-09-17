@@ -13,10 +13,12 @@ fail() {
 
 expected_node="$(jq -r '.runtime.node' /opt/t3/worker-image-manifest.json)"
 expected_t3="$(jq -r '.runtime.t3' /opt/t3/worker-image-manifest.json)"
+expected_claude_code="$(jq -r '.runtime.claudeCode' /opt/t3/worker-image-manifest.json)"
 expected_codex="$(jq -r '.runtime.codex' /opt/t3/worker-image-manifest.json)"
 
 [[ "$(node --version)" == "v${expected_node}" ]] || fail "Node.js ${expected_node} is unavailable"
 [[ "$(t3 --version)" == *"${expected_t3}"* ]] || fail "T3 ${expected_t3} is unavailable"
+[[ "$(claude --version)" == *"${expected_claude_code}"* ]] || fail "Claude Code ${expected_claude_code} is unavailable"
 [[ "$(codex --version)" == *"${expected_codex}"* ]] || fail "Codex ${expected_codex} is unavailable"
 command -v git >/dev/null || fail "git is unavailable"
 command -v make >/dev/null || fail "make is unavailable"
@@ -31,7 +33,7 @@ for environment_file in /etc/t3/worker.env /run/t3-worker/runtime.env; do
   fi
 done
 
-install -d -m 0700 "${CODEX_HOME}"
+install -d -m 0700 "${CLAUDE_CONFIG_DIR}" "${CODEX_HOME}"
 
 metadata_url='http://169.254.169.254/latest/api/token'
 if curl --noproxy '*' --silent --show-error --fail --max-time 2 \

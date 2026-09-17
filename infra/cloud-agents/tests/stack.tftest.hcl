@@ -70,7 +70,7 @@ run "protected_plan" {
     worker_profiles = {
       linux-web = {
         ami_id               = "ami-0123456789abcdef0"
-        image_version        = "0.0.42-ca07.1"
+        image_version        = "0.0.42-ca07.2"
         instance_type        = "t3.medium"
         root_volume_size_gib = 30
       }
@@ -129,7 +129,7 @@ run "protected_plan" {
 
   assert {
     condition = alltrue([
-      strcontains(base64decode(aws_launch_template.worker["linux-web"].user_data), "0.0.42-ca07.1"),
+      strcontains(base64decode(aws_launch_template.worker["linux-web"].user_data), "0.0.42-ca07.2"),
       strcontains(base64decode(aws_launch_template.worker["linux-web"].user_data), "systemctl start cloud-agent-worker.service"),
       !strcontains(base64decode(aws_launch_template.worker["linux-web"].user_data), aws_s3_bucket.artifacts.id),
     ])
@@ -172,7 +172,7 @@ run "sandbox_apply" {
     worker_profiles = {
       linux-web = {
         ami_id               = "ami-0123456789abcdef0"
-        image_version        = "0.0.42-ca07.1"
+        image_version        = "0.0.42-ca07.2"
         instance_type        = "t3.medium"
         root_volume_size_gib = 30
       }

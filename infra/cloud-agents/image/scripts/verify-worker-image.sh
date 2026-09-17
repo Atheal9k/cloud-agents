@@ -8,6 +8,7 @@ fail() {
 
 [[ "$(node --version)" == "v${NODE_VERSION}" ]] || fail "Node.js version does not match"
 [[ "$(t3 --version)" == *"${T3_VERSION}"* ]] || fail "T3 version does not match"
+[[ "$(claude --version)" == *"${CLAUDE_CODE_VERSION}"* ]] || fail "Claude Code version does not match"
 [[ "$(codex --version)" == *"${CODEX_VERSION}"* ]] || fail "Codex version does not match"
 [[ "$(stat --format '%U:%G:%a' /var/lib/t3-worker/t3)" == "cloudagent:cloudagent:700" ]] \
   || fail "T3 state permissions are not isolated"

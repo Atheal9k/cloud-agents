@@ -22,7 +22,7 @@ variable "source_ami_id" {
 variable "image_version" {
   description = "Immutable worker image version recorded in the AMI and on launched instances."
   type        = string
-  default     = "0.0.42-ca07.1"
+  default     = "0.0.42-ca07.2"
 }
 
 variable "profile_name" {
@@ -55,6 +55,11 @@ variable "t3_version" {
 variable "codex_version" {
   type    = string
   default = "0.154.0"
+}
+
+variable "claude_code_version" {
+  type    = string
+  default = "2.1.273"
 }
 
 locals {
@@ -93,6 +98,7 @@ source "amazon-ebs" "worker" {
     NodeVersion                   = var.node_version
     T3Version                     = var.t3_version
     CodexVersion                  = var.codex_version
+    ClaudeCodeVersion             = var.claude_code_version
   }
 }
 
@@ -117,6 +123,7 @@ build {
 
   provisioner "shell" {
     environment_vars = [
+      "CLAUDE_CODE_VERSION=${var.claude_code_version}",
       "CODEX_VERSION=${var.codex_version}",
       "IMAGE_VERSION=${var.image_version}",
       "INSTALL_DESKTOP_DEPENDENCIES=${var.install_desktop_dependencies}",
@@ -132,6 +139,7 @@ build {
 
   provisioner "shell" {
     environment_vars = [
+      "CLAUDE_CODE_VERSION=${var.claude_code_version}",
       "CODEX_VERSION=${var.codex_version}",
       "INSTALL_DESKTOP_DEPENDENCIES=${var.install_desktop_dependencies}",
       "NODE_VERSION=${var.node_version}",

@@ -14,20 +14,20 @@ The controller still uses the configurable controller AMI. Workers require the v
 
 ## Worker image
 
-Packer 1.16.0 and the Amazon plugin 1.8.2 build the worker AMI. The template requires an exact Amazon Linux 2023 x86_64 source AMI ID. It pins Node.js 24.13.1, T3 0.0.42, and Codex 0.154.0, then records those versions and the installed RPM set in `/opt/t3`.
+Packer 1.16.0 and the Amazon plugin 1.8.2 build the worker AMI. The template requires an exact Amazon Linux 2023 x86_64 source AMI ID. It pins Node.js 24.13.1, T3 0.0.42, Codex 0.154.0, and Claude Code 2.1.273, then records those versions and the installed RPM set in `/opt/t3`.
 
 ```powershell
 packer init ./image
 packer validate -var "source_ami_id=ami-0123456789abcdef0" ./image
 packer build `
   -var "source_ami_id=ami-0123456789abcdef0" `
-  -var "image_version=0.0.42-ca07.1" `
+  -var "image_version=0.0.42-ca07.2" `
   ./image
 ```
 
 The default `linux-web` image has no mobile SDK, X server, or display-stream service. To prepare the dormant desktop library layer for the CA-34 shared-browser profile, build a separate image with `profile_name=linux-web-browser` and `install_desktop_dependencies=true`. This installs Xvfb and browser runtime libraries but does not install or start a streaming service.
 
-The image enables `cloud-agent-worker.service`. T3 and every child process run as `cloudagent` in one systemd cgroup. The unit drops capabilities, blocks EC2 metadata for the cgroup, restricts writable paths, kills the whole cgroup on stop, and clears `/run/t3-worker/credentials` after success or failure. Its preflight checks the pinned tools and confirms an IMDSv2 token cannot be obtained before T3 starts. The worker role has no access to the controller's Git or GitHub secrets.
+The image enables `cloud-agent-worker.service`. T3, Codex, Claude Code, and every child process run as `cloudagent` in one systemd cgroup. Claude Code uses `/run/t3-worker/credentials/claude` and does not check for automatic updates. The unit drops capabilities, blocks EC2 metadata for the cgroup, restricts writable paths, kills the whole cgroup on stop, and clears `/run/t3-worker/credentials` after success or failure. Its preflight checks the pinned tools and confirms an IMDSv2 token cannot be obtained before T3 starts. The worker role has no access to the controller's Git or GitHub secrets.
 
 Copy the AMI ID and matching `image_version` into the selected `worker_profiles` entry before applying OpenTofu. To roll back, restore the prior pair and apply again. OpenTofu creates a new launch-template version for future workers; an active worker keeps the AMI and toolchain it launched with.
 
