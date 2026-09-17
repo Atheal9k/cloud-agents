@@ -138,6 +138,33 @@ On Linux, the mounted workspace must be writable by uid `10001`. Git, OpenSSH, t
 the GitHub CLI are already in the controller image. Any provider-specific binary and its runtime
 dependencies belong in the derived image, not in the workspace or controller state volume.
 
+### Retained cloud results
+
+The controller stores completed cloud-run captures below `userdata/cloud-results` in the persistent
+data volume. Each capture has the authoritative T3 thread transcript, the repository base revision,
+a full diff, verification output, a Git workspace checkpoint, and the declared artifact files. Open
+the result path returned at finalization to review the diff and verification output or download the
+files. The page and every download require an authenticated T3 session with orchestration read
+access.
+
+The controller keeps a capture for seven days. One capture may contain at most 64 declared artifacts
+and 256 MiB in total. A single artifact may be 64 MiB, while the transcript is limited to 32 MiB and
+the diff and verification output to 16 MiB each. A limit failure remains visible but is not retryable
+without changing the retained input. Other storage failures are retryable until the worker's hard
+compute deadline. Finalization reports success only after the controller atomically commits the
+capture to its persistent volume.
+
+The workspace checkpoint includes changed tracked files and non-ignored untracked files. Git-ignored
+files, provider profiles, and controller credentials are not copied. Retention also refuses common
+credential filenames such as `.env`, `.npmrc`, private keys, and provider authentication files when
+they appear in the changed workspace. The transcript and workspace are captured during one bounded
+finalization window, not in one cross-filesystem transaction. Changes made after capture starts may
+miss one part of the result; the result page records the start and completion times for that window.
+
+Recovery is explicit. Fence the old allocation attempt first, then restore its workspace checkpoint
+into a new allocation and start a linked T3 continuation. Recovery does not revive an interrupted
+process or claim that an unsupported provider session resumed.
+
 ## Backup and restore
 
 Use a cold backup. This provides one SQLite writer and captures settings, secrets, identity, and

@@ -28,6 +28,7 @@ import {
   serverEnvironmentHttpApiLayer,
   staticAndDevRouteLayer,
   browserApiCorsLayer,
+  cloudResultRouteLayer,
   httpCompressionLayer,
 } from "./http.ts";
 import { guardHttpResponseWriteErrors } from "./httpResponseErrorGuard.ts";
@@ -137,6 +138,7 @@ import * as CloudWorkerProvider from "./cloud/CloudWorkerProvider.ts";
 import * as CloudGitCredentials from "./cloud/CloudGitCredentials.ts";
 import * as CloudRepositoryPreparation from "./cloud/CloudRepositoryPreparation.ts";
 import * as CloudProviderExecution from "./cloud/CloudProviderExecution.ts";
+import * as CloudRunResults from "./cloud/CloudRunResults.ts";
 import * as ServerSelfUpdate from "./cloud/selfUpdate.ts";
 import * as DesktopAppUpdate from "./desktopUpdate/DesktopAppUpdate.ts";
 import * as ServiceLauncherClient from "./cloud/serviceLauncherClient.ts";
@@ -579,7 +581,9 @@ const RuntimeCoreDependenciesBaseLive = ReactorLayerLive.pipe(
   ),
 );
 
-const RuntimeCoreDependenciesLive = CloudProviderExecution.layer.pipe(
+const RuntimeCoreDependenciesLive = CloudRunResults.layer.pipe(
+  Layer.provideMerge(CloudProviderExecution.layer),
+  Layer.provideMerge(CloudAllocationControllerLayerLive),
   Layer.provideMerge(RuntimeCoreDependenciesBaseLive),
 );
 
@@ -618,6 +622,7 @@ export const makeRoutesLayer = Layer.mergeAll(
     otlpTracesProxyRouteLayer,
     assetRouteLayer,
     attachmentUploadRouteLayer,
+    cloudResultRouteLayer,
     deviceHubProxyRouteLayer,
     staticAndDevRouteLayer,
     websocketRpcRouteLayer,

@@ -2,6 +2,8 @@ import Mime from "@effect/platform-node/Mime";
 import {
   AuthOrchestrationOperateScope,
   AuthOrchestrationReadScope,
+  CloudRunResultId,
+  type CloudResultRetentionStatus,
   EnvironmentHttpApi,
 } from "@t3tools/contracts";
 import { isDevProxiedPath } from "@t3tools/shared/devProxy";
@@ -39,6 +41,7 @@ import {
 import * as BrowserTraceCollector from "./observability/BrowserTraceCollector.ts";
 import * as EnvironmentAuth from "./auth/EnvironmentAuth.ts";
 import { traceRelayRequest } from "./cloud/traceRelayRequest.ts";
+import * as CloudRunResults from "./cloud/CloudRunResults.ts";
 import {
   annotateEnvironmentRequest,
   failEnvironmentScopeRequired,
@@ -56,6 +59,10 @@ const SVG_CONTENT_SECURITY_POLICY = "default-src 'none'; style-src 'unsafe-inlin
 // opaque origin: scripts run, but same-origin cookies, storage, and API calls are
 // out of reach. Relative sibling assets still load through their signed URLs.
 const HTML_CONTENT_SECURITY_POLICY = "sandbox allow-scripts allow-forms allow-popups allow-modals";
+const CLOUD_RESULT_PAGE_PREFIX = "/cloud/results/";
+const CLOUD_RESULT_DOWNLOAD_PREFIX = "/api/cloud/results/";
+const CLOUD_RESULT_INLINE_TEXT_LIMIT = 512 * 1024;
+const decodeCloudResultId = Schema.decodeUnknownOption(CloudRunResultId);
 
 // Types a browser may render as a document if a proxy strips the disposition
 // header. Downloads of these fall back to octet-stream.
@@ -290,6 +297,133 @@ const authenticateRawRouteWithScope = (
       return yield* failEnvironmentScopeRequired(scope);
     }
   });
+
+function escapeHtml(value: string): string {
+  return value
+    .replaceAll("&", "&amp;")
+    .replaceAll("<", "&lt;")
+    .replaceAll(">", "&gt;")
+    .replaceAll('"', "&quot;")
+    .replaceAll("'", "&#39;");
+}
+
+function boundedCloudResultPreview(value: string): string {
+  return value.length <= CLOUD_RESULT_INLINE_TEXT_LIMIT
+    ? value
+    : `${value.slice(0, CLOUD_RESULT_INLINE_TEXT_LIMIT)}\n\n[Preview truncated. Download the file for the complete output.]`;
+}
+
+export function renderCloudResultPage(input: {
+  readonly status: CloudResultRetentionStatus;
+  readonly diff?: string;
+  readonly verification?: string;
+}): string {
+  const title = "Cloud run result";
+  if (input.status.status === "retaining") {
+    return `<!doctype html><html><head><meta charset="utf-8"><title>${title}</title></head><body><main><h1>${title}</h1><p>Retention is still in progress.</p></main></body></html>`;
+  }
+  if (input.status.status === "failed") {
+    return `<!doctype html><html><head><meta charset="utf-8"><title>${title}</title></head><body><main><h1>${title}</h1><p>Retention failed.</p><p>${escapeHtml(input.status.message)}</p><p>${input.status.retryable ? "The controller can retry this capture." : "This capture cannot be retried after the compute deadline or a size-policy failure."}</p></main></body></html>`;
+  }
+
+  const manifest = input.status.manifest;
+  const artifactLinks = manifest.artifacts
+    .map(
+      (artifact) =>
+        `<li><a href="${escapeHtml(artifact.downloadPath)}">${escapeHtml(artifact.name)}</a> (${artifact.sizeBytes} bytes)</li>`,
+    )
+    .join("");
+  return `<!doctype html><html><head><meta charset="utf-8"><title>${title}</title></head><body><main><h1>${title}</h1><dl><dt>Repository base</dt><dd><code>${escapeHtml(manifest.baseCommit)}</code></dd><dt>Output branch</dt><dd><code>${escapeHtml(manifest.outputBranch)}</code></dd><dt>Capture window</dt><dd>${escapeHtml(manifest.captureStartedAt)} to ${escapeHtml(manifest.capturedAt)}</dd><dt>Expires</dt><dd>${escapeHtml(manifest.expiresAt)}</dd></dl><p><a href="${escapeHtml(manifest.workspaceDownloadPath)}">Download workspace checkpoint</a> · <a href="${escapeHtml(manifest.transcriptDownloadPath)}">Download transcript</a> · <a href="${escapeHtml(manifest.verificationDownloadPath)}">Download verification log</a> · <a href="${escapeHtml(manifest.diffDownloadPath)}">Download diff</a></p><h2>Diff</h2><pre>${escapeHtml(boundedCloudResultPreview(input.diff ?? ""))}</pre><h2>Verification</h2><pre>${escapeHtml(boundedCloudResultPreview(input.verification ?? ""))}</pre><h2>Artifacts</h2>${artifactLinks.length > 0 ? `<ul>${artifactLinks}</ul>` : "<p>No artifacts were retained.</p>"}</main></body></html>`;
+}
+
+function parseCloudResultPageId(pathname: string): CloudRunResultId | undefined {
+  const suffix = pathname.slice(CLOUD_RESULT_PAGE_PREFIX.length);
+  if (suffix.includes("/")) return undefined;
+  return Option.getOrUndefined(decodeCloudResultId(suffix));
+}
+
+function parseCloudResultDownload(pathname: string) {
+  const suffix = pathname.slice(CLOUD_RESULT_DOWNLOAD_PREFIX.length);
+  const [resultIdInput, segment, fileId, ...rest] = suffix.split("/");
+  if (segment !== "downloads" || !fileId || rest.length > 0) return undefined;
+  const resultId = Option.getOrUndefined(decodeCloudResultId(resultIdInput));
+  return resultId === undefined || !/^[a-z0-9-]+$/.test(fileId) ? undefined : { resultId, fileId };
+}
+
+const handleCloudResultPage = Effect.gen(function* () {
+  yield* authenticateRawRouteWithScope(AuthOrchestrationReadScope);
+  const request = yield* HttpServerRequest.HttpServerRequest;
+  const url = HttpServerRequest.toURL(request);
+  if (Option.isNone(url)) return HttpServerResponse.text("Bad Request", { status: 400 });
+  const resultId = parseCloudResultPageId(url.value.pathname);
+  if (resultId === undefined) return HttpServerResponse.text("Not Found", { status: 404 });
+  const results = yield* CloudRunResults.CloudRunResults;
+  const status = yield* results.status(resultId).pipe(Effect.option);
+  if (Option.isNone(status)) return HttpServerResponse.text("Not Found", { status: 404 });
+  let texts: readonly [string, string] = ["", ""];
+  if (status.value.status === "retained") {
+    const retainedTexts = yield* Effect.all(
+      [results.readText(resultId, "diff"), results.readText(resultId, "verification")],
+      { concurrency: "unbounded" },
+    ).pipe(Effect.option);
+    if (Option.isNone(retainedTexts)) {
+      return HttpServerResponse.text("Retained result is unavailable.", { status: 500 });
+    }
+    texts = retainedTexts.value;
+  }
+  return HttpServerResponse.text(
+    renderCloudResultPage({ status: status.value, diff: texts[0], verification: texts[1] }),
+    {
+      contentType: "text/html; charset=utf-8",
+      headers: {
+        "cache-control": "private, no-store",
+        "content-security-policy": "default-src 'none'; style-src 'none'; base-uri 'none'",
+        "x-content-type-options": "nosniff",
+      },
+    },
+  );
+}).pipe(
+  Effect.catchTags({
+    EnvironmentAuthInvalidError: HttpServerRespondable.toResponse,
+    EnvironmentInternalError: HttpServerRespondable.toResponse,
+    EnvironmentScopeRequiredError: HttpServerRespondable.toResponse,
+  }),
+);
+
+const handleCloudResultDownload = Effect.gen(function* () {
+  yield* authenticateRawRouteWithScope(AuthOrchestrationReadScope);
+  const request = yield* HttpServerRequest.HttpServerRequest;
+  const url = HttpServerRequest.toURL(request);
+  if (Option.isNone(url)) return HttpServerResponse.text("Bad Request", { status: 400 });
+  const target = parseCloudResultDownload(url.value.pathname);
+  if (target === undefined) return HttpServerResponse.text("Not Found", { status: 404 });
+  const results = yield* CloudRunResults.CloudRunResults;
+  const download = yield* results
+    .resolveDownload(target.resultId, target.fileId)
+    .pipe(Effect.option);
+  if (Option.isNone(download)) return HttpServerResponse.text("Not Found", { status: 404 });
+  return yield* HttpServerResponse.file(download.value.path, {
+    headers: {
+      ...assetResponseHeaders(download.value.path, {
+        download: true,
+        fileName: download.value.fileName,
+        mimeType: download.value.mediaType,
+      }),
+      "Cache-Control": "private, no-store",
+    },
+  }).pipe(Effect.orElseSucceed(() => HttpServerResponse.text("Not Found", { status: 404 })));
+}).pipe(
+  Effect.catchTags({
+    EnvironmentAuthInvalidError: HttpServerRespondable.toResponse,
+    EnvironmentInternalError: HttpServerRespondable.toResponse,
+    EnvironmentScopeRequiredError: HttpServerRespondable.toResponse,
+  }),
+);
+
+export const cloudResultRouteLayer = Layer.mergeAll(
+  HttpRouter.add("GET", `${CLOUD_RESULT_PAGE_PREFIX}*`, handleCloudResultPage),
+  HttpRouter.add("GET", `${CLOUD_RESULT_DOWNLOAD_PREFIX}*`, handleCloudResultDownload),
+);
 
 export const serverEnvironmentHttpApiLayer = HttpApiBuilder.group(
   EnvironmentHttpApi,
