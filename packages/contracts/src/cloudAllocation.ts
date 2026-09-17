@@ -1,3 +1,4 @@
+import * as Effect from "effect/Effect";
 import * as Schema from "effect/Schema";
 
 import {
@@ -85,6 +86,22 @@ export const RunResultLocation = Schema.Struct({
   uri: TrimmedNonEmptyString,
 });
 export type RunResultLocation = typeof RunResultLocation.Type;
+
+export const RunPublicationIntent = Schema.Union([
+  Schema.Struct({ mode: Schema.Literal("review-only") }),
+  Schema.Struct({
+    mode: Schema.Literal("automatic-draft-pr"),
+    baseBranch: TrimmedNonEmptyString,
+    title: TrimmedNonEmptyString,
+    body: Schema.String,
+  }),
+]);
+export type RunPublicationIntent = typeof RunPublicationIntent.Type;
+
+const defaultPublicationIntent = RunPublicationIntent.make({ mode: "review-only" });
+const RunPublicationIntentWithDefault = RunPublicationIntent.pipe(
+  Schema.withDecodingDefault(Effect.succeed(defaultPublicationIntent)),
+);
 
 export const RunRetryStartPoint = Schema.Union([
   Schema.Struct({
@@ -201,6 +218,7 @@ export const RunAllocation = Schema.Struct({
   id: RunAllocationId,
   attempt: RunAllocationAttempt,
   target: RunRepositoryTarget,
+  publication: RunPublicationIntentWithDefault,
   profile: RunWorkerProfile,
   deadlines: RunDeadlines,
   allocationState: RunAllocationState,
@@ -231,6 +249,7 @@ export const RunAllocationCommand = Schema.Union([
     ...AttemptCommandBase,
     type: Schema.Literal("allocation.launch"),
     target: RunRepositoryTarget,
+    publication: RunPublicationIntentWithDefault,
     profile: RunWorkerProfile,
     deadlines: RunDeadlines,
   }),
@@ -318,6 +337,8 @@ export const RunAllocationEvent = Schema.Union([
     ...EventBase,
     type: Schema.Literal("allocation.requested"),
     target: RunRepositoryTarget,
+    /** Missing on allocation events written before CA-16. */
+    publication: Schema.optionalKey(RunPublicationIntent),
     profile: RunWorkerProfile,
     deadlines: RunDeadlines,
   }),

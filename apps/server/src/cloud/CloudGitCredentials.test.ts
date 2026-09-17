@@ -210,6 +210,105 @@ it.layer(NodeServices.layer)("CloudGitCredentials", (it) => {
     }),
   );
 
+  it.effect("inspects the recorded remote branch before publication", () =>
+    Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const path = yield* Path.Path;
+      const root = yield* fs.makeTempDirectoryScoped({ prefix: "t3-cloud-git-inspect-" });
+      let gitInput: ProcessRunner.ProcessRunInput | undefined;
+      const commit = "a".repeat(40);
+      const runner = ProcessRunner.ProcessRunner.of({
+        run: (input) => {
+          if (input.command === "aws") return Effect.succeed(processOutput({ stdout: privateKey }));
+          if (input.command === "ssh-keygen") return Effect.succeed(processOutput());
+          gitInput = input;
+          return Effect.succeed(
+            processOutput({ stdout: `${commit}\trefs/heads/cloud/run/inspect\n` }),
+          );
+        },
+      });
+      const credentials = yield* make({
+        credentialRoot: path.join(root, "credentials"),
+        sshSecretRef: "cloud-agent-victor-key",
+        githubTokenSecretRef: undefined,
+      }).pipe(Effect.provideService(ProcessRunner.ProcessRunner, runner));
+
+      expect(
+        yield* credentials.readBranch({
+          runId: "allocation-inspect",
+          repository: "Atheal9k/cloud-agents",
+          branch: "cloud/run/inspect",
+        }),
+      ).toBe(commit);
+      expect(gitInput?.args).toEqual([
+        "ls-remote",
+        "--heads",
+        "--exit-code",
+        "--",
+        "ssh://git@ssh.github.com:443/Atheal9k/cloud-agents.git",
+        "refs/heads/cloud/run/inspect",
+      ]);
+    }),
+  );
+
+  it.effect("finds an existing pull request with the isolated controller token", () =>
+    Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const path = yield* Path.Path;
+      const root = yield* fs.makeTempDirectoryScoped({ prefix: "t3-cloud-pr-inspect-" });
+      let githubInput: ProcessRunner.ProcessRunInput | undefined;
+      const runner = ProcessRunner.ProcessRunner.of({
+        run: (input) => {
+          if (input.command === "aws") {
+            return Effect.succeed(processOutput({ stdout: "ghp_test" }));
+          }
+          githubInput = input;
+          return Effect.succeed(
+            processOutput({
+              stdout:
+                '[{"number":42,"html_url":"https://github.com/Atheal9k/cloud-agents/pull/42"}]',
+            }),
+          );
+        },
+      });
+      const credentials = yield* make({
+        credentialRoot: path.join(root, "credentials"),
+        sshSecretRef: undefined,
+        githubTokenSecretRef: "cloud-agent-github-token",
+      }).pipe(Effect.provideService(ProcessRunner.ProcessRunner, runner));
+
+      expect(
+        yield* credentials.findPullRequest({
+          runId: "allocation-pr-inspect",
+          repository: "Atheal9k/cloud-agents",
+          base: "main",
+          head: "cloud/run/inspect",
+        }),
+      ).toEqual({
+        number: 42,
+        url: "https://github.com/Atheal9k/cloud-agents/pull/42",
+      });
+      expect(githubInput?.args).toEqual([
+        "api",
+        "--hostname",
+        "github.com",
+        "--method",
+        "GET",
+        "repos/Atheal9k/cloud-agents/pulls",
+        "-f",
+        "state=open",
+        "-f",
+        "head=Atheal9k:cloud/run/inspect",
+        "-f",
+        "base=main",
+        "-f",
+        "per_page=1",
+      ]);
+      expect(githubInput?.env?.GH_TOKEN).toBe("ghp_test");
+      expect(githubInput?.env?.GITHUB_TOKEN).toBe("ghp_test");
+    }),
+  );
+
   it.effect("creates a draft PR with the controller token and no gh login state", () =>
     Effect.gen(function* () {
       const fs = yield* FileSystem.FileSystem;

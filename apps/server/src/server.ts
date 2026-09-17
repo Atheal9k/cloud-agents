@@ -139,6 +139,7 @@ import * as CloudGitCredentials from "./cloud/CloudGitCredentials.ts";
 import * as CloudRepositoryPreparation from "./cloud/CloudRepositoryPreparation.ts";
 import * as CloudProviderExecution from "./cloud/CloudProviderExecution.ts";
 import * as CloudRunControl from "./cloud/CloudRunControl.ts";
+import * as CloudRunPublication from "./cloud/CloudRunPublication.ts";
 import * as CloudRunResults from "./cloud/CloudRunResults.ts";
 import * as ServerSelfUpdate from "./cloud/selfUpdate.ts";
 import * as DesktopAppUpdate from "./desktopUpdate/DesktopAppUpdate.ts";
@@ -307,6 +308,12 @@ const CloudGitCredentialsLayerLive = CloudGitCredentials.layer.pipe(
 const CloudRepositoryPreparationLayerLive = CloudRepositoryPreparation.layer.pipe(
   Layer.provide(ProcessRunner.layer),
   Layer.provideMerge(CloudGitCredentialsLayerLive),
+);
+
+const CloudRunPublicationLayerLive = CloudRunPublication.layer.pipe(
+  Layer.provide(ProcessRunner.layer),
+  Layer.provideMerge(CloudGitCredentialsLayerLive),
+  Layer.provideMerge(CloudAllocationControllerLayerLive),
 );
 
 const VcsDriverRegistryLayerLive = VcsDriverRegistry.layer.pipe(
@@ -578,6 +585,7 @@ const RuntimeCoreDependenciesBaseLive = ReactorLayerLive.pipe(
       ),
       CloudManagedEndpointRuntimeLive,
       CloudRepositoryPreparationLayerLive,
+      CloudRunPublicationLayerLive,
     ),
   ),
 );

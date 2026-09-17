@@ -151,6 +151,24 @@ describe("cloud allocation transitions", () => {
     );
   });
 
+  it("retains the launch publication choice in controller state", () => {
+    const automaticLaunch = command({
+      ...launch,
+      commandId: "command-automatic-publication",
+      publication: {
+        mode: "automatic-draft-pr",
+        baseBranch: "main",
+        title: "feat(cloud): publish a draft PR",
+        body: "Controller-owned publication.",
+      },
+    });
+
+    const launched = applyAccepted(undefined, automaticLaunch);
+
+    expect(launched.event).toMatchObject({ publication: automaticLaunch.publication });
+    expect(launched.allocation.publication).toEqual(automaticLaunch.publication);
+  });
+
   it("lets the first side of a cancellation race decide the agent outcome", () => {
     const cancel = command({
       type: "allocation.cancel",
