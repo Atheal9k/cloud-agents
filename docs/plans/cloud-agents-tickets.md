@@ -1,6 +1,6 @@
 # Cloud agents for T3 Code: implementation tickets
 
-Revised 17 September 2026. Planning only. This revision makes the existing local T3 environment the first controller host, moves permanent hosting behind a proven local workflow, defers the native T3 mobile app, and includes Android emulator and iOS Simulator workers. No application code, AWS deployment, app publication, or issue creation is authorized by this document.
+Revised 17 September 2026. Planning only. This revision makes the existing local T3 environment the first controller host, adds Docker packaging for local and permanent controller hosting, moves permanent hosting behind a proven local workflow, defers the native T3 mobile app, and includes Android emulator and iOS Simulator workers. No application code, AWS deployment, app publication, or issue creation is authorized by this document.
 
 ## Agreed scope
 
@@ -23,7 +23,7 @@ Your own mobile app development is a separate requirement. The next committed de
 
 ### Use local T3 first, then add one permanent entry point
 
-The controller serves the UI, authentication, a small worker-allocation catalog, infrastructure operations, and retained-result access. CA-04A runs that controller in the existing local T3 environment so the cloud workflow can be built and used before another always-on server exists. CA-04B later moves the same responsibilities to EC2 with stable DNS, TLS, durable storage, and service auto-start. Repository code executes on workers, not with either controller host's permissions.
+The controller serves the UI, authentication, a small worker-allocation catalog, infrastructure operations, and retained-result access. CA-04A runs that controller in the existing local T3 environment so the cloud workflow can be built and used before another always-on server exists. CA-04C packages that controller and its web application in Docker for local use. CA-04B later runs the same image on EC2 with stable DNS, TLS, durable storage, and service auto-start. Repository code executes on workers, not with either controller host's permissions.
 
 CA-01 must prove the smallest extension of T3's existing environment model before fixing a new execution protocol. The starting candidate is an ordinary T3 environment on a worker, reached through existing typed RPC and subscriptions. Reuse its provider adapters, project/thread ownership, event store, terminal, checkpoints, and permissions.
 
@@ -91,17 +91,17 @@ The repo also has an [iOS simulator streaming workflow](C:/Users/Victor/Desktop/
 
 ## Delivery order and scope boundaries
 
-Existing ticket IDs are preserved except CA-04, which is split into CA-04A and CA-04B. CA-37 to CA-39 are new. Order below is intentional; ticket numbering does not indicate priority.
+Existing ticket IDs are preserved except CA-04, which is split into CA-04A and CA-04B. CA-04C adds Docker deployment before CA-06; CA-37 to CA-39 add mobile workers. Order below is intentional; ticket numbering does not indicate priority.
 
-| Delivery                           | Tickets                                                                                                                                            | Required result                                                                                                                     |
-| ---------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------- |
-| Architecture proof                 | CA-01                                                                                                                                              | Select one provider and prove T3 reuse, ownership, offline execution, and the basic worker route.                                   |
-| Local-hosted web/desktop release   | CA-02, CA-03, CA-04A, CA-06, CA-07, CA-08, CA-09, CA-10, CA-11, CA-14, CA-15, CA-16, CA-17, CA-18, CA-19, CA-23, CA-24, CA-25, CA-27, CA-34, CA-35 | Run the complete single-worker workflow from the existing local T3 environment. The controller machine must remain online.          |
-| Permanent controller deployment    | CA-04B                                                                                                                                             | Move the proven controller to an always-on EC2 host with stable access, safe state cutover, and no dependency on the local machine. |
-| Review and operations improvements | CA-05, CA-12, CA-13, CA-21, CA-33, CA-36                                                                                                           | Add richer setup, history, review retention/reopen, and remote administration without expanding provider scope.                     |
-| Mobile development workers         | CA-37, CA-38, CA-39                                                                                                                                | Build, boot, view, control, and test your Android/iOS app from web/desktop; no T3 native-app publication.                           |
-| Optional product expansion         | CA-26, CA-28, CA-29, CA-30, CA-31, CA-32                                                                                                           | Add handoff, automation, assistants, additional providers, and private-network/dependency support.                                  |
-| Deferred native T3 app work        | CA-20, CA-22                                                                                                                                       | Add native T3 iOS/Android client and push integration only when you choose to maintain and distribute those builds.                 |
+| Delivery                           | Tickets                                                                                                                                                    | Required result                                                                                                                     |
+| ---------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------- |
+| Architecture proof                 | CA-01                                                                                                                                                      | Select one provider and prove T3 reuse, ownership, offline execution, and the basic worker route.                                   |
+| Local-hosted web/desktop release   | CA-02, CA-03, CA-04A, CA-04C, CA-06, CA-07, CA-08, CA-09, CA-10, CA-11, CA-14, CA-15, CA-16, CA-17, CA-18, CA-19, CA-23, CA-24, CA-25, CA-27, CA-34, CA-35 | Run the complete single-worker workflow from the local Docker controller. The controller machine must remain online.                |
+| Permanent controller deployment    | CA-04B                                                                                                                                                     | Move the proven controller to an always-on EC2 host with stable access, safe state cutover, and no dependency on the local machine. |
+| Review and operations improvements | CA-05, CA-12, CA-13, CA-21, CA-33, CA-36                                                                                                                   | Add richer setup, history, review retention/reopen, and remote administration without expanding provider scope.                     |
+| Mobile development workers         | CA-37, CA-38, CA-39                                                                                                                                        | Build, boot, view, control, and test your Android/iOS app from web/desktop; no T3 native-app publication.                           |
+| Optional product expansion         | CA-26, CA-28, CA-29, CA-30, CA-31, CA-32                                                                                                                   | Add handoff, automation, assistants, additional providers, and private-network/dependency support.                                  |
+| Deferred native T3 app work        | CA-20, CA-22                                                                                                                                               | Add native T3 iOS/Android client and push integration only when you choose to maintain and distribute those builds.                 |
 
 Mobile development is committed follow-on scope, not dependent on the optional product expansion or deferred native T3 app work. Run platform feasibility checks early before spending time on simulator UI. Android and iOS can be implemented independently; CA-39 passes separately for each and both must pass before claiming support for both platforms.
 
@@ -181,9 +181,26 @@ Acceptance criteria:
 - Controller restart recovers durable intent and acknowledged results from the local T3 state directory. A consistent backup/restore is demonstrated without copying a live SQLite file unsafely.
 - No stable public DNS, permanent TLS endpoint, production T3 Connect service, or EC2 controller is required for this ticket. Worker connectivity through NAT or a protected tunnel belongs to CA-09.
 
+### CA-04C: Package the controller for local and permanent Docker deployment
+
+Dependencies: CA-04A.
+
+Description: Add a production Docker image and Compose configuration for the T3 controller and built web application. Run it locally first, then reuse the same versioned image for the permanent EC2 controller in CA-04B. The existing development container remains contributor tooling.
+
+Acceptance criteria:
+
+- A reproducible Dockerfile builds this fork's server and web assets from a pinned revision with the required runtime dependencies. The image runs as a non-root user and serves the built application without a development server.
+- A documented Compose command starts the local controller on Windows with Docker Desktop and on Linux, with health checks, graceful shutdown, and a restart policy. Closing the client leaves it running; the host and Docker engine must remain online.
+- An explicit persistent volume holds T3 identity, settings, secrets, and SQLite state with working ownership/permissions. Container recreation and image upgrades preserve acknowledged allocations and results. Backup/restore and migration from an existing local controller use a consistent snapshot and a deliberate single-writer cutover; verification uses disposable state.
+- AWS and provider credentials arrive through protected runtime configuration or mounted credential files, never image layers or committed Compose values. Validate the selected provider's authentication flow across the container boundary. Add GitHub authentication through the same mechanism in CA-06.
+- Web and desktop clients connect to the container as an ordinary T3 environment. Local pairing, HTTP/WebSocket traffic, and configurable remote access work without baked localhost origins. CA-09 validates worker registration and preview routing against this container, including NAT/tunnel access.
+- Document explicit workspace mounts and required CLI dependencies for any supported local provider execution. Cloud task execution stays on workers; the controller needs neither a privileged container nor the host Docker socket.
+- Versioned image builds support local loading and registry publication for CA-04B. Document update, consistent backup, restore, and rollback procedures, including schema compatibility limits; verify restart and restore with durable controller state.
+- CA-04B reuses this image and state layout with host-specific runtime configuration. Linux worker images, Android emulator hosts, and macOS Simulator hosts remain separate concerns in CA-07/CA-37/CA-38. Kubernetes and additional hosting platforms are outside this ticket.
+
 ### CA-06: Supply protected Git and GitHub credentials
 
-Dependencies: CA-03, CA-04A.
+Dependencies: CA-03, CA-04A, CA-04C.
 
 Description: Reuse the prototype's controlled clone/push boundary and configure GitHub API access on the active controller for draft PR creation.
 
@@ -447,9 +464,9 @@ Acceptance criteria:
 
 ### CA-04B: Move the proven controller to a permanent T3 host
 
-Dependencies: CA-03, CA-04A, CA-23, CA-24.
+Dependencies: CA-03, CA-04A, CA-04C, CA-23, CA-24.
 
-Description: Move the controller proven by CA-23 to one always-on EC2 instance. Keep the local and permanent modes on the same T3 code path.
+Description: Move the controller proven by CA-23 to one always-on EC2 instance using the versioned Docker image and persistent state layout from CA-04C. Keep the local and permanent modes on the same T3 code path.
 
 Acceptance criteria:
 
