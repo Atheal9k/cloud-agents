@@ -4,6 +4,7 @@ import * as NodeServices from "@effect/platform-node/NodeServices";
 import { assert, it } from "@effect/vitest";
 import {
   CommandId,
+  CloudProviderUnansweredRequestSeconds,
   CloudResultRetentionStatus,
   CloudRunResultId,
   EnvironmentId,
@@ -178,12 +179,15 @@ it.layer(TestLayer)("CloudRunResults", (it) => {
           modelSelection: request.turn.modelSelection,
           runtimeMode: request.turn.runtimeMode,
           interactionMode: request.turn.interactionMode,
+          unansweredRequestSeconds: request.unansweredRequestSeconds,
           acceptedSequence: 77,
           startedAt: request.turn.createdAt,
         });
       },
       followUp: () => Effect.die("not used"),
       interrupt: () => Effect.die("not used"),
+      approve: () => Effect.die("not used"),
+      answer: () => Effect.die("not used"),
     });
     const results = yield* make({
       resultsRoot,
@@ -273,6 +277,7 @@ it.layer(TestLayer)("CloudRunResults", (it) => {
           destinationWorkspacePath: continuationWorkspace,
           threadId: ThreadId.make("thread-result-continuation"),
           title: "Continue retained result",
+          unansweredRequestSeconds: CloudProviderUnansweredRequestSeconds.make(900),
           turn: {
             commandId: CommandId.make("continue-retained-result"),
             messageId: MessageId.make("continue-retained-result-message"),

@@ -322,6 +322,8 @@ Acceptance criteria:
 
 Dependencies: CA-02, CA-09, CA-11, CA-14.
 
+Status: Done on 17 September 2026 in [PR #13](https://github.com/Atheal9k/cloud-agents/pull/13).
+
 Description: Reuse ordinary T3 controls on the cloud session, with explicit lifecycle behavior when the worker has gone away.
 
 Acceptance criteria:

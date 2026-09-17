@@ -138,6 +138,7 @@ import * as CloudWorkerProvider from "./cloud/CloudWorkerProvider.ts";
 import * as CloudGitCredentials from "./cloud/CloudGitCredentials.ts";
 import * as CloudRepositoryPreparation from "./cloud/CloudRepositoryPreparation.ts";
 import * as CloudProviderExecution from "./cloud/CloudProviderExecution.ts";
+import * as CloudRunControl from "./cloud/CloudRunControl.ts";
 import * as CloudRunResults from "./cloud/CloudRunResults.ts";
 import * as ServerSelfUpdate from "./cloud/selfUpdate.ts";
 import * as DesktopAppUpdate from "./desktopUpdate/DesktopAppUpdate.ts";
@@ -581,7 +582,8 @@ const RuntimeCoreDependenciesBaseLive = ReactorLayerLive.pipe(
   ),
 );
 
-const RuntimeCoreDependenciesLive = CloudRunResults.layer.pipe(
+const RuntimeCoreDependenciesLive = CloudRunControl.layer.pipe(
+  Layer.provideMerge(CloudRunResults.layer),
   Layer.provideMerge(CloudProviderExecution.layer),
   Layer.provideMerge(CloudAllocationControllerLayerLive),
   Layer.provideMerge(RuntimeCoreDependenciesBaseLive),

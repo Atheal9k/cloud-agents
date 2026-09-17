@@ -170,6 +170,10 @@ export const RunWorkerId = makeEntityId("RunWorkerId");
 export type RunWorkerId = typeof RunWorkerId.Type;
 export const RunAllocationAttempt = PositiveInt.pipe(Schema.brand("RunAllocationAttempt"));
 export type RunAllocationAttempt = typeof RunAllocationAttempt.Type;
+export const CloudRunResultId = Schema.String.check(Schema.isPattern(/^[a-f0-9]{64}$/)).pipe(
+  Schema.brand("CloudRunResultId"),
+);
+export type CloudRunResultId = typeof CloudRunResultId.Type;
 export const ApprovalRequestId = makeEntityId("ApprovalRequestId");
 export type ApprovalRequestId = typeof ApprovalRequestId.Type;
 export const CheckpointRef = makeEntityId("CheckpointRef");
