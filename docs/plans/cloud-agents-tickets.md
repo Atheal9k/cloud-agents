@@ -338,6 +338,8 @@ Acceptance criteria:
 
 Dependencies: CA-06, CA-10, CA-11, CA-14, CA-15.
 
+Status: Done on 17 September 2026 in [PR #14](https://github.com/Atheal9k/cloud-agents/pull/14).
+
 Description: Complete the first launch-to-PR workflow with a trusted publication step owned by the controller rather than the initiating client.
 
 Acceptance criteria:
