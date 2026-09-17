@@ -166,6 +166,9 @@ Acceptance criteria:
 
 Dependencies: CA-02, CA-03.
 
+Status: Done on 17 September 2026 in
+[PR #4](https://github.com/Atheal9k/cloud-agents/pull/4).
+
 Description: Run cloud allocation and control from the existing local T3 environment before deploying a permanent host. Reuse the same controller contracts and state layout that CA-04B will run on EC2.
 
 Acceptance criteria:
