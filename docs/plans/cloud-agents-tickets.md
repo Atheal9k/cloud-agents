@@ -270,6 +270,9 @@ Acceptance criteria:
 
 Dependencies: CA-06, CA-07, CA-08.
 
+Status: Done on 17 September 2026 in
+[PR #10](https://github.com/Atheal9k/cloud-agents/pull/10).
+
 Description: Make the first configured repository reproducible without building a repository-management product. Start with explicit setup, app-start, and verification commands.
 
 Acceptance criteria:
