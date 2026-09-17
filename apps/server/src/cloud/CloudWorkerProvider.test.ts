@@ -140,3 +140,72 @@ it.effect("rejects controller-local routing before launching a worker", () =>
     expect(error.reason).toBe("invalid-config");
   }),
 );
+
+it.effect("lists attempt identities and revokes only the registration credential tag", () =>
+  Effect.gen(function* () {
+    const invocations: ProcessRunner.ProcessRunInput[] = [];
+    const runner = ProcessRunner.ProcessRunner.of({
+      run: (input) => {
+        invocations.push(input);
+        if (input.args[1] === "describe-instances") {
+          return Effect.succeed(
+            output({
+              stdout: JSON.stringify({
+                Reservations: [
+                  {
+                    Instances: [
+                      {
+                        InstanceId: "i-matched",
+                        State: { Name: "running" },
+                        Tags: [
+                          { Key: "CloudAgentAllocationId", Value: "allocation-1" },
+                          { Key: "CloudAgentAttempt", Value: "1" },
+                          {
+                            Key: "CloudAgentRegistrationCredential",
+                            Value: "must-not-escape",
+                          },
+                        ],
+                      },
+                      {
+                        InstanceId: "i-unmatched",
+                        State: { Name: "pending" },
+                        Tags: [{ Key: "CloudAgentAttempt", Value: "invalid" }],
+                      },
+                    ],
+                  },
+                ],
+              }),
+            }),
+          );
+        }
+        return Effect.succeed(output({ stdout: "{}" }));
+      },
+    });
+    const provider = yield* make({
+      region: "us-west-1",
+      project: "t3-cloud-agents",
+    }).pipe(Effect.provideService(ProcessRunner.ProcessRunner, runner));
+
+    const resources = yield* provider.listWorkers();
+    yield* provider.revokeRegistrationCredential("i-matched");
+
+    expect(resources).toEqual([
+      {
+        instanceId: "i-matched",
+        state: "running",
+        identity: { status: "matched", allocationId: "allocation-1", attempt: 1 },
+        registrationCredentialPresent: true,
+      },
+      {
+        instanceId: "i-unmatched",
+        state: "pending",
+        identity: { status: "unmatched" },
+        registrationCredentialPresent: false,
+      },
+    ]);
+    const revoke = invocations.find((invocation) => invocation.args[1] === "delete-tags");
+    expect(revoke?.args).toContain("i-matched");
+    expect(revoke?.args).toContain("Key=CloudAgentRegistrationCredential");
+    expect(revoke?.args.join(" ")).not.toContain("must-not-escape");
+  }),
+);

@@ -146,6 +146,42 @@ data "aws_iam_policy_document" "controller_worker_allocation" {
       variable = "ec2:ResourceTag/CloudAgentRole"
       values   = ["worker"]
     }
+
+    condition {
+      test     = "StringEquals"
+      variable = "ec2:ResourceTag/Ephemeral"
+      values   = ["true"]
+    }
+  }
+
+  statement {
+    sid       = "RevokeWorkerRegistrationCredentials"
+    actions   = ["ec2:DeleteTags"]
+    resources = ["arn:${data.aws_partition.current.partition}:ec2:${var.aws_region}:${data.aws_caller_identity.current.account_id}:instance/*"]
+
+    condition {
+      test     = "StringEquals"
+      variable = "ec2:ResourceTag/CloudAgentProject"
+      values   = [var.name_prefix]
+    }
+
+    condition {
+      test     = "StringEquals"
+      variable = "ec2:ResourceTag/CloudAgentRole"
+      values   = ["worker"]
+    }
+
+    condition {
+      test     = "StringEquals"
+      variable = "ec2:ResourceTag/Ephemeral"
+      values   = ["true"]
+    }
+
+    condition {
+      test     = "ForAllValues:StringEquals"
+      variable = "aws:TagKeys"
+      values   = ["CloudAgentRegistrationCredential"]
+    }
   }
 
   statement {

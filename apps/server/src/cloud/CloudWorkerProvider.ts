@@ -1,8 +1,4 @@
-import {
-  type RunAllocationAttempt,
-  type RunAllocationId,
-  RunLaunchTemplate,
-} from "@t3tools/contracts";
+import { RunAllocationAttempt, RunAllocationId, RunLaunchTemplate } from "@t3tools/contracts";
 import * as NodeCrypto from "node:crypto";
 import * as Config from "effect/Config";
 import * as Context from "effect/Context";
@@ -29,6 +25,24 @@ export const CloudWorkerInstance = Schema.Struct({
 });
 export type CloudWorkerInstance = typeof CloudWorkerInstance.Type;
 
+export const CloudWorkerIdentity = Schema.Union([
+  Schema.Struct({
+    status: Schema.Literal("matched"),
+    allocationId: RunAllocationId,
+    attempt: RunAllocationAttempt,
+  }),
+  Schema.Struct({ status: Schema.Literal("unmatched") }),
+]);
+export type CloudWorkerIdentity = typeof CloudWorkerIdentity.Type;
+
+export const CloudWorkerResource = Schema.Struct({
+  instanceId: Schema.String,
+  state: AwsInstanceState,
+  identity: CloudWorkerIdentity,
+  registrationCredentialPresent: Schema.Boolean,
+});
+export type CloudWorkerResource = typeof CloudWorkerResource.Type;
+
 export class CloudWorkerProviderError extends Schema.TaggedError<CloudWorkerProviderError>()(
   "CloudWorkerProviderError",
   {
@@ -43,10 +57,14 @@ export class CloudWorkerProvider extends Context.Service<
     readonly resolveLaunchTemplate: (
       profileId: string,
     ) => Effect.Effect<RunLaunchTemplate, CloudWorkerProviderError>;
-    readonly findAttempt: (input: {
+    readonly findAttemptResources: (input: {
       readonly allocationId: RunAllocationId;
       readonly attempt: RunAllocationAttempt;
-    }) => Effect.Effect<CloudWorkerInstance | undefined, CloudWorkerProviderError>;
+    }) => Effect.Effect<ReadonlyArray<CloudWorkerResource>, CloudWorkerProviderError>;
+    readonly listWorkers: () => Effect.Effect<
+      ReadonlyArray<CloudWorkerResource>,
+      CloudWorkerProviderError
+    >;
     readonly launch: (input: {
       readonly allocationId: RunAllocationId;
       readonly attempt: RunAllocationAttempt;
@@ -54,6 +72,9 @@ export class CloudWorkerProvider extends Context.Service<
       readonly launchTemplate: RunLaunchTemplate;
       readonly registrationCredential: string;
     }) => Effect.Effect<CloudWorkerInstance, CloudWorkerProviderError>;
+    readonly revokeRegistrationCredential: (
+      instanceId: string,
+    ) => Effect.Effect<void, CloudWorkerProviderError>;
     readonly terminate: (instanceId: string) => Effect.Effect<void, CloudWorkerProviderError>;
   }
 >()("t3/cloud/CloudWorkerProvider") {}
@@ -67,12 +88,19 @@ const LaunchTemplatesResponse = Schema.Struct({
   ),
 });
 
-const AwsInstance = Schema.Struct({
+const AwsInstanceBase = {
   InstanceId: Schema.String,
   State: Schema.Struct({ Name: AwsInstanceState }),
+};
+const AwsInstance = Schema.Struct(AwsInstanceBase);
+const AwsListedInstance = Schema.Struct({
+  ...AwsInstanceBase,
+  Tags: Schema.optionalKey(
+    Schema.Array(Schema.Struct({ Key: Schema.String, Value: Schema.String })),
+  ),
 });
 const InstancesResponse = Schema.Struct({
-  Reservations: Schema.Array(Schema.Struct({ Instances: Schema.Array(AwsInstance) })),
+  Reservations: Schema.Array(Schema.Struct({ Instances: Schema.Array(AwsListedInstance) })),
 });
 const RunInstancesResponse = Schema.Struct({ Instances: Schema.Array(AwsInstance) });
 const decodeLaunchTemplatesResponse = Schema.decodeEffect(
@@ -81,6 +109,8 @@ const decodeLaunchTemplatesResponse = Schema.decodeEffect(
 const decodeInstancesResponse = Schema.decodeEffect(Schema.fromJsonString(InstancesResponse));
 const decodeRunInstancesResponse = Schema.decodeEffect(Schema.fromJsonString(RunInstancesResponse));
 const decodeLaunchTemplate = Schema.decodeEffect(RunLaunchTemplate);
+const decodeAllocationId = Schema.decodeUnknownOption(RunAllocationId);
+const decodeAttempt = Schema.decodeUnknownOption(RunAllocationAttempt);
 const encodeTagSpecifications = Schema.encodeSync(
   Schema.fromJsonString(
     Schema.Array(
@@ -142,6 +172,26 @@ function clientToken(input: {
     .update(`${input.allocationId}:${input.attempt}`)
     .digest("hex")
     .slice(0, 61)}`;
+}
+
+function resourceFromInstance(instance: typeof AwsListedInstance.Type): CloudWorkerResource {
+  const tags = new Map((instance.Tags ?? []).map((tag) => [tag.Key, tag.Value]));
+  const allocationId = decodeAllocationId(tags.get("CloudAgentAllocationId"));
+  const attempt = decodeAttempt(Number(tags.get("CloudAgentAttempt")));
+  const identity =
+    Option.isSome(allocationId) && Option.isSome(attempt)
+      ? {
+          status: "matched" as const,
+          allocationId: allocationId.value,
+          attempt: attempt.value,
+        }
+      : { status: "unmatched" as const };
+  return {
+    instanceId: instance.InstanceId,
+    state: instance.State.Name,
+    identity,
+    registrationCredentialPresent: tags.has("CloudAgentRegistrationCredential"),
+  };
 }
 
 export const make = Effect.fn("CloudWorkerProvider.make")(function* (input: {
@@ -210,7 +260,7 @@ export const make = Effect.fn("CloudWorkerProvider.make")(function* (input: {
       );
     });
 
-  const findAttempt: CloudWorkerProvider["Service"]["findAttempt"] = (attempt) =>
+  const findAttemptResources: CloudWorkerProvider["Service"]["findAttemptResources"] = (attempt) =>
     Effect.gen(function* () {
       const output = yield* runAws([
         "describe-instances",
@@ -225,17 +275,29 @@ export const make = Effect.fn("CloudWorkerProvider.make")(function* (input: {
           providerError("fatal", "The AWS CLI returned an unexpected response."),
         ),
       );
-      const instances = response.Reservations.flatMap((reservation) => reservation.Instances);
-      if (instances.length > 1) {
-        return yield* providerError(
-          "fatal",
-          `AWS returned ${instances.length} instances for one cloud allocation attempt.`,
-        );
-      }
-      const instance = instances[0];
-      return instance === undefined
-        ? undefined
-        : { instanceId: instance.InstanceId, state: instance.State.Name };
+      return response.Reservations.flatMap((reservation) => reservation.Instances).map(
+        resourceFromInstance,
+      );
+    });
+
+  const listWorkers: CloudWorkerProvider["Service"]["listWorkers"] = () =>
+    Effect.gen(function* () {
+      const output = yield* runAws([
+        "describe-instances",
+        "--filters",
+        `Name=tag:CloudAgentProject,Values=${input.project}`,
+        "Name=tag:CloudAgentRole,Values=worker",
+        "Name=tag:Ephemeral,Values=true",
+        "Name=instance-state-name,Values=pending,running,shutting-down,stopping,stopped",
+      ]);
+      const response = yield* decodeInstancesResponse(output).pipe(
+        Effect.mapError(() =>
+          providerError("fatal", "The AWS CLI returned an unexpected response."),
+        ),
+      );
+      return response.Reservations.flatMap((reservation) => reservation.Instances).map(
+        resourceFromInstance,
+      );
     });
 
   const launch: CloudWorkerProvider["Service"]["launch"] = (launchInput) =>
@@ -300,7 +362,30 @@ export const make = Effect.fn("CloudWorkerProvider.make")(function* (input: {
       Effect.asVoid,
     );
 
-  return CloudWorkerProvider.of({ resolveLaunchTemplate, findAttempt, launch, terminate });
+  const revokeRegistrationCredential: CloudWorkerProvider["Service"]["revokeRegistrationCredential"] =
+    (instanceId) =>
+      runAws([
+        "delete-tags",
+        "--resources",
+        instanceId,
+        "--tags",
+        "Key=CloudAgentRegistrationCredential",
+      ]).pipe(
+        Effect.catchIf(
+          (error) => /InvalidInstanceID\.NotFound/.test(error.message),
+          () => Effect.void,
+        ),
+        Effect.asVoid,
+      );
+
+  return CloudWorkerProvider.of({
+    resolveLaunchTemplate,
+    findAttemptResources,
+    listWorkers,
+    launch,
+    revokeRegistrationCredential,
+    terminate,
+  });
 });
 
 const AwsWorkerConfig = Config.all({
