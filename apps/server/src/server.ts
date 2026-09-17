@@ -135,6 +135,7 @@ import * as CloudWorkerRegistration from "./cloud/CloudWorkerRegistration.ts";
 import { cloudWorkerRegistrationHttpApiLayer } from "./cloud/CloudWorkerRegistrationHttp.ts";
 import * as CloudWorkerProvider from "./cloud/CloudWorkerProvider.ts";
 import * as CloudGitCredentials from "./cloud/CloudGitCredentials.ts";
+import * as CloudRepositoryPreparation from "./cloud/CloudRepositoryPreparation.ts";
 import * as ServerSelfUpdate from "./cloud/selfUpdate.ts";
 import * as DesktopAppUpdate from "./desktopUpdate/DesktopAppUpdate.ts";
 import * as ServiceLauncherClient from "./cloud/serviceLauncherClient.ts";
@@ -297,6 +298,11 @@ const CloudAllocationRuntimeLayerLive = CloudAllocationReconciler.layer.pipe(
 
 const CloudGitCredentialsLayerLive = CloudGitCredentials.layer.pipe(
   Layer.provide(ProcessRunner.layer),
+);
+
+const CloudRepositoryPreparationLayerLive = CloudRepositoryPreparation.layer.pipe(
+  Layer.provide(ProcessRunner.layer),
+  Layer.provideMerge(CloudGitCredentialsLayerLive),
 );
 
 const VcsDriverRegistryLayerLive = VcsDriverRegistry.layer.pipe(
@@ -567,7 +573,7 @@ const RuntimeCoreDependenciesLive = ReactorLayerLive.pipe(
         Layer.provide(ExternalLauncher.layer),
       ),
       CloudManagedEndpointRuntimeLive,
-      CloudGitCredentialsLayerLive,
+      CloudRepositoryPreparationLayerLive,
     ),
   ),
 );
