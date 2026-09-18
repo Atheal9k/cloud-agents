@@ -457,6 +457,8 @@ Acceptance criteria:
 
 Dependencies: CA-15, CA-34.
 
+Status: Done on 18 September 2026 in [PR #21](https://github.com/Atheal9k/cloud-agents/pull/21).
+
 Description: Allow the owner to take control of the shared browser, inspect or log into the app, and return control without competing inputs.
 
 Acceptance criteria:
