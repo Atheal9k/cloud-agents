@@ -118,10 +118,12 @@ resource "aws_launch_template" "worker" {
   }
 
   user_data = base64encode(templatefile("${path.module}/templates/worker-cloud-init.sh.tftpl", {
-    image_version = each.value.image_version
-    profile_name  = each.key
-    service_port  = var.worker_control_port
-    ttl_minutes   = var.worker_default_ttl_minutes
+    aws_region               = var.aws_region
+    codex_api_key_secret_arn = var.worker_codex_api_key_secret_arn == null ? "" : var.worker_codex_api_key_secret_arn
+    image_version            = each.value.image_version
+    profile_name             = each.key
+    service_port             = var.worker_control_port
+    ttl_minutes              = var.worker_default_ttl_minutes
   }))
 
   tag_specifications {

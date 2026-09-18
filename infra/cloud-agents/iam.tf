@@ -214,6 +214,23 @@ resource "aws_iam_role_policy" "worker_artifacts" {
   policy = data.aws_iam_policy_document.worker_artifacts.json
 }
 
+data "aws_iam_policy_document" "worker_codex_credentials" {
+  count = var.worker_codex_api_key_secret_arn == null ? 0 : 1
+
+  statement {
+    sid       = "ReadCodexApiKey"
+    actions   = ["secretsmanager:GetSecretValue"]
+    resources = [var.worker_codex_api_key_secret_arn]
+  }
+}
+
+resource "aws_iam_role_policy" "worker_codex_credentials" {
+  count  = var.worker_codex_api_key_secret_arn == null ? 0 : 1
+  name   = "codex-api-key"
+  role   = aws_iam_role.worker.id
+  policy = data.aws_iam_policy_document.worker_codex_credentials[0].json
+}
+
 resource "aws_iam_instance_profile" "controller" {
   name_prefix = "${var.name_prefix}-controller-"
   role        = aws_iam_role.controller.name

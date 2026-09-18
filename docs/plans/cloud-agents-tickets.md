@@ -491,6 +491,8 @@ Acceptance criteria:
 
 Dependencies: CA-23.
 
+Status: Done on 18 September 2026 in [PR #23](https://github.com/Atheal9k/cloud-agents/pull/23).
+
 Description: Provide the minimum instructions needed to install, use, recover, and disable the proven workflow.
 
 Acceptance criteria:

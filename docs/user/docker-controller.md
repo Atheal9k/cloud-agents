@@ -4,6 +4,53 @@ The controller image runs the production T3 server and its built web app. It doe
 does not mount the Docker socket, and does not contain cloud worker or mobile toolchains. Docker
 and the host must remain running after clients disconnect.
 
+## Supported first release
+
+This release is opt-in. A normal T3 server does not advertise cloud allocations. The Docker
+controller sets `T3CODE_CLOUD_CONTROLLER=1`, which adds the cloud-allocation capability to that
+environment. Web and desktop clients show **New cloud thread** only when the connected environment
+advertises it.
+
+The supported path has one disposable x86_64 Linux web worker at a time, one GitHub repository per
+run, and Codex authenticated with an OpenAI API key. Use a repository whose setup, verification,
+and development-server commands are covered by its trusted configuration. Private package
+registries, private submodules, other providers, Android/iOS workers, and the native T3 mobile
+client are not supported by this release. A phone or tablet may use the responsive web client for
+ordinary app previews, but not the shared Agent browser.
+
+The local machine is the controller host. Closing web or desktop does not stop an accepted run,
+but stopping Docker, sleeping the host, or losing its network connection interrupts allocation,
+finalization, publication, and normal cleanup. The independent AWS expiry cleanup remains a
+backstop, not a replacement for the controller.
+
+## Prepare the release
+
+1. Build a pinned `linux-web` worker image. Build `linux-web-browser` as well if you need the
+   shared Agent browser. Record each AMI ID and image version in
+   `infra/cloud-agents/terraform.tfvars`.
+2. Create the remote OpenTofu state and apply `infra/cloud-agents` as described in its README. Set
+   `worker_codex_api_key_secret_arn` to the full ARN of a Secrets Manager secret whose value is the
+   raw OpenAI API key. The key itself must not appear in the variable file. API-key use is billed
+   as OpenAI API usage and does not use a ChatGPT subscription.
+3. Store the Git SSH key and GitHub API token in Secrets Manager. Add their full ARNs to
+   `controller_credential_secret_arns` for the stack's controller role. The AWS identity mounted
+   into the local Docker controller also needs read access to those secrets. Give the GitHub token
+   pull-request write access only to the repository or repositories you intend to use.
+4. Create the protected controller credential directory described under [State and
+   credentials](#state-and-credentials). Its AWS identity needs the same scoped worker-allocation
+   and secret-read permissions as the controller role. Set `T3CODE_CLOUD_GIT_SSH_SECRET_REF` and
+   `T3CODE_CLOUD_GITHUB_TOKEN_SECRET_REF` to the corresponding secret names or ARNs.
+5. Configure authenticated HTTPS routes for the controller and the one active worker. Set
+   `T3CODE_CLOUD_CONTROLLER_URL` and `T3CODE_CLOUD_WORKER_ROUTE_URL`. Do not expose worker port
+   3773 or DCV port 8443 directly.
+6. Build and start the controller, pair the web client, and connect the desktop app to the same
+   controller environment. The desktop app is a client here; quitting it does not stop the Docker
+   controller.
+
+Before the first paid run, confirm that the controller is healthy, the expected launch template is
+the only template tagged for the selected profile, the worker price allowlist names its instance
+type, and the AWS expiry cleanup schedule is enabled.
+
 ## Build and start
 
 Docker Desktop on Windows and Docker Engine with Compose v2 on Linux use the same Compose files.
@@ -69,6 +116,12 @@ desktop clients.
 The controller continues provisioning, observing, and cleaning up the run if the client
 disconnects. Keep the controller host and Docker running. Reopen the dialog to see recent runs,
 stop one, or open a registered worker as an ordinary T3 thread.
+
+For the first run, choose the configured `owner/name` repository and a branch, tag, or commit that
+the controller's Git credential can read. Start with **Review only** and a short run limit. Use
+**Open draft PR** after the review-only run has cloned, changed, verified, retained, and cleaned up
+successfully. The worker validates that Codex is installed, authenticated, and able to use the
+selected model before it starts the turn.
 
 Set two HTTPS routes before launching a worker:
 
@@ -193,6 +246,74 @@ Recovery is explicit. Fence the old allocation attempt first, then restore its w
 into a new allocation and start a linked T3 continuation. Recovery does not revive an interrupted
 process or claim that an unsupported provider session resumed.
 
+## Preview, review, and run control
+
+An app preview proxies the repository's development server. It uses the viewer's browser session
+and does not start desktop streaming. The **Agent browser** shows the Chromium session that Codex
+is using on a `linux-web-browser` worker. Opening that panel starts streaming on demand. **Take
+control** interrupts the active provider turn before human input is granted. **Return control**
+revokes human input first, then starts a follow-up so Codex can inspect the changed browser state.
+Closing the panel releases viewer access without stopping a browser that Codex still needs.
+
+After Codex finishes, the worker stays available for the configured preview grace period, 15
+minutes by default. The hard run deadline still wins. The controller captures the transcript,
+diff, verification output, workspace checkpoint, and declared artifacts before cleanup. Saved
+results remain readable after the worker terminates and expire after seven days.
+
+**Stop** cancels provider work and requests cleanup. It does not delete an already opened pull
+request or a saved result. Retry creates a new allocation attempt after the prior attempt is
+fenced; it does not revive the old process. When recovery is needed, use the saved checkpoint and
+start a linked continuation. Treat a missing checkpoint or expired result as unrecoverable rather
+than silently starting from a different revision.
+
+Admission is separate from the controller capability. The authorized
+`cloud.allocations.setAdmission` operation can close admission without disabling the controller.
+Closing admission rejects new launches and retries, persists across controller restarts, and keeps
+accepted runs, cancellation, cleanup, and saved results manageable. Reopen admission through the
+same operation after maintenance. Removing `T3CODE_CLOUD_CONTROLLER` is a full capability shutdown,
+so do that only after every accepted run has reached cleanup and its required results have been
+saved.
+
+## Recovery and teardown
+
+Rotate the Codex API key by writing a new value to the same Secrets Manager secret. New workers use
+the new value; an active worker keeps its current short-lived Codex profile until cleanup. Rotate
+Git SSH and GitHub tokens the same way. The controller reads those secrets for each Git or GitHub
+operation, so new operations use the replacement without rebuilding the image. Revoke the old
+credential after a review-only run and draft-PR run both succeed with the replacement.
+
+For a stuck worker, first use **Stop** and wait through its cleanup deadline. If cleanup still
+fails, list only owned workers and inspect the exact instance IDs before terminating one:
+
+```bash
+aws ec2 describe-instances \
+  --region "$T3CODE_CLOUD_AWS_REGION" \
+  --filters \
+    "Name=tag:CloudAgentProject,Values=$T3CODE_CLOUD_PROJECT" \
+    "Name=tag:CloudAgentRole,Values=worker" \
+    "Name=tag:Ephemeral,Values=true" \
+    "Name=instance-state-name,Values=pending,running,stopping,stopped"
+
+aws ec2 terminate-instances \
+  --region "$T3CODE_CLOUD_AWS_REGION" \
+  --instance-ids i-0123456789abcdef0
+```
+
+Never terminate by a process-name or broad tag match. Confirm the allocation ID and attempt tags on
+the exact instance first. The scheduled expiry cleanup should also terminate workers after their
+tagged deadline when the controller is unavailable.
+
+To disable the release, close admission, let accepted runs finish or stop them, confirm cleanup,
+and take a cold controller backup. Then stop Compose. Keeping the named Docker volume preserves
+the environment identity, settings, threads, allocation catalog, and unexpired saved results.
+`docker compose down` does not remove that volume. Do not add `--volumes` unless you intend to
+delete the controller state.
+
+OpenTofu teardown is a separate operation. Worker resources are disposable, but controller data
+and retained artifact storage reject destruction by default. Keep `allow_retained_data_destroy`
+false for a normal shutdown. Export the data you need before enabling it for a deliberate final
+teardown. Removing AWS resources does not delete pull requests already published to GitHub.
+
 ## Backup and restore
 
 Use a cold backup. This provides one SQLite writer and captures settings, secrets, identity, and
@@ -266,6 +387,11 @@ docker compose up -d --wait
 ```
 
 Container recreation keeps the named volume.
+
+Worker images roll back independently. Restore the previous AMI ID and matching `image_version`
+for the affected `worker_profiles` entry, review `tofu plan`, and apply it. OpenTofu makes that
+launch-template version the default for new allocations. An active worker keeps the AMI and pinned
+toolchain it started with; stop it explicitly if it must not finish on the withdrawn image.
 
 Database migrations may be forward-only. A rollback is safe only when the older image supports
 the current schema. Otherwise stop the controller, select the old image, and restore the backup

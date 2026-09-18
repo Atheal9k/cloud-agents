@@ -70,6 +70,41 @@ fi
 chown root:cloudagent /etc/t3/worker.env
 chmod 0640 /etc/t3/worker.env
 
+codex_api_key_secret_arn='${codex_api_key_secret_arn}'
+if [[ -n "$${codex_api_key_secret_arn}" ]]; then
+  command -v aws >/dev/null || {
+    echo "cloud-agent bootstrap failed: AWS CLI is unavailable for Codex authentication" >&2
+    exit 1
+  }
+  install -d -o cloudagent -g cloudagent -m 0700 /run/t3-worker/credentials/codex
+  if ! codex_api_key="$(
+    aws secretsmanager get-secret-value \
+      --region '${aws_region}' \
+      --secret-id "$${codex_api_key_secret_arn}" \
+      --query SecretString \
+      --output text
+  )"; then
+    find /run/t3-worker/credentials/codex -mindepth 1 -delete
+    echo "cloud-agent bootstrap failed: Codex API key secret is unavailable" >&2
+    exit 1
+  fi
+  if [[ -z "$${codex_api_key}" || "$${codex_api_key}" == "None" ]]; then
+    unset codex_api_key
+    find /run/t3-worker/credentials/codex -mindepth 1 -delete
+    echo "cloud-agent bootstrap failed: Codex API key secret is empty or binary" >&2
+    exit 1
+  fi
+  if ! printf '%s' "$${codex_api_key}" | runuser --user cloudagent -- \
+    env HOME=/home/cloudagent CODEX_HOME=/run/t3-worker/credentials/codex \
+    codex login --with-api-key >/dev/null; then
+    unset codex_api_key
+    find /run/t3-worker/credentials/codex -mindepth 1 -delete
+    echo "cloud-agent bootstrap failed: Codex rejected the configured API key" >&2
+    exit 1
+  fi
+  unset codex_api_key
+fi
+
 cat >/etc/systemd/system/cloud-agent-hard-ttl.service <<'UNIT'
 [Unit]
 Description=Terminate this disposable worker after its hard lifetime
