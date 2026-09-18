@@ -474,6 +474,8 @@ Acceptance criteria:
 
 Dependencies: CA-16, CA-17, CA-18, CA-19, CA-25, CA-27, CA-34, CA-35.
 
+Status: Done on 18 September 2026 in [PR #22](https://github.com/Atheal9k/cloud-agents/pull/22).
+
 Description: Validate the complete first workflow without turning every later capability into a release blocker.
 
 Acceptance criteria:
