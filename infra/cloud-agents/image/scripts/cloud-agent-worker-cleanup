@@ -16,5 +16,3 @@ if [[ -f "${codex_auth}" ]] && jq --exit-status \
     mv "${pending_tmp}" "${pending_dir}/codex-auth-pending.json"
   fi
 fi
-
-find "${credentials_dir}" -mindepth 1 -delete

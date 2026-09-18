@@ -173,5 +173,4 @@ rpm --query --all | sort >/opt/t3/worker-os-packages.txt
 chmod 0644 /opt/t3/worker-os-packages.txt
 
 systemctl daemon-reload
-systemctl enable cloud-agent-worker.service
-systemctl enable cloud-agent-worker-registration.service
+systemctl disable cloud-agent-worker.service cloud-agent-worker-registration.service
