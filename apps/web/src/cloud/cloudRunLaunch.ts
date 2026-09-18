@@ -26,6 +26,14 @@ export interface CloudRunLaunchDraft {
   readonly baseBranch: string;
 }
 
+export function reconcileCloudRunLaunchInstanceType(
+  draft: CloudRunLaunchDraft,
+  limits: CloudAllocationLimits,
+): CloudRunLaunchDraft {
+  if (limits.allowedInstanceTypes.includes(draft.instanceType)) return draft;
+  return { ...draft, instanceType: limits.allowedInstanceTypes[0] ?? "" };
+}
+
 export type CloudRunLaunchValidation =
   | { readonly status: "valid"; readonly command: RunAllocationCommand }
   | { readonly status: "invalid"; readonly message: string };

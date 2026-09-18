@@ -56,6 +56,8 @@ install -d -o cloudagent -g cloudagent -m 0700 \
   /run/t3-worker/credentials/codex
 cat >/run/t3-worker/runtime.env <<'ENV'
 CLAUDE_CODE_OAUTH_TOKEN='image-build-fixture'
+GH_TOKEN='image-build-fixture'
+GITHUB_TOKEN='image-build-fixture'
 ENV
 cat >/run/t3-worker/credentials/codex/auth.json <<'JSON'
 {"auth_mode":"chatgpt","tokens":{"refresh_token":"image-build-fixture"}}

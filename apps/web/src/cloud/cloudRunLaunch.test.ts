@@ -3,6 +3,7 @@ import type { CloudAllocationLimits } from "@t3tools/contracts";
 import {
   buildCloudRunLaunchCommand,
   cloudRunDisplayState,
+  reconcileCloudRunLaunchInstanceType,
   type CloudRunLaunchDraft,
 } from "./cloudRunLaunch";
 
@@ -30,6 +31,14 @@ const draft: CloudRunLaunchDraft = {
 };
 
 describe("cloud run launch", () => {
+  it("selects an allowed worker when controller limits arrive after the draft", () => {
+    const pendingDraft = { ...draft, instanceType: "" };
+    const reconciled = reconcileCloudRunLaunchInstanceType(pendingDraft, limits);
+
+    expect(reconciled.instanceType).toBe("t3.medium");
+    expect(reconcileCloudRunLaunchInstanceType(reconciled, limits)).toBe(reconciled);
+  });
+
   it("builds one durable request identity with the selected task policy", () => {
     const result = buildCloudRunLaunchCommand({
       draft,

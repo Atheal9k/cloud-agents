@@ -39,8 +39,12 @@ ldconfig -p | grep -q 'libatomic\.so' || fail "libatomic is unavailable"
 for environment_file in /etc/t3/worker.env /run/t3-worker/runtime.env; do
   [[ -f "${environment_file}" ]] || continue
   [[ -r "${environment_file}" ]] || fail "${environment_file} is not readable by the worker service"
-  if grep -Eq '^(AWS_ACCESS_KEY_ID|AWS_SECRET_ACCESS_KEY|AWS_SESSION_TOKEN|GH_TOKEN|GITHUB_TOKEN|T3CODE_CLOUD_GITHUB_TOKEN_SECRET_REF|T3CODE_CLOUD_GIT_SSH_SECRET_REF)=' "${environment_file}"; then
-    fail "${environment_file} contains controller, publication, or instance credentials"
+  if grep -Eq '^(AWS_ACCESS_KEY_ID|AWS_SECRET_ACCESS_KEY|AWS_SESSION_TOKEN|T3CODE_CLOUD_GITHUB_TOKEN_SECRET_REF|T3CODE_CLOUD_GIT_SSH_SECRET_REF)=' "${environment_file}"; then
+    fail "${environment_file} contains instance or bootstrap credentials"
+  fi
+  if [[ "${environment_file}" == /etc/t3/worker.env ]] \
+    && grep -Eq '^(GH_TOKEN|GITHUB_TOKEN)=' "${environment_file}"; then
+    fail "${environment_file} contains publication credentials"
   fi
 done
 

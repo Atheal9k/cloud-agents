@@ -17,6 +17,7 @@ import { environmentCatalog } from "../../connection/catalog";
 import {
   buildCloudRunLaunchCommand,
   cloudRunDisplayState,
+  reconcileCloudRunLaunchInstanceType,
   type CloudRunLaunchDraft,
 } from "../../cloud/cloudRunLaunch";
 import { onOpenCloudLaunchDialog } from "../../cloud/cloudLaunchDialogBus";
@@ -250,6 +251,11 @@ function CloudRunDialogForEnvironment(props: {
   const [busyAllocationId, setBusyAllocationId] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
 
+  useEffect(() => {
+    if (snapshot === null) return;
+    setDraft((current) => reconcileCloudRunLaunchInstanceType(current, snapshot.limits));
+  }, [snapshot]);
+
   useEffect(
     () =>
       onOpenCloudLaunchDialog(() => {
@@ -277,8 +283,10 @@ function CloudRunDialogForEnvironment(props: {
   const launch = async (event: FormEvent) => {
     event.preventDefault();
     if (snapshot === null || launchedId !== null) return;
+    const launchDraft = reconcileCloudRunLaunchInstanceType(draft, snapshot.limits);
+    if (launchDraft !== draft) setDraft(launchDraft);
     const built = buildCloudRunLaunchCommand({
-      draft,
+      draft: launchDraft,
       limits: snapshot.limits,
       now: new Date(),
       requestId,
