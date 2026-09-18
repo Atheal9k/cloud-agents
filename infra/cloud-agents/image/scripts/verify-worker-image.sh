@@ -23,16 +23,18 @@ systemctl is-active --quiet tailscaled.service && fail "Tailscale is active in t
   || fail "T3 state permissions are not isolated"
 [[ "$(stat --format '%U:%G:%a' /work)" == "cloudagent:cloudagent:750" ]] \
   || fail "workspace permissions are not isolated"
-[[ "$(systemctl is-enabled cloud-agent-worker.service)" == "enabled" ]] \
-  || fail "worker service is not enabled"
-[[ "$(systemctl is-enabled cloud-agent-worker-registration.service)" == "enabled" ]] \
-  || fail "worker registration service is not enabled"
+[[ "$(systemctl is-enabled cloud-agent-worker.service 2>/dev/null || true)" == "disabled" ]] \
+  || fail "worker service must remain disabled until cloud-init finishes"
+[[ "$(systemctl is-enabled cloud-agent-worker-registration.service 2>/dev/null || true)" == "disabled" ]] \
+  || fail "worker registration must remain disabled until routing is ready"
 
 systemd-analyze verify /etc/systemd/system/cloud-agent-worker.service
 systemd-analyze verify /etc/systemd/system/cloud-agent-worker-registration.service
 systemd-analyze verify /etc/systemd/system/cloud-agent-codex-auth-sync.service
 systemd-analyze verify /etc/systemd/system/cloud-agent-codex-auth-sync.path
 systemd-analyze verify /etc/systemd/system/cloud-agent-codex-auth-sync.timer
+[[ "$(systemctl show --property User --value cloud-agent-worker-registration.service)" == "cloudagent" ]] \
+  || fail "worker registration does not run as cloudagent"
 install -d -o root -g cloudagent -m 0750 /etc/t3
 cat >/etc/t3/worker.env <<'ENV'
 T3CODE_PORT=3773
@@ -43,6 +45,24 @@ T3_WORKER_PROFILE=image-build-verification
 ENV
 chown root:cloudagent /etc/t3/worker.env
 chmod 0640 /etc/t3/worker.env
+install -d -o cloudagent -g cloudagent -m 0700 \
+  /run/t3-worker/credentials/claude \
+  /run/t3-worker/credentials/codex
+cat >/run/t3-worker/runtime.env <<'ENV'
+CLAUDE_CODE_OAUTH_TOKEN='image-build-fixture'
+ENV
+cat >/run/t3-worker/credentials/codex/auth.json <<'JSON'
+{"auth_mode":"chatgpt","tokens":{"refresh_token":"image-build-fixture"}}
+JSON
+cat >/run/t3-worker/credentials/codex/config.toml <<'TOML'
+cli_auth_credentials_store = "file"
+TOML
+chown root:cloudagent /run/t3-worker/runtime.env
+chown -R cloudagent:cloudagent /run/t3-worker/credentials
+chmod 0640 /run/t3-worker/runtime.env
+chmod 0600 \
+  /run/t3-worker/credentials/codex/auth.json \
+  /run/t3-worker/credentials/codex/config.toml
 sudo -u cloudagent test -r /etc/t3/worker.env \
   || fail "worker environment is not readable by cloudagent"
 systemctl start cloud-agent-worker.service
@@ -65,6 +85,16 @@ service_uid="$(id -u cloudagent)"
 main_pid="$(systemctl show --property MainPID --value cloud-agent-worker.service)"
 [[ "$(stat --format '%u' "/proc/${main_pid}")" == "${service_uid}" ]] \
   || fail "worker service is not running as cloudagent"
+registration_token="$(sudo -u cloudagent env HOME=/home/cloudagent \
+  t3 auth session issue \
+  --base-dir /var/lib/t3-worker/t3 \
+  --ttl 5m \
+  --subject worker-image-verification \
+  --label 'Worker image verification' \
+  --token-only)" \
+  || fail "worker registration token could not be issued as cloudagent"
+[[ -n "${registration_token}" ]] || fail "worker registration token is empty"
+unset registration_token
 
 systemctl stop cloud-agent-worker.service
 [[ ! -e /run/t3-worker/credentials ]] \
@@ -129,5 +159,4 @@ else
 fi
 
 rm -f /etc/t3/worker.env
-systemctl enable cloud-agent-worker.service
-systemctl enable cloud-agent-worker-registration.service
+systemctl disable cloud-agent-worker.service cloud-agent-worker-registration.service

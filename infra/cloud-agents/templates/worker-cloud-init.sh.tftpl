@@ -17,6 +17,7 @@ if ! jq --exit-status \
 fi
 
 install -d -o root -g cloudagent -m 0750 /etc/t3
+install -d -o cloudagent -g cloudagent -m 0700 /run/t3-worker/credentials
 
 metadata_base='http://169.254.169.254/latest'
 metadata_token="$(
@@ -58,7 +59,7 @@ worker_route_url="$(
   exit 1
 }
 
-cat >/etc/t3/worker.env <<ENV
+cat >/etc/t3/worker.env.pending <<ENV
 T3_WORKER_PROFILE=${profile_name}
 T3_WORKER_IMAGE_VERSION=${image_version}
 T3CODE_CLOUD_MAX_INPUT_WAIT_SECONDS=$${max_input_wait_seconds}
@@ -68,12 +69,12 @@ T3CODE_SHARED_BROWSER_ATTEMPT_KEY=$${allocation_id}:$${attempt}
 ENV
 if jq --exit-status '.capabilities.desktopStreamService == true' "$manifest" >/dev/null; then
   echo 'T3CODE_SHARED_BROWSER_COMMAND=/opt/t3/bin/cloud-agent-shared-browser' \
-    >>/etc/t3/worker.env
+    >>/etc/t3/worker.env.pending
   echo 'T3CODE_SHARED_BROWSER_PERMISSION_COMMAND=/opt/t3/bin/cloud-agent-shared-browser-permissions' \
-    >>/etc/t3/worker.env
+    >>/etc/t3/worker.env.pending
 fi
-chown root:cloudagent /etc/t3/worker.env
-chmod 0640 /etc/t3/worker.env
+chown root:cloudagent /etc/t3/worker.env.pending
+chmod 0640 /etc/t3/worker.env.pending
 
 codex_api_key_secret_arn='${codex_api_key_secret_arn}'
 codex_auth_json_secret_arn='${codex_auth_json_secret_arn}'
@@ -200,6 +201,7 @@ if [[ -f /etc/t3/codex-auth-sync.env ]]; then
   systemctl enable --now cloud-agent-codex-auth-sync.path
   systemctl enable --now cloud-agent-codex-auth-sync.timer
 fi
+mv /etc/t3/worker.env.pending /etc/t3/worker.env
 systemctl enable cloud-agent-worker.service
 
 service_started_ms="$(date +%s%3N)"
@@ -215,7 +217,11 @@ node -e '
   })}\n`, { mode: 0o640 });
 ' /var/lib/t3-worker/startup-timings.pending.json "$${boot_started_ms}" "$${service_started_ms}"
 chown root:cloudagent /var/lib/t3-worker/startup-timings.pending.json
-systemctl start cloud-agent-worker.service
+if ! systemctl start cloud-agent-worker.service; then
+  systemctl status --no-pager --full cloud-agent-worker.service >&2 || true
+  journalctl --no-pager --unit cloud-agent-worker.service --lines 100 >&2 || true
+  exit 1
+fi
 
 if [[ -n "$${tailscale_auth_key_secret_arn}" ]]; then
   command -v tailscale >/dev/null || {

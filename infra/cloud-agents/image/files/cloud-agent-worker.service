@@ -25,6 +25,7 @@ EnvironmentFile=-/etc/t3/worker.env
 EnvironmentFile=-/run/t3-worker/runtime.env
 RuntimeDirectory=t3-worker
 RuntimeDirectoryMode=0700
+RuntimeDirectoryPreserve=restart
 CacheDirectory=t3-worker-dependencies
 CacheDirectoryMode=0700
 StateDirectory=t3-worker

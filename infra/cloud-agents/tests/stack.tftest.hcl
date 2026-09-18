@@ -130,6 +130,7 @@ run "protected_plan" {
       length(aws_iam_role_policy.worker_claude_credentials) == 1,
       length(aws_iam_role_policy.worker_tailscale_credentials) == 1,
       strcontains(base64decode(aws_launch_template.worker["linux-web"].user_data), "cloud-agent-codex-auth-json-AbCdEf"),
+      strcontains(base64decode(aws_launch_template.worker["linux-web"].user_data), "install -d -o cloudagent -g cloudagent -m 0700 /run/t3-worker/credentials"),
       strcontains(base64decode(aws_launch_template.worker["linux-web"].user_data), "cli_auth_credentials_store = \"file\""),
       strcontains(base64decode(aws_launch_template.worker["linux-web"].user_data), "cloud-agent-codex-auth-sync.path"),
       strcontains(base64decode(aws_launch_template.worker["linux-web"].user_data), "cloud-agent-claude-oauth-AbCdEf"),

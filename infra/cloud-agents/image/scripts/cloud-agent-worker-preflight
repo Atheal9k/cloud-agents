@@ -17,10 +17,20 @@ expected_t3="$(jq -r '.runtime.t3' /opt/t3/worker-image-manifest.json)"
 expected_claude_code="$(jq -r '.runtime.claudeCode' /opt/t3/worker-image-manifest.json)"
 expected_codex="$(jq -r '.runtime.codex' /opt/t3/worker-image-manifest.json)"
 
+install -d -m 0700 "${CLAUDE_CONFIG_DIR}" "${CODEX_HOME}"
+probe_home="$(mktemp --directory /tmp/t3-worker-preflight.XXXXXX)"
+trap 'rm -rf -- "${probe_home}"' EXIT
+
 [[ "$(node --version)" == "v${expected_node}" ]] || fail "Node.js ${expected_node} is unavailable"
 [[ "$(t3 --version)" == *"${expected_t3}"* ]] || fail "T3 ${expected_t3} is unavailable"
-[[ "$(claude --version)" == *"${expected_claude_code}"* ]] || fail "Claude Code ${expected_claude_code} is unavailable"
-[[ "$(codex --version)" == *"${expected_codex}"* ]] || fail "Codex ${expected_codex} is unavailable"
+[[ "$(env -u CLAUDE_CODE_OAUTH_TOKEN \
+  HOME="${probe_home}" CLAUDE_CONFIG_DIR="${probe_home}/claude" \
+  claude --version)" == *"${expected_claude_code}"* ]] \
+  || fail "Claude Code ${expected_claude_code} is unavailable"
+[[ "$(env -u OPENAI_API_KEY \
+  HOME="${probe_home}" CODEX_HOME="${probe_home}/codex" \
+  codex --version)" == *"${expected_codex}"* ]] \
+  || fail "Codex ${expected_codex} is unavailable"
 command -v git >/dev/null || fail "git is unavailable"
 command -v make >/dev/null || fail "make is unavailable"
 command -v g++ >/dev/null || fail "g++ is unavailable"
@@ -33,8 +43,6 @@ for environment_file in /etc/t3/worker.env /run/t3-worker/runtime.env; do
     fail "${environment_file} contains controller, publication, or instance credentials"
   fi
 done
-
-install -d -m 0700 "${CLAUDE_CONFIG_DIR}" "${CODEX_HOME}"
 
 metadata_url='http://169.254.169.254/latest/api/token'
 if curl --noproxy '*' --silent --show-error --fail --max-time 2 \

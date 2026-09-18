@@ -77,12 +77,10 @@ if [[ -r "${startup_pending}" ]]; then
     })}\n`, { mode: 0o640 });
   ' "${startup_pending}" "${startup_timings}" "${service_ready_ms}" \
     || fail 'worker startup timings could not be recorded'
-  chown root:cloudagent "${startup_timings}"
   rm -f "${startup_pending}"
 fi
 
-access_token="$(runuser --user cloudagent -- \
-  t3 auth session issue \
+access_token="$(t3 auth session issue \
   --base-dir /var/lib/t3-worker/t3 \
   --ttl 2h \
   --subject "cloud-worker:${allocation_id}:${attempt}" \
