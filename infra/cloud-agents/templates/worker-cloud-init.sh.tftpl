@@ -40,6 +40,11 @@ attempt="$(
     --header "X-aws-ec2-metadata-token: $${metadata_token}" \
     "$${metadata_base}/meta-data/tags/instance/CloudAgentAttempt"
 )"
+worker_route_url="$(
+  curl --noproxy '*' --silent --show-error --fail --max-time 5 \
+    --header "X-aws-ec2-metadata-token: $${metadata_token}" \
+    "$${metadata_base}/meta-data/tags/instance/CloudAgentWorkerRouteUrl"
+)"
 [[ "$${max_input_wait_seconds}" =~ ^[1-9][0-9]*$ ]] || {
   echo "cloud-agent bootstrap failed: input-wait limit tag is invalid" >&2
   exit 1
@@ -73,9 +78,10 @@ chmod 0640 /etc/t3/worker.env
 codex_api_key_secret_arn='${codex_api_key_secret_arn}'
 codex_auth_json_secret_arn='${codex_auth_json_secret_arn}'
 claude_oauth_token_secret_arn='${claude_oauth_token_secret_arn}'
-if [[ -n "$${codex_api_key_secret_arn}" || -n "$${codex_auth_json_secret_arn}" || -n "$${claude_oauth_token_secret_arn}" ]]; then
+tailscale_auth_key_secret_arn='${tailscale_auth_key_secret_arn}'
+if [[ -n "$${codex_api_key_secret_arn}" || -n "$${codex_auth_json_secret_arn}" || -n "$${claude_oauth_token_secret_arn}" || -n "$${tailscale_auth_key_secret_arn}" ]]; then
   command -v aws >/dev/null || {
-    echo "cloud-agent bootstrap failed: AWS CLI is unavailable for provider authentication" >&2
+    echo "cloud-agent bootstrap failed: AWS CLI is unavailable for worker credentials" >&2
     exit 1
   }
 fi
@@ -210,4 +216,62 @@ node -e '
 ' /var/lib/t3-worker/startup-timings.pending.json "$${boot_started_ms}" "$${service_started_ms}"
 chown root:cloudagent /var/lib/t3-worker/startup-timings.pending.json
 systemctl start cloud-agent-worker.service
+
+if [[ -n "$${tailscale_auth_key_secret_arn}" ]]; then
+  command -v tailscale >/dev/null || {
+    echo "cloud-agent bootstrap failed: Tailscale is unavailable" >&2
+    exit 1
+  }
+  if ! worker_hostname="$(
+    node -e '
+      const url = new URL(process.argv[1]);
+      if (
+        url.protocol !== "https:" ||
+        url.username !== "" ||
+        url.password !== "" ||
+        url.port !== "" ||
+        url.pathname !== "/" ||
+        url.search !== "" ||
+        url.hash !== "" ||
+        !/^t3-worker-[0-9a-f]{16}\.[a-z0-9.-]+$/i.test(url.hostname)
+      ) process.exit(1);
+      process.stdout.write(url.hostname.split(".")[0]);
+    ' "$${worker_route_url}"
+  )"; then
+    echo "cloud-agent bootstrap failed: worker route is not a valid Tailscale HTTPS hostname" >&2
+    exit 1
+  fi
+
+  install -d -o root -g root -m 0700 /run/t3-tailscale
+  tailscale_auth_key_file="$(mktemp /run/t3-tailscale/auth-key.XXXXXX)"
+  cleanup_tailscale_auth_key() {
+    rm -f "$${tailscale_auth_key_file}"
+    rmdir /run/t3-tailscale 2>/dev/null || true
+  }
+  trap cleanup_tailscale_auth_key EXIT
+  if ! aws secretsmanager get-secret-value \
+    --region '${aws_region}' \
+    --secret-id "$${tailscale_auth_key_secret_arn}" \
+    --query SecretString \
+    --output text >"$${tailscale_auth_key_file}"; then
+    echo "cloud-agent bootstrap failed: Tailscale auth key secret is unavailable" >&2
+    exit 1
+  fi
+  chmod 0600 "$${tailscale_auth_key_file}"
+  if ! grep --quiet --extended-regexp '^tskey-auth-[A-Za-z0-9_-]+(-[A-Za-z0-9_-]+)?$' "$${tailscale_auth_key_file}"; then
+    echo "cloud-agent bootstrap failed: Tailscale auth key secret is empty, binary, or malformed" >&2
+    exit 1
+  fi
+
+  systemctl enable --now tailscaled.service
+  tailscale up \
+    --accept-dns=true \
+    --auth-key="file:$${tailscale_auth_key_file}" \
+    --hostname="$${worker_hostname}" \
+    --timeout=60s
+  cleanup_tailscale_auth_key
+  trap - EXIT
+  tailscale serve --bg --yes --https=443 "http://127.0.0.1:${service_port}"
+fi
+
 systemctl enable --now cloud-agent-worker-registration.service

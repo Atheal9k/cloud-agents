@@ -40,9 +40,10 @@ backstop, not a replacement for the controller.
    credentials](#state-and-credentials). Its AWS identity needs the same scoped worker-allocation
    and secret-read permissions as the controller role. Set `T3CODE_CLOUD_GIT_SSH_SECRET_REF` and
    `T3CODE_CLOUD_GITHUB_TOKEN_SECRET_REF` to the corresponding secret names or ARNs.
-5. Configure authenticated HTTPS routes for the controller and the one active worker. Set
-   `T3CODE_CLOUD_CONTROLLER_URL` and `T3CODE_CLOUD_WORKER_ROUTE_URL`. Do not expose worker port
-   3773 or DCV port 8443 directly.
+5. Configure authenticated HTTPS routes for the controller and the one active worker. For
+   Tailscale, set `worker_tailscale_auth_key_secret_arn`, use the controller's tailnet URL for
+   `T3CODE_CLOUD_CONTROLLER_URL`, and use a `{workerHostname}` URL template for
+   `T3CODE_CLOUD_WORKER_ROUTE_URL`. Do not expose worker port 3773 or DCV port 8443 directly.
 6. Build and start the controller, pair the web client, and connect the desktop app to the same
    controller environment. The desktop app is a client here; quitting it does not stop the Docker
    controller.
@@ -146,19 +147,21 @@ the controller's Git credential can read. Start with **Review only** and a short
 successfully. The worker validates that Codex is installed, authenticated, and able to use the
 selected model before it starts the turn.
 
-Set two HTTPS routes before launching a worker:
+Set two HTTPS routes before launching a worker. This Tailscale example gives every allocation
+attempt a distinct MagicDNS name:
 
 ```bash
-export T3CODE_CLOUD_CONTROLLER_URL=https://controller.example.com
-export T3CODE_CLOUD_WORKER_ROUTE_URL=https://worker.example.com
+export T3CODE_CLOUD_CONTROLLER_URL=https://controller.your-tailnet.ts.net
+export T3CODE_CLOUD_WORKER_ROUTE_URL='https://{workerHostname}.your-tailnet.ts.net'
 ```
 
 The controller URL must reach this controller from the worker. The worker route must be an
 authenticated overlay or outbound tunnel that forwards HTTP and WebSocket traffic to port 3773
-on the one active worker. Configure that route in the worker image or tunnel service so it starts
-at boot. Do not open port 3773 to the internet or forward it by hand for each allocation. The
-controller rejects loopback routes because `localhost` on a browser, controller, and worker names
-three different machines.
+on the one active worker. With `worker_tailscale_auth_key_secret_arn` configured, the worker image
+joins the tailnet and starts Tailscale Serve before registration. A fixed route remains supported
+for other tunnel systems. Do not open port 3773 to the internet or forward it by hand for each
+allocation. The controller rejects loopback routes because `localhost` on a browser, controller,
+and worker names three different machines.
 
 At launch, the controller signs a credential that names one allocation attempt and expires at its
 registration deadline. The root registration unit reads that credential from EC2 instance tags,

@@ -19,7 +19,7 @@ not call SSM.
 
 ## Worker image
 
-Packer 1.16.0 and the Amazon plugin 1.8.2 build the worker AMI. The template requires an exact Amazon Linux 2023 x86_64 source AMI ID. It pins Node.js 24.13.1, T3 0.0.42, Codex 0.154.0, and Claude Code 2.1.273, then records those versions and the installed RPM set in `/opt/t3`.
+Packer 1.16.0 and the Amazon plugin 1.8.2 build the worker AMI. The template requires an exact Amazon Linux 2023 x86_64 source AMI ID. It pins Node.js 24.13.1, T3 0.0.42, Codex 0.154.0, Claude Code 2.1.273, and Tailscale 1.102.4, then records those versions and the installed RPM set in `/opt/t3`.
 
 ```powershell
 packer init ./image
@@ -72,6 +72,12 @@ as `CLAUDE_CODE_OAUTH_TOKEN`; the task cgroup cannot obtain the worker's AWS rol
 secret before the setup token expires or after it is revoked. In every mode, put only secret ARNs
 in OpenTofu inputs. Never put credential values in the image, variable files, tags, or cloud-init.
 
+For private worker routing, store a reusable, ephemeral, pre-approved Tailscale auth key as a raw
+Secrets Manager value and set `worker_tailscale_auth_key_secret_arn`. Each worker reads that one
+secret into a root-only file under `/run`, joins with its allocation-specific hostname, deletes the
+file, and publishes its local T3 service with Tailscale Serve. The worker security group needs no
+public ingress.
+
 Copy the AMI ID and matching `image_version` into the selected `worker_profiles` entry before applying OpenTofu. To roll back, restore the prior pair and apply again. OpenTofu creates a new launch-template version for future workers; an active worker keeps the AMI and toolchain it launched with.
 
 ## Remote state
@@ -111,6 +117,10 @@ secrets receive read-only access. A Codex `auth.json` secret receives read/write
 account credentials survive worker replacement. If a secret uses a customer-managed KMS key,
 grant the worker role `kms:Decrypt` for that key separately; the Codex account-cache path also needs
 the KMS permission required to write a new secret version.
+
+Set `worker_tailscale_auth_key_secret_arn` when routes use a tailnet. The key should be reusable
+because every allocation creates a new node, ephemeral so terminated workers disappear from the
+tailnet, and pre-approved so startup does not wait for an administrator.
 
 The controller starts with no public ingress. CA-04 owns the authenticated application route and TLS setup. Until then, add only a trusted owner CIDR if you need to test port 443.
 

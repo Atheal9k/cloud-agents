@@ -14,6 +14,7 @@ set -euo pipefail
 : "${PROFILE_NAME:?PROFILE_NAME is required}"
 : "${SOURCE_AMI_ID:?SOURCE_AMI_ID is required}"
 : "${T3_VERSION:?T3_VERSION is required}"
+: "${TAILSCALE_VERSION:?TAILSCALE_VERSION is required}"
 
 dnf install --assumeyes \
   ca-certificates \
@@ -27,6 +28,13 @@ dnf install --assumeyes \
   python3 \
   tar \
   xz
+
+dnf install --assumeyes dnf-plugins-core
+dnf config-manager --add-repo https://pkgs.tailscale.com/stable/amazon-linux/2023/tailscale.repo
+dnf install --assumeyes "tailscale-${TAILSCALE_VERSION}"
+systemctl disable --now tailscaled.service || true
+install -d -o root -g root -m 0700 /var/lib/tailscale
+find /var/lib/tailscale -mindepth 1 -delete
 
 install -d -m 0755 /opt/t3/bin
 
@@ -133,6 +141,7 @@ jq --null-input \
   --arg t3 "${T3_VERSION}" \
   --arg claude_code "${CLAUDE_CODE_VERSION}" \
   --arg codex "${CODEX_VERSION}" \
+  --arg tailscale "${TAILSCALE_VERSION}" \
   --argjson desktop_dependencies "${INSTALL_DESKTOP_DEPENDENCIES}" \
   --argjson shared_browser "${INSTALL_SHARED_BROWSER}" \
   --arg dcv "${DCV_VERSION}" \
@@ -145,6 +154,7 @@ jq --null-input \
       t3: $t3,
       claudeCode: $claude_code,
       codex: $codex,
+      tailscale: $tailscale,
       dcv: (if $shared_browser then $dcv else null end)
     },
     capabilities: {

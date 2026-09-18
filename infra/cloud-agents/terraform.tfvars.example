@@ -59,3 +59,6 @@ worker_codex_auth_json_secret_arn = null
 
 # Store the raw value printed by `claude setup-token` in this secret.
 worker_claude_oauth_token_secret_arn = null
+
+# Raw reusable, ephemeral, pre-approved Tailscale auth key for disposable workers.
+worker_tailscale_auth_key_secret_arn = null
