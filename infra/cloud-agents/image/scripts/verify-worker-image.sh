@@ -10,10 +10,16 @@ fail() {
 [[ "$(t3 --version)" == *"${T3_VERSION}"* ]] || fail "T3 version does not match"
 [[ "$(claude --version)" == *"${CLAUDE_CODE_VERSION}"* ]] || fail "Claude Code version does not match"
 [[ "$(codex --version)" == *"${CODEX_VERSION}"* ]] || fail "Codex version does not match"
+[[ "$(gh --version | head -n 1)" == "gh version ${GITHUB_CLI_VERSION} "* ]] \
+  || fail "GitHub CLI version does not match"
 [[ "$(tailscale version | head -n 1)" == "${TAILSCALE_VERSION}" ]] \
   || fail "Tailscale version does not match"
 command -v aws >/dev/null || fail "AWS CLI is unavailable for provider authentication"
 command -v tailscaled >/dev/null || fail "Tailscale daemon is unavailable"
+[[ -x /opt/t3/bin/cloud-agent-github-credentials ]] \
+  || fail "GitHub credential installer is unavailable"
+[[ -x /opt/t3/bin/cloud-agent-prepare-repository ]] \
+  || fail "repository preparation command is unavailable"
 [[ "$(systemctl is-enabled tailscaled.service 2>/dev/null || true)" == "disabled" ]] \
   || fail "Tailscale must remain disabled until worker bootstrap"
 systemctl is-active --quiet tailscaled.service && fail "Tailscale is active in the baked image"

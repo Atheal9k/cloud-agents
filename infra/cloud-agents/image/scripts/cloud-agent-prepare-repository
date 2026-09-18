@@ -1,0 +1,100 @@
+#!/bin/bash
+set -euo pipefail
+
+[[ "$#" -eq 8 ]] || {
+  echo "usage: cloud-agent-prepare-repository <region> <repository> <selected-ref> <output-branch> <allocation-id> <attempt> <git-secret-arn> <github-token-secret-arn>" >&2
+  exit 2
+}
+
+aws_region="$1"
+repository="$2"
+selected_ref="$3"
+output_branch="$4"
+allocation_id="$5"
+attempt="$6"
+git_ssh_secret_arn="$7"
+github_token_secret_arn="$8"
+workspace=/work/repository
+repository_url="https://github.com/${repository}.git"
+repository_credential_directory=''
+
+cleanup_repository_credential() {
+  if [[ -n "${repository_credential_directory}" ]]; then
+    rm -f -- \
+      "${repository_credential_directory}/secret" \
+      "${repository_credential_directory}/github.key" \
+      "${repository_credential_directory}/known_hosts"
+    rmdir -- "${repository_credential_directory}" 2>/dev/null || true
+  fi
+}
+trap cleanup_repository_credential EXIT
+
+if [[ -n "${git_ssh_secret_arn}" ]]; then
+  repository_credential_directory="$(mktemp --directory /run/t3-worker/repository-git.XXXXXX)"
+  chmod 0700 "${repository_credential_directory}"
+  repository_secret_file="${repository_credential_directory}/secret"
+  repository_key_file="${repository_credential_directory}/github.key"
+  repository_known_hosts="${repository_credential_directory}/known_hosts"
+  if ! aws secretsmanager get-secret-value \
+    --region "${aws_region}" \
+    --secret-id "${git_ssh_secret_arn}" \
+    --query SecretString \
+    --output text >"${repository_secret_file}"; then
+    echo "cloud-agent bootstrap failed: Git SSH secret is unavailable" >&2
+    exit 1
+  fi
+  if grep --quiet '^-----BEGIN OPENSSH PRIVATE KEY-----' "${repository_secret_file}"; then
+    mv "${repository_secret_file}" "${repository_key_file}"
+  elif ! jq --exit-status --raw-output \
+    'if type == "object" and length == 1 then .[] else empty end | select(type == "string")' \
+    "${repository_secret_file}" >"${repository_key_file}"; then
+    echo "cloud-agent bootstrap failed: Git SSH secret is not an OpenSSH private key" >&2
+    exit 1
+  else
+    rm -f "${repository_secret_file}"
+  fi
+  chmod 0600 "${repository_key_file}"
+  if ! ssh-keygen -y -P '' -f "${repository_key_file}" >/dev/null 2>&1; then
+    echo "cloud-agent bootstrap failed: Git SSH key is invalid or encrypted" >&2
+    exit 1
+  fi
+  printf '%s\n' \
+    '[ssh.github.com]:443 ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIOMqqnkVzrm0SdG6UOoqKLsabgH5C9okWi0dh2l9GKJl' \
+    >"${repository_known_hosts}"
+  chmod 0600 "${repository_known_hosts}"
+  repository_url="ssh://git@ssh.github.com:443/${repository}.git"
+  export GIT_SSH_COMMAND="ssh -F /dev/null -i ${repository_key_file} -o IdentitiesOnly=yes -o IdentityAgent=none -o BatchMode=yes -o StrictHostKeyChecking=yes -o HostKeyAlgorithms=ssh-ed25519 -o GlobalKnownHostsFile=/dev/null -o UserKnownHostsFile=${repository_known_hosts}"
+fi
+
+[[ ! -e "${workspace}" ]] || {
+  echo "cloud-agent bootstrap failed: repository workspace already exists" >&2
+  exit 1
+}
+git -c core.hooksPath=/dev/null init --quiet "${workspace}"
+git -C "${workspace}" remote add origin "${repository_url}"
+if ! GIT_TERMINAL_PROMPT=0 git -c core.hooksPath=/dev/null -C "${workspace}" \
+  fetch --no-tags --force -- origin "${selected_ref}"; then
+  echo "cloud-agent bootstrap failed: assigned repository ref could not be fetched" >&2
+  exit 1
+fi
+resolved_commit="$(git -C "${workspace}" rev-parse --verify 'FETCH_HEAD^{commit}')"
+git -c core.hooksPath=/dev/null -C "${workspace}" \
+  checkout --quiet -B "${output_branch}" "${resolved_commit}"
+git -C "${workspace}" config --local t3.cloudBaseCommit "${resolved_commit}"
+git -C "${workspace}" config --local t3.cloudAllocationId "${allocation_id}"
+git -C "${workspace}" config --local t3.cloudAttempt "${attempt}"
+unset GIT_SSH_COMMAND
+
+if [[ -n "${github_token_secret_arn}" ]]; then
+  /opt/t3/bin/cloud-agent-github-credentials \
+    "${aws_region}" \
+    "${github_token_secret_arn}" \
+    "${repository_credential_directory}" \
+    "${workspace}"
+  repository_credential_directory=''
+else
+  cleanup_repository_credential
+  repository_credential_directory=''
+fi
+chown -R cloudagent:cloudagent "${workspace}"
+trap - EXIT

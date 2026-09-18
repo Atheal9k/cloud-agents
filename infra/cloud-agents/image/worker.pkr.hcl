@@ -88,6 +88,16 @@ variable "tailscale_version" {
   default = "1.102.4"
 }
 
+variable "github_cli_version" {
+  type    = string
+  default = "2.101.0"
+}
+
+variable "github_cli_linux_x64_sha256" {
+  type    = string
+  default = "9bca2d1c16825f109907a23307628a2f0698fbf99662b73a5cf0b020293072b8"
+}
+
 locals {
   desktop_layer = var.install_shared_browser ? "shared-browser" : (var.install_desktop_dependencies ? "desktop" : "headless")
 }
@@ -127,6 +137,7 @@ source "amazon-ebs" "worker" {
     CodexVersion                  = var.codex_version
     ClaudeCodeVersion             = var.claude_code_version
     TailscaleVersion              = var.tailscale_version
+    GitHubCliVersion              = var.github_cli_version
   }
 }
 
@@ -219,6 +230,16 @@ build {
     destination = "/tmp/cloud-agent-worker-register"
   }
 
+  provisioner "file" {
+    source      = "${path.root}/scripts/cloud-agent-github-credentials"
+    destination = "/tmp/cloud-agent-github-credentials"
+  }
+
+  provisioner "file" {
+    source      = "${path.root}/scripts/cloud-agent-prepare-repository"
+    destination = "/tmp/cloud-agent-prepare-repository"
+  }
+
   provisioner "shell" {
     environment_vars = [
       "CLAUDE_CODE_VERSION=${var.claude_code_version}",
@@ -227,6 +248,8 @@ build {
       "DCV_GPG_KEY_SHA256=${var.dcv_gpg_key_sha256}",
       "DCV_VERSION=${var.dcv_version}",
       "IMAGE_VERSION=${var.image_version}",
+      "GITHUB_CLI_LINUX_X64_SHA256=${var.github_cli_linux_x64_sha256}",
+      "GITHUB_CLI_VERSION=${var.github_cli_version}",
       "INSTALL_DESKTOP_DEPENDENCIES=${var.install_desktop_dependencies}",
       "INSTALL_SHARED_BROWSER=${var.install_shared_browser}",
       "NODE_LINUX_X64_SHA256=${var.node_linux_x64_sha256}",
@@ -244,6 +267,7 @@ build {
     environment_vars = [
       "CLAUDE_CODE_VERSION=${var.claude_code_version}",
       "CODEX_VERSION=${var.codex_version}",
+      "GITHUB_CLI_VERSION=${var.github_cli_version}",
       "DCV_VERSION=${var.dcv_version}",
       "INSTALL_DESKTOP_DEPENDENCIES=${var.install_desktop_dependencies}",
       "INSTALL_SHARED_BROWSER=${var.install_shared_browser}",

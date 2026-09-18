@@ -6,6 +6,8 @@ set -euo pipefail
 : "${DCV_ARCHIVE_SHA256:?DCV_ARCHIVE_SHA256 is required}"
 : "${DCV_GPG_KEY_SHA256:?DCV_GPG_KEY_SHA256 is required}"
 : "${DCV_VERSION:?DCV_VERSION is required}"
+: "${GITHUB_CLI_LINUX_X64_SHA256:?GITHUB_CLI_LINUX_X64_SHA256 is required}"
+: "${GITHUB_CLI_VERSION:?GITHUB_CLI_VERSION is required}"
 : "${IMAGE_VERSION:?IMAGE_VERSION is required}"
 : "${INSTALL_DESKTOP_DEPENDENCIES:?INSTALL_DESKTOP_DEPENDENCIES is required}"
 : "${INSTALL_SHARED_BROWSER:?INSTALL_SHARED_BROWSER is required}"
@@ -109,6 +111,17 @@ echo "${NODE_LINUX_X64_SHA256}  /tmp/${node_archive}" | sha256sum --check --stri
 tar --extract --file "/tmp/${node_archive}" --directory /usr/local --strip-components 1
 rm -f "/tmp/${node_archive}"
 
+github_cli_archive="gh_${GITHUB_CLI_VERSION}_linux_amd64.tar.gz"
+github_cli_directory="/tmp/gh_${GITHUB_CLI_VERSION}_linux_amd64"
+curl --fail --location --proto '=https' --tlsv1.2 \
+  --output "/tmp/${github_cli_archive}" \
+  "https://github.com/cli/cli/releases/download/v${GITHUB_CLI_VERSION}/${github_cli_archive}"
+echo "${GITHUB_CLI_LINUX_X64_SHA256}  /tmp/${github_cli_archive}" | sha256sum --check --strict
+tar --extract --file "/tmp/${github_cli_archive}" --directory /tmp
+install -m 0755 "${github_cli_directory}/bin/gh" /usr/local/bin/gh
+rm -f "/tmp/${github_cli_archive}"
+rm -r "${github_cli_directory}"
+
 npm install --global --omit=dev --no-audit --no-fund \
   "@anthropic-ai/claude-code@${CLAUDE_CODE_VERSION}" \
   "@openai/codex@${CODEX_VERSION}" \
@@ -125,6 +138,8 @@ install -d -o cloudagent -g cloudagent -m 0750 /work
 install -d -o root -g cloudagent -m 0750 /etc/t3
 install -m 0755 /tmp/cloud-agent-worker-preflight /opt/t3/bin/cloud-agent-worker-preflight
 install -m 0755 /tmp/cloud-agent-worker-register /opt/t3/bin/cloud-agent-worker-register
+install -m 0755 /tmp/cloud-agent-github-credentials /opt/t3/bin/cloud-agent-github-credentials
+install -m 0755 /tmp/cloud-agent-prepare-repository /opt/t3/bin/cloud-agent-prepare-repository
 install -m 0755 /tmp/cloud-agent-worker-cleanup /opt/t3/bin/cloud-agent-worker-cleanup
 install -m 0755 /tmp/cloud-agent-codex-auth-sync /opt/t3/bin/cloud-agent-codex-auth-sync
 install -m 0644 /tmp/cloud-agent-worker.service /etc/systemd/system/cloud-agent-worker.service
@@ -142,6 +157,7 @@ jq --null-input \
   --arg claude_code "${CLAUDE_CODE_VERSION}" \
   --arg codex "${CODEX_VERSION}" \
   --arg tailscale "${TAILSCALE_VERSION}" \
+  --arg github_cli "${GITHUB_CLI_VERSION}" \
   --argjson desktop_dependencies "${INSTALL_DESKTOP_DEPENDENCIES}" \
   --argjson shared_browser "${INSTALL_SHARED_BROWSER}" \
   --arg dcv "${DCV_VERSION}" \
@@ -155,6 +171,7 @@ jq --null-input \
       claudeCode: $claude_code,
       codex: $codex,
       tailscale: $tailscale,
+      githubCli: $github_cli,
       dcv: (if $shared_browser then $dcv else null end)
     },
     capabilities: {

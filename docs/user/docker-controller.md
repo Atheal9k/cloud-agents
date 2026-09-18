@@ -230,8 +230,11 @@ configured token directly to `gh api`; it does not read a browser or initiating 
 login. The controller machine and container must stay online until publication finishes.
 
 Worker bootstrap separately reads `worker_git_ssh_secret_arn` as root, fetches the assigned ref,
-checks out `/work/repository` on the requested output branch, and removes the key before starting
-T3. The agent cannot reach instance metadata and receives neither the key nor its secret ARN.
+and checks out `/work/repository` on the requested output branch. It removes the key before T3
+starts unless `worker_github_token_secret_arn` is configured. That opt-in keeps the SSH key under
+the protected worker runtime directory and exposes the scoped GitHub token to the task so `git
+push` and `gh pr create` work inside the thread. The agent still cannot reach instance metadata or
+read either secret ARN.
 
 Grant the GitHub token `Pull requests: write` for the target repository. If
 `cloud-agent-victor-key` is an account SSH key, its Git access is as broad as that account's

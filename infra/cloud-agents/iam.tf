@@ -237,6 +237,23 @@ resource "aws_iam_role_policy" "worker_git_credentials" {
   policy = data.aws_iam_policy_document.worker_git_credentials[0].json
 }
 
+data "aws_iam_policy_document" "worker_github_credentials" {
+  count = var.worker_github_token_secret_arn == null ? 0 : 1
+
+  statement {
+    sid       = "ReadTaskGitHubCredential"
+    actions   = ["secretsmanager:GetSecretValue"]
+    resources = [var.worker_github_token_secret_arn]
+  }
+}
+
+resource "aws_iam_role_policy" "worker_github_credentials" {
+  count  = var.worker_github_token_secret_arn == null ? 0 : 1
+  name   = "task-github-credential"
+  role   = aws_iam_role.worker.id
+  policy = data.aws_iam_policy_document.worker_github_credentials[0].json
+}
+
 data "aws_iam_policy_document" "worker_codex_credentials" {
   count = var.worker_codex_api_key_secret_arn == null ? 0 : 1
 

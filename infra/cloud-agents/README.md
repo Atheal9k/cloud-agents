@@ -19,7 +19,7 @@ not call SSM.
 
 ## Worker image
 
-Packer 1.16.0 and the Amazon plugin 1.8.2 build the worker AMI. The template requires an exact Amazon Linux 2023 x86_64 source AMI ID. It pins Node.js 24.13.1, T3 0.0.42, Codex 0.154.0, Claude Code 2.1.273, and Tailscale 1.102.4, then records those versions and the installed RPM set in `/opt/t3`.
+Packer 1.16.0 and the Amazon plugin 1.8.2 build the worker AMI. The template requires an exact Amazon Linux 2023 x86_64 source AMI ID. It pins Node.js 24.13.1, T3 0.0.42, Codex 0.154.0, Claude Code 2.1.273, GitHub CLI 2.101.0, and Tailscale 1.102.4, then records those versions and the installed RPM set in `/opt/t3`.
 
 ```powershell
 packer init ./image
@@ -54,7 +54,7 @@ The worker service keeps package-manager downloads in `/var/cache/t3-worker-depe
 
 Cloud run records include image boot, service startup, clone, setup, and provider-start timing data. The image writes the boot and service measurements to `/var/lib/t3-worker/startup-timings.json`; run workspaces and provider credentials stay outside the dependency cache.
 
-The baked image leaves `cloud-agent-worker.service` and `cloud-agent-worker-registration.service` disabled. Cloud-init fetches the assigned repository before enabling the worker, then enables registration after the private route is online. When `worker_git_ssh_secret_arn` is configured, root reads that key into `/run`, fetches the selected ref, checks out the output branch, and deletes the key before T3 starts. T3, registration, Codex, Claude Code, and every child process run as `cloudagent`; the provider processes remain in the worker service's systemd cgroup. Provider credentials live under `/run/t3-worker` and Claude Code does not check for automatic updates. The worker unit drops capabilities, blocks EC2 metadata for the cgroup, restricts writable paths, kills the whole cgroup on stop, preserves temporary credentials across automatic restarts, and removes its runtime directory on final stop. Its preflight checks the pinned tools in throwaway provider homes and confirms an IMDSv2 token cannot be obtained before T3 starts. The registration unit verifies the local T3 service and registers its configured HTTPS route. The task cgroup cannot read the bootstrap Git key, the controller's GitHub API token, or the worker instance role.
+The baked image leaves `cloud-agent-worker.service` and `cloud-agent-worker-registration.service` disabled. Cloud-init fetches the assigned repository before enabling the worker, then enables registration after the private route is online. When `worker_git_ssh_secret_arn` is configured, root reads that key into `/run`, fetches the selected ref, and checks out the output branch. By default it deletes the key before T3 starts. Setting `worker_github_token_secret_arn` opts the disposable task into GitHub publication: the task keeps the SSH key for pushes and receives the scoped token through its protected runtime environment for `gh`. T3, registration, Codex, Claude Code, and every child process run as `cloudagent`; the provider processes remain in the worker service's systemd cgroup. Provider credentials live under `/run/t3-worker` and Claude Code does not check for automatic updates. The worker unit drops capabilities, blocks EC2 metadata for the cgroup, restricts writable paths, kills the whole cgroup on stop, preserves temporary credentials across automatic restarts, and removes its runtime directory on final stop. Its preflight checks the pinned tools in throwaway provider homes and confirms an IMDSv2 token cannot be obtained before T3 starts. The registration unit verifies the local T3 service and registers its configured HTTPS route. The task cgroup cannot read the worker instance role.
 
 Codex supports either API-key authentication or a ChatGPT account cache; configure exactly one.
 `worker_codex_api_key_secret_arn` points to a secret containing the raw OpenAI API key.
@@ -107,10 +107,13 @@ configurable. Do not place credentials or provider tokens in variables.
 
 Set `worker_git_ssh_secret_arn` to a repository-scoped read key so cloud-init can prepare private
 repositories before the task service starts. The key is not written to the task workspace or
-worker environment. For Git publication in `ec2` mode, add the full Secrets Manager ARNs for the
+worker environment unless worker-side publication is enabled. Set `worker_github_token_secret_arn`
+to let the disposable task push its output branch and create pull requests with `gh`; this also
+retains the configured SSH key under the task's protected runtime directory. For controller-owned
+Git publication in `ec2` mode, add the full Secrets Manager ARNs for the
 SSH key and GitHub API token to `controller_credential_secret_arns`. This grants `DescribeSecret` and `GetSecretValue`
 only to the controller role. In `local` mode, grant those actions to the AWS identity used by the
-local T3 process instead. The worker role has no access to the GitHub API token. Configure
+local T3 process instead. Configure
 their names or ARNs at controller runtime with `T3CODE_CLOUD_GIT_SSH_SECRET_REF` and
 `T3CODE_CLOUD_GITHUB_TOKEN_SECRET_REF`; do not put secret values in OpenTofu variables.
 

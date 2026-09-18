@@ -244,7 +244,7 @@ variable "controller_credential_secret_arns" {
 }
 
 variable "worker_git_ssh_secret_arn" {
-  description = "Optional Secrets Manager ARN containing an SSH private key used only by root during worker bootstrap to fetch the assigned repository. The key is removed before the T3 worker service starts."
+  description = "Optional Secrets Manager ARN containing an SSH private key used by root to fetch the assigned repository. When worker_github_token_secret_arn is set, the key remains available to the disposable task so it can push its output branch."
   type        = string
   default     = null
   nullable    = true
@@ -255,6 +255,21 @@ variable "worker_git_ssh_secret_arn" {
       can(regex("^arn:[A-Za-z0-9-]+:secretsmanager:[a-z0-9-]+:[0-9]{12}:secret:[A-Za-z0-9/_+=.@-]+$", var.worker_git_ssh_secret_arn))
     )
     error_message = "worker_git_ssh_secret_arn must be a full AWS Secrets Manager ARN."
+  }
+}
+
+variable "worker_github_token_secret_arn" {
+  description = "Optional Secrets Manager ARN containing a GitHub token exposed only to the disposable task for GitHub CLI authentication. Requires worker_git_ssh_secret_arn so the task can push its branch."
+  type        = string
+  default     = null
+  nullable    = true
+
+  validation {
+    condition = (
+      var.worker_github_token_secret_arn == null ||
+      can(regex("^arn:[A-Za-z0-9-]+:secretsmanager:[a-z0-9-]+:[0-9]{12}:secret:[A-Za-z0-9/_+=.@-]+$", var.worker_github_token_secret_arn))
+    )
+    error_message = "worker_github_token_secret_arn must be a full AWS Secrets Manager ARN."
   }
 }
 
