@@ -1,7 +1,12 @@
 import { useAtomValue } from "@effect/atom-react";
 import { cloudWorkerConnectionRegistration } from "@t3tools/client-runtime/connection";
 import { squashAtomCommandFailure } from "@t3tools/client-runtime/state/runtime";
-import { CommandId, type CloudAllocationSnapshot, type RunAllocation } from "@t3tools/contracts";
+import {
+  CommandId,
+  type CloudAllocationSnapshot,
+  ProviderDriverKind,
+  type RunAllocation,
+} from "@t3tools/contracts";
 import { useNavigate } from "@tanstack/react-router";
 import { AsyncResult } from "effect/unstable/reactivity";
 import * as Option from "effect/Option";
@@ -44,6 +49,10 @@ const fieldClassName = "flex flex-col gap-1.5";
 const labelClassName = "text-xs font-medium text-foreground";
 const selectClassName =
   "h-8.5 rounded-lg border border-input bg-background px-3 text-sm text-foreground shadow-xs/5 outline-none focus:border-ring focus:ring-3 focus:ring-ring/24 sm:h-7.5";
+const CLOUD_PROVIDER_DRIVERS = new Set([
+  ProviderDriverKind.make("codex"),
+  ProviderDriverKind.make("claudeAgent"),
+]);
 
 function defaultModel(entry: ProviderInstanceEntry | undefined): string {
   return (
@@ -220,7 +229,11 @@ function CloudRunDialogForEnvironment(props: {
   const providers = useMemo(
     () =>
       deriveProviderInstanceEntries(serverProviders).filter(
-        (provider) => isProviderInstancePickerReady(provider) && provider.models.length > 0,
+        (provider) =>
+          CLOUD_PROVIDER_DRIVERS.has(provider.driverKind) &&
+          provider.isDefault &&
+          isProviderInstancePickerReady(provider) &&
+          provider.models.length > 0,
       ),
     [serverProviders],
   );

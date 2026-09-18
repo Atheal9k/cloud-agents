@@ -32,7 +32,10 @@ import { OrchestrationEngineService } from "../orchestration/Services/Orchestrat
 import { ProviderRegistry } from "../provider/Services/ProviderRegistry.ts";
 import { SharedBrowserHost } from "./SharedBrowserHost.ts";
 
-const QUALIFIED_DRIVER = ProviderDriverKind.make("codex");
+const QUALIFIED_DRIVERS = new Set([
+  ProviderDriverKind.make("codex"),
+  ProviderDriverKind.make("claudeAgent"),
+]);
 
 export class CloudProviderExecution extends Context.Service<
   CloudProviderExecution,
@@ -159,7 +162,7 @@ const build = Effect.fn("CloudProviderExecution.build")(function* (input?: {
     const provider = snapshots.find(
       (candidate) => candidate.instanceId === turn.modelSelection.instanceId,
     );
-    if (provider === undefined || provider.driver !== QUALIFIED_DRIVER) {
+    if (provider === undefined || !QUALIFIED_DRIVERS.has(provider.driver)) {
       return yield* executionError(
         "provider-not-qualified",
         `Provider instance '${turn.modelSelection.instanceId}' is not qualified for cloud execution.`,

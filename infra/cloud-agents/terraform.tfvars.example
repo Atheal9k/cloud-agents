@@ -43,7 +43,11 @@ artifact_retention_days = 30
 # T3CODE_CLOUD_GITHUB_TOKEN_SECRET_REF environment variables.
 controller_credential_secret_arns = []
 
-# The first release qualifies Codex only. Store the raw OpenAI API key in this
-# Secrets Manager secret. Disposable workers may read this one secret, while
-# task processes remain unable to obtain the worker's AWS role credentials.
+# Choose one Codex mode. The API-key secret contains a raw OpenAI API key. The
+# auth-json secret contains the complete auth.json from a ChatGPT account login
+# and permits workers to persist refreshed credentials back to the same secret.
 worker_codex_api_key_secret_arn = null
+worker_codex_auth_json_secret_arn = null
+
+# Store the raw value printed by `claude setup-token` in this secret.
+worker_claude_oauth_token_secret_arn = null

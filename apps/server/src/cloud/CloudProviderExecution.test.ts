@@ -482,21 +482,55 @@ it.effect("reports authentication, model, and quota failures separately", () =>
   }),
 );
 
-it.effect("rejects unqualified providers before creating worker state", () =>
+it.effect("starts Claude through the same cloud orchestration path", () =>
   Effect.gen(function* () {
-    const claude = {
+    const claude = decodeProvider({
       ...readyCodex,
       instanceId: ProviderInstanceId.make("claude-cloud"),
       driver: ProviderDriverKind.make("claudeAgent"),
-    };
+      models: [
+        {
+          slug: "claude-sonnet-4-5",
+          name: "Claude Sonnet 4.5",
+          aliases: [],
+          isCustom: false,
+          capabilities: null,
+        },
+      ],
+    });
     const { commands, execution } = yield* fixture([claude]);
+    const input = startInput();
+    const result = yield* execution.start({
+      ...input,
+      turn: {
+        ...input.turn,
+        modelSelection: { instanceId: claude.instanceId, model: "claude-sonnet-4-5" },
+      },
+    });
+
+    expect(result.acceptedSequence).toBe(3);
+    expect(commands.at(-1)).toMatchObject({
+      type: "thread.turn.start",
+      modelSelection: { instanceId: "claude-cloud", model: "claude-sonnet-4-5" },
+    });
+  }),
+);
+
+it.effect("rejects unqualified providers before creating worker state", () =>
+  Effect.gen(function* () {
+    const cursor = decodeProvider({
+      ...readyCodex,
+      instanceId: ProviderInstanceId.make("cursor-cloud"),
+      driver: ProviderDriverKind.make("cursor"),
+    });
+    const { commands, execution } = yield* fixture([cursor]);
     const input = startInput();
     const error = yield* execution
       .start({
         ...input,
         turn: {
           ...input.turn,
-          modelSelection: { instanceId: claude.instanceId, model: "gpt-5.6-sol" },
+          modelSelection: { instanceId: cursor.instanceId, model: "gpt-5.6-sol" },
         },
       })
       .pipe(Effect.flip);

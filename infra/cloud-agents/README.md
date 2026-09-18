@@ -49,15 +49,23 @@ The worker service keeps package-manager downloads in `/var/cache/t3-worker-depe
 
 Cloud run records include image boot, service startup, clone, setup, and provider-start timing data. The image writes the boot and service measurements to `/var/lib/t3-worker/startup-timings.json`; run workspaces and provider credentials stay outside the dependency cache.
 
-The image enables `cloud-agent-worker.service` and the root-only `cloud-agent-worker-registration.service`. T3, Codex, Claude Code, and every child process run as `cloudagent` in one systemd cgroup. Claude Code uses `/run/t3-worker/credentials/claude` and does not check for automatic updates. The worker unit drops capabilities, blocks EC2 metadata for the cgroup, restricts writable paths, kills the whole cgroup on stop, and clears `/run/t3-worker/credentials` after success or failure. Its preflight checks the pinned tools and confirms an IMDSv2 token cannot be obtained before T3 starts. The registration unit alone reads the short-lived allocation tags, verifies the local T3 service, and registers its configured HTTPS route. The worker role has no access to the controller's Git or GitHub secrets.
+The image enables `cloud-agent-worker.service` and the root-only `cloud-agent-worker-registration.service`. T3, Codex, Claude Code, and every child process run as `cloudagent` in one systemd cgroup. Provider credentials live under `/run/t3-worker` and Claude Code does not check for automatic updates. The worker unit drops capabilities, blocks EC2 metadata for the cgroup, restricts writable paths, kills the whole cgroup on stop, and clears temporary credentials after success or failure. Its preflight checks the pinned tools and confirms an IMDSv2 token cannot be obtained before T3 starts. The registration unit alone reads the short-lived allocation tags, verifies the local T3 service, and registers its configured HTTPS route. The worker role has no access to the controller's Git or GitHub secrets.
 
-The first release qualifies Codex with API-key authentication. Put the raw OpenAI API key in one
-Secrets Manager secret and set `worker_codex_api_key_secret_arn` to its full ARN. The worker role
-can read only that secret. Cloud-init signs Codex in as `cloudagent`, keeps the resulting profile
-under `/run/t3-worker/credentials/codex`, and removes it when the worker service stops. Task
-processes cannot use instance metadata to obtain the worker role. Do not put the key in the image,
-OpenTofu variables, launch-template tags, or cloud-init text. API-key use is billed by OpenAI API
-usage; it does not use a ChatGPT subscription.
+Codex supports either API-key authentication or a ChatGPT account cache; configure exactly one.
+`worker_codex_api_key_secret_arn` points to a secret containing the raw OpenAI API key.
+`worker_codex_auth_json_secret_arn` points to a secret containing the complete `auth.json` created
+by `codex login --device-auth`. A worker restores that file, forces file-backed credential storage,
+and writes changes back to the same secret as Codex refreshes them, with service cleanup as a final
+fallback. The account-cache policy grants `GetSecretValue` and
+`PutSecretValue` only for that ARN. Serialize workers that share one cache to avoid concurrent
+refresh-token rotation. API-key use is billed as OpenAI API usage; account login uses the linked
+ChatGPT plan.
+
+Claude subscription authentication uses the raw value printed by `claude setup-token`. Store it
+in one secret and set `worker_claude_oauth_token_secret_arn` to the full ARN. The worker injects it
+as `CLAUDE_CODE_OAUTH_TOKEN`; the task cgroup cannot obtain the worker's AWS role. Replace the
+secret before the setup token expires or after it is revoked. In every mode, put only secret ARNs
+in OpenTofu inputs. Never put credential values in the image, variable files, tags, or cloud-init.
 
 Copy the AMI ID and matching `image_version` into the selected `worker_profiles` entry before applying OpenTofu. To roll back, restore the prior pair and apply again. OpenTofu creates a new launch-template version for future workers; an active worker keeps the AMI and toolchain it launched with.
 
@@ -86,10 +94,11 @@ the controller role. The worker role has no access to either master credential. 
 names or ARNs at controller runtime with `T3CODE_CLOUD_GIT_SSH_SECRET_REF` and
 `T3CODE_CLOUD_GITHUB_TOKEN_SECRET_REF`; do not put secret values in OpenTofu variables.
 
-Set `worker_codex_api_key_secret_arn` to the full ARN of the raw OpenAI API-key secret. This ARN is
-a deployment reference, not the key itself. The stack grants the worker role
-`secretsmanager:GetSecretValue` for that one ARN. If the secret uses a customer-managed KMS key,
-grant the worker role `kms:Decrypt` for that key separately.
+Set the applicable provider secret ARNs in `terraform.tfvars`. Codex API-key and Claude setup-token
+secrets receive read-only access. A Codex `auth.json` secret receives read/write access so refreshed
+account credentials survive worker replacement. If a secret uses a customer-managed KMS key,
+grant the worker role `kms:Decrypt` for that key separately; the Codex account-cache path also needs
+the KMS permission required to write a new secret version.
 
 The controller starts with no public ingress. CA-04 owns the authenticated application route and TLS setup. Until then, add only a trusted owner CIDR if you need to test port 443.
 

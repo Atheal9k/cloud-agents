@@ -11,12 +11,13 @@ controller sets `T3CODE_CLOUD_CONTROLLER=1`, which adds the cloud-allocation cap
 environment. Web and desktop clients show **New cloud thread** only when the connected environment
 advertises it.
 
-The supported path has one disposable x86_64 Linux web worker at a time, one GitHub repository per
-run, and Codex authenticated with an OpenAI API key. Use a repository whose setup, verification,
-and development-server commands are covered by its trusted configuration. Private package
-registries, private submodules, other providers, Android/iOS workers, and the native T3 mobile
-client are not supported by this release. A phone or tablet may use the responsive web client for
-ordinary app previews, but not the shared Agent browser.
+The supported path has one disposable x86_64 Linux web worker at a time and one GitHub repository
+per run. Codex may use a ChatGPT login or an OpenAI API key; Claude may use a Claude subscription
+setup token. Use a repository whose setup, verification, and development-server commands are
+covered by its trusted configuration. Private package registries, private submodules, other
+providers, Android/iOS workers, and the native T3 mobile client are not supported by this release.
+A phone or tablet may use the responsive web client for ordinary app previews, but not the shared
+Agent browser.
 
 The local machine is the controller host. Closing web or desktop does not stop an accepted run,
 but stopping Docker, sleeping the host, or losing its network connection interrupts allocation,
@@ -28,10 +29,8 @@ backstop, not a replacement for the controller.
 1. Build a pinned `linux-web` worker image. Build `linux-web-browser` as well if you need the
    shared Agent browser. Record each AMI ID and image version in
    `infra/cloud-agents/terraform.tfvars`.
-2. Create the remote OpenTofu state and apply `infra/cloud-agents` as described in its README. Set
-   `worker_codex_api_key_secret_arn` to the full ARN of a Secrets Manager secret whose value is the
-   raw OpenAI API key. The key itself must not appear in the variable file. API-key use is billed
-   as OpenAI API usage and does not use a ChatGPT subscription.
+2. Create the remote OpenTofu state and apply `infra/cloud-agents` as described in its README.
+   Configure at least one provider credential using [Provider subscriptions](#provider-subscriptions).
 3. Store the Git SSH key and GitHub API token in Secrets Manager. Add their full ARNs to
    `controller_credential_secret_arns` for the stack's controller role. The AWS identity mounted
    into the local Docker controller also needs read access to those secrets. Give the GitHub token
@@ -50,6 +49,29 @@ backstop, not a replacement for the controller.
 Before the first paid run, confirm that the controller is healthy, the expected launch template is
 the only template tagged for the selected profile, the worker price allowlist names its instance
 type, and the AWS expiry cleanup schedule is enabled.
+
+## Provider subscriptions
+
+Create provider credentials on a trusted machine, then store their values in AWS Secrets Manager.
+Only secret ARNs belong in `terraform.tfvars`.
+
+For Codex with a ChatGPT plan, set `cli_auth_credentials_store = "file"` in
+`~/.codex/config.toml`, run `codex login --device-auth`, then store the complete
+`~/.codex/auth.json` file as a secret and set `worker_codex_auth_json_secret_arn`. The file contains
+access and refresh tokens. A worker writes refreshed credentials back to that secret, so allow only
+one worker at a time to use the cache. To rotate or recover from an
+expired or revoked login, authenticate again and replace the secret value. Alternatively, store a
+raw OpenAI API key and set `worker_codex_api_key_secret_arn`; do not set both Codex variables.
+
+For Claude, run `claude setup-token`, store the raw token it prints as a secret, and set
+`worker_claude_oauth_token_secret_arn`. Setup tokens are long-lived but can expire or be revoked;
+run the command again and replace the secret when needed. Codex account login uses the linked
+ChatGPT allowance. Claude Agent SDK runs draw from the plan's separate monthly Agent SDK credit.
+Codex API keys use OpenAI API billing.
+
+After applying OpenTofu, launch **New cloud thread** and choose the authenticated Codex or Claude
+provider and model. If the worker reports an authentication failure, replace the relevant secret,
+apply again if its ARN changed, and start a new worker.
 
 ## Build and start
 

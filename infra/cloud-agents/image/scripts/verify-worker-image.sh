@@ -22,6 +22,9 @@ command -v aws >/dev/null || fail "AWS CLI is unavailable for provider authentic
 
 systemd-analyze verify /etc/systemd/system/cloud-agent-worker.service
 systemd-analyze verify /etc/systemd/system/cloud-agent-worker-registration.service
+systemd-analyze verify /etc/systemd/system/cloud-agent-codex-auth-sync.service
+systemd-analyze verify /etc/systemd/system/cloud-agent-codex-auth-sync.path
+systemd-analyze verify /etc/systemd/system/cloud-agent-codex-auth-sync.timer
 install -d -o root -g cloudagent -m 0750 /etc/t3
 cat >/etc/t3/worker.env <<'ENV'
 T3CODE_PORT=3773

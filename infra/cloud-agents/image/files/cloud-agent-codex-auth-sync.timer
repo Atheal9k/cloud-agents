@@ -1,0 +1,11 @@
+[Unit]
+Description=Retry persistence of refreshed Codex account credentials
+ConditionPathExists=/etc/t3/codex-auth-sync.env
+
+[Timer]
+OnBootSec=1m
+OnUnitActiveSec=1m
+Unit=cloud-agent-codex-auth-sync.service
+
+[Install]
+WantedBy=timers.target

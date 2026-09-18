@@ -231,6 +231,43 @@ resource "aws_iam_role_policy" "worker_codex_credentials" {
   policy = data.aws_iam_policy_document.worker_codex_credentials[0].json
 }
 
+data "aws_iam_policy_document" "worker_codex_account_credentials" {
+  count = var.worker_codex_auth_json_secret_arn == null ? 0 : 1
+
+  statement {
+    sid = "ReadAndRefreshCodexAccount"
+    actions = [
+      "secretsmanager:GetSecretValue",
+      "secretsmanager:PutSecretValue",
+    ]
+    resources = [var.worker_codex_auth_json_secret_arn]
+  }
+}
+
+resource "aws_iam_role_policy" "worker_codex_account_credentials" {
+  count  = var.worker_codex_auth_json_secret_arn == null ? 0 : 1
+  name   = "codex-account"
+  role   = aws_iam_role.worker.id
+  policy = data.aws_iam_policy_document.worker_codex_account_credentials[0].json
+}
+
+data "aws_iam_policy_document" "worker_claude_credentials" {
+  count = var.worker_claude_oauth_token_secret_arn == null ? 0 : 1
+
+  statement {
+    sid       = "ReadClaudeOauthToken"
+    actions   = ["secretsmanager:GetSecretValue"]
+    resources = [var.worker_claude_oauth_token_secret_arn]
+  }
+}
+
+resource "aws_iam_role_policy" "worker_claude_credentials" {
+  count  = var.worker_claude_oauth_token_secret_arn == null ? 0 : 1
+  name   = "claude-account"
+  role   = aws_iam_role.worker.id
+  policy = data.aws_iam_policy_document.worker_claude_credentials[0].json
+}
+
 resource "aws_iam_instance_profile" "controller" {
   name_prefix = "${var.name_prefix}-controller-"
   role        = aws_iam_role.controller.name

@@ -1,0 +1,45 @@
+#!/bin/bash
+set -euo pipefail
+
+pending_auth=/var/lib/t3-worker/provider-credentials/codex-auth-pending.json
+live_auth=/run/t3-worker/credentials/codex/auth.json
+synced_hash=/var/lib/t3-worker/provider-credentials/codex-auth-synced.sha256
+
+if [[ -f "${pending_auth}" ]]; then
+  source_auth="${pending_auth}"
+elif [[ -f "${live_auth}" ]]; then
+  source_auth="${live_auth}"
+else
+  exit 0
+fi
+
+auth_snapshot="$(mktemp /var/lib/t3-worker/provider-credentials/.codex-auth-sync.XXXXXX)"
+trap 'rm -f "${auth_snapshot}"' EXIT
+cp "${source_auth}" "${auth_snapshot}"
+chmod 0600 "${auth_snapshot}"
+
+if ! jq --exit-status \
+  '.auth_mode == "chatgpt" and (.tokens.refresh_token | type == "string" and length > 0)' \
+  "${auth_snapshot}" >/dev/null; then
+  echo "cloud-agent Codex auth sync deferred an incomplete credential cache" >&2
+  exit 1
+fi
+
+pending_hash="$(sha256sum "${auth_snapshot}" | awk '{ print $1 }')"
+if [[ -r "${synced_hash}" && "$(<"${synced_hash}")" == "${pending_hash}" ]]; then
+  [[ "${source_auth}" != "${pending_auth}" ]] || rm -f "${pending_auth}"
+  exit 0
+fi
+
+aws secretsmanager put-secret-value \
+  --region "${AWS_REGION}" \
+  --secret-id "${T3_CODEX_AUTH_SECRET_ARN}" \
+  --secret-string "file://${auth_snapshot}" \
+  --query VersionId \
+  --output text >/dev/null
+
+hash_tmp="$(mktemp /var/lib/t3-worker/provider-credentials/.codex-auth-synced.XXXXXX)"
+printf '%s\n' "${pending_hash}" >"${hash_tmp}"
+chmod 0600 "${hash_tmp}"
+mv "${hash_tmp}" "${synced_hash}"
+[[ "${source_auth}" != "${pending_auth}" ]] || rm -f "${pending_auth}"

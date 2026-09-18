@@ -184,6 +184,26 @@ build {
   }
 
   provisioner "file" {
+    source      = "${path.root}/scripts/cloud-agent-codex-auth-sync"
+    destination = "/tmp/cloud-agent-codex-auth-sync"
+  }
+
+  provisioner "file" {
+    source      = "${path.root}/files/cloud-agent-codex-auth-sync.service"
+    destination = "/tmp/cloud-agent-codex-auth-sync.service"
+  }
+
+  provisioner "file" {
+    source      = "${path.root}/files/cloud-agent-codex-auth-sync.path"
+    destination = "/tmp/cloud-agent-codex-auth-sync.path"
+  }
+
+  provisioner "file" {
+    source      = "${path.root}/files/cloud-agent-codex-auth-sync.timer"
+    destination = "/tmp/cloud-agent-codex-auth-sync.timer"
+  }
+
+  provisioner "file" {
     source      = "${path.root}/scripts/cloud-agent-worker-preflight"
     destination = "/tmp/cloud-agent-worker-preflight"
   }

@@ -118,12 +118,14 @@ resource "aws_launch_template" "worker" {
   }
 
   user_data = base64encode(templatefile("${path.module}/templates/worker-cloud-init.sh.tftpl", {
-    aws_region               = var.aws_region
-    codex_api_key_secret_arn = var.worker_codex_api_key_secret_arn == null ? "" : var.worker_codex_api_key_secret_arn
-    image_version            = each.value.image_version
-    profile_name             = each.key
-    service_port             = var.worker_control_port
-    ttl_minutes              = var.worker_default_ttl_minutes
+    aws_region                    = var.aws_region
+    claude_oauth_token_secret_arn = var.worker_claude_oauth_token_secret_arn == null ? "" : var.worker_claude_oauth_token_secret_arn
+    codex_api_key_secret_arn      = var.worker_codex_api_key_secret_arn == null ? "" : var.worker_codex_api_key_secret_arn
+    codex_auth_json_secret_arn    = var.worker_codex_auth_json_secret_arn == null ? "" : var.worker_codex_auth_json_secret_arn
+    image_version                 = each.value.image_version
+    profile_name                  = each.key
+    service_port                  = var.worker_control_port
+    ttl_minutes                   = var.worker_default_ttl_minutes
   }))
 
   tag_specifications {
@@ -156,6 +158,14 @@ resource "aws_launch_template" "worker" {
 
   lifecycle {
     create_before_destroy = true
+
+    precondition {
+      condition = !(
+        var.worker_codex_api_key_secret_arn != null &&
+        var.worker_codex_auth_json_secret_arn != null
+      )
+      error_message = "Set only one of worker_codex_api_key_secret_arn or worker_codex_auth_json_secret_arn."
+    }
   }
 
   depends_on = [

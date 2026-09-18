@@ -67,7 +67,8 @@ run "protected_plan" {
       "arn:aws:secretsmanager:us-west-1:123456789012:secret:cloud-agent-victor-key-AbCdEf",
       "arn:aws:secretsmanager:us-west-1:123456789012:secret:cloud-agent-github-token-AbCdEf",
     ]
-    worker_codex_api_key_secret_arn = "arn:aws:secretsmanager:us-west-1:123456789012:secret:cloud-agent-codex-api-key-AbCdEf"
+    worker_claude_oauth_token_secret_arn = "arn:aws:secretsmanager:us-west-1:123456789012:secret:cloud-agent-claude-oauth-AbCdEf"
+    worker_codex_auth_json_secret_arn    = "arn:aws:secretsmanager:us-west-1:123456789012:secret:cloud-agent-codex-auth-json-AbCdEf"
     worker_profiles = {
       linux-web = {
         ami_id               = "ami-0123456789abcdef0"
@@ -122,11 +123,16 @@ run "protected_plan" {
 
   assert {
     condition = alltrue([
-      length(aws_iam_role_policy.worker_codex_credentials) == 1,
-      strcontains(base64decode(aws_launch_template.worker["linux-web"].user_data), "cloud-agent-codex-api-key-AbCdEf"),
-      strcontains(base64decode(aws_launch_template.worker["linux-web"].user_data), "codex login --with-api-key"),
+      length(aws_iam_role_policy.worker_codex_credentials) == 0,
+      length(aws_iam_role_policy.worker_codex_account_credentials) == 1,
+      length(aws_iam_role_policy.worker_claude_credentials) == 1,
+      strcontains(base64decode(aws_launch_template.worker["linux-web"].user_data), "cloud-agent-codex-auth-json-AbCdEf"),
+      strcontains(base64decode(aws_launch_template.worker["linux-web"].user_data), "cli_auth_credentials_store = \"file\""),
+      strcontains(base64decode(aws_launch_template.worker["linux-web"].user_data), "cloud-agent-codex-auth-sync.path"),
+      strcontains(base64decode(aws_launch_template.worker["linux-web"].user_data), "cloud-agent-claude-oauth-AbCdEf"),
+      strcontains(base64decode(aws_launch_template.worker["linux-web"].user_data), "CLAUDE_CODE_OAUTH_TOKEN"),
     ])
-    error_message = "Configured Codex authentication must be fetched by the disposable worker without embedding the API key."
+    error_message = "Configured Codex and Claude subscriptions must be fetched by the disposable worker without embedding credential values."
   }
 
   assert {
@@ -214,6 +220,61 @@ run "protected_plan" {
   }
 }
 
+run "api_key_plan" {
+  command = plan
+
+  providers = {
+    archive = archive.mock
+    aws     = aws.mock
+  }
+
+  variables {
+    worker_codex_api_key_secret_arn = "arn:aws:secretsmanager:us-west-1:123456789012:secret:cloud-agent-codex-api-key-AbCdEf"
+    worker_profiles = {
+      linux-web = {
+        ami_id               = "ami-0123456789abcdef0"
+        image_version        = "0.0.42-ca27.1"
+        instance_type        = "t3.medium"
+        root_volume_size_gib = 30
+      }
+    }
+  }
+
+  assert {
+    condition = alltrue([
+      length(aws_iam_role_policy.worker_codex_credentials) == 1,
+      length(aws_iam_role_policy.worker_codex_account_credentials) == 0,
+      strcontains(base64decode(aws_launch_template.worker["linux-web"].user_data), "cloud-agent-codex-api-key-AbCdEf"),
+      strcontains(base64decode(aws_launch_template.worker["linux-web"].user_data), "codex login --with-api-key"),
+    ])
+    error_message = "The existing Codex API-key authentication mode must remain available."
+  }
+}
+
+run "ambiguous_codex_authentication" {
+  command = plan
+
+  providers = {
+    archive = archive.mock
+    aws     = aws.mock
+  }
+
+  variables {
+    worker_codex_api_key_secret_arn   = "arn:aws:secretsmanager:us-west-1:123456789012:secret:cloud-agent-codex-api-key-AbCdEf"
+    worker_codex_auth_json_secret_arn = "arn:aws:secretsmanager:us-west-1:123456789012:secret:cloud-agent-codex-auth-json-AbCdEf"
+    worker_profiles = {
+      linux-web = {
+        ami_id               = "ami-0123456789abcdef0"
+        image_version        = "0.0.42-ca27.1"
+        instance_type        = "t3.medium"
+        root_volume_size_gib = 30
+      }
+    }
+  }
+
+  expect_failures = [aws_launch_template.worker]
+}
+
 run "sandbox_apply" {
   command = apply
 
@@ -247,7 +308,11 @@ run "sandbox_apply" {
   }
 
   assert {
-    condition     = length(aws_iam_role_policy.worker_codex_credentials) == 0
-    error_message = "Workers must not receive provider-secret access unless Codex authentication is configured."
+    condition = alltrue([
+      length(aws_iam_role_policy.worker_codex_credentials) == 0,
+      length(aws_iam_role_policy.worker_codex_account_credentials) == 0,
+      length(aws_iam_role_policy.worker_claude_credentials) == 0,
+    ])
+    error_message = "Workers must not receive provider-secret access unless provider authentication is configured."
   }
 }

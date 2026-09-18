@@ -58,12 +58,14 @@ smaller change and preserves one writer per thread.
 
 ### Codex
 
-Codex was selected as the first cloud provider. The CLI supports Linux and
-headless device-code authentication. CA-01 performed a fresh
-`codex login --device-auth` as the worker service user rather than copying a
-desktop auth cache. The resulting cache belongs to that worker identity; the
-CLI is responsible for refreshing ChatGPT credentials while they remain
-valid. Expired or revoked credentials require another login.
+Codex supports Linux and headless device-code authentication. Operators create
+the account cache on a trusted machine with `codex login --device-auth` and
+store the complete `auth.json` in Secrets Manager. A disposable worker restores
+the cache into its isolated provider home. Codex refreshes the ChatGPT
+credentials, and a root helper writes a changed cache back to the same scoped
+secret when the file changes and again during service cleanup. Workers sharing
+one cache are serialized so refresh-token rotation has one writer. Expired or
+revoked credentials require another login and secret replacement.
 
 For long-lived unattended workers, an API key can instead be supplied through
 `codex login --with-api-key` over standard input. API-key use is billed as API
@@ -80,11 +82,11 @@ process; retained results and explicit retry are the recovery boundary.
 
 ### Claude
 
-Claude Code supports Linux and browser authentication from remote shells.
-CA-01 ran `claude auth login` on the worker and completed the returned browser
-flow. Claude stored the refreshable subscription credential at
-`/home/cloudagent/.claude/.credentials.json`; no desktop credential cache was
-copied.
+Claude Code supports a long-lived subscription token created by
+`claude setup-token`. Operators create it on a trusted machine and store the raw
+value in Secrets Manager. Provisioning injects it as
+`CLAUDE_CODE_OAUTH_TOKEN`; it is not copied from a desktop credential cache and
+does not need writeback from a disposable worker.
 
 T3 runs Claude through its existing Agent SDK adapter. The adapter persists the
 Claude session identifier with the worker-owned thread, sends interrupts to the
@@ -92,10 +94,9 @@ live SDK session, and supplies the saved identifier when it resumes. The same
 durability limit applies as Codex: both T3 state and the provider home must
 survive if a later worker process is expected to resume the session.
 
-The proof used a Claude Team subscription. Anthropic accounts Agent SDK usage
-against a separate monthly Agent SDK credit on subscription plans. A Console
-API key uses API billing instead. Long-running infrastructure must choose and
-budget one of those modes explicitly.
+Claude Agent SDK use draws from a separate monthly Agent SDK credit on
+subscription plans. A Console API key uses API billing instead. Long-running
+infrastructure must choose and budget one of those modes explicitly.
 
 Codex and Claude are qualified for this ownership model. Other providers need
 the same Linux, authentication, interruption, resume, and disconnect proof

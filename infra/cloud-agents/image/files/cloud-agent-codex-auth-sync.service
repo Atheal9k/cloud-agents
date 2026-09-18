@@ -1,0 +1,33 @@
+[Unit]
+Description=Persist refreshed Codex account credentials
+After=network-online.target
+Wants=network-online.target
+ConditionPathExists=/etc/t3/codex-auth-sync.env
+
+[Service]
+Type=oneshot
+EnvironmentFile=/etc/t3/codex-auth-sync.env
+ExecStart=/opt/t3/bin/cloud-agent-codex-auth-sync
+Restart=on-failure
+RestartSec=15s
+UMask=0077
+
+NoNewPrivileges=yes
+PrivateDevices=yes
+PrivateTmp=yes
+ProtectClock=yes
+ProtectControlGroups=yes
+ProtectHome=yes
+ProtectHostname=yes
+ProtectKernelLogs=yes
+ProtectKernelModules=yes
+ProtectKernelTunables=yes
+ProtectSystem=strict
+ReadWritePaths=/var/lib/t3-worker/provider-credentials
+RestrictAddressFamilies=AF_UNIX AF_INET AF_INET6
+RestrictNamespaces=yes
+RestrictRealtime=yes
+RestrictSUIDSGID=yes
+LockPersonality=yes
+CapabilityBoundingSet=
+AmbientCapabilities=
