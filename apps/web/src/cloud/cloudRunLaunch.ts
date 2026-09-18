@@ -2,6 +2,7 @@ import {
   CloudProviderUnansweredRequestSeconds,
   CommandId,
   MessageId,
+  type OrchestrationProjectShell,
   ProviderInstanceId,
   RunAllocationAttempt,
   RunAllocationId,
@@ -12,6 +13,7 @@ import {
   type CloudAllocationLimits,
   ThreadId,
 } from "@t3tools/contracts";
+import { sourceControlRepositorySelector } from "@t3tools/shared/sourceControl";
 import type { ProviderInstanceEntry } from "../providerInstances";
 
 export interface CloudRunLaunchDraft {
@@ -30,6 +32,26 @@ export interface CloudRunLaunchDraft {
 
 const DEFAULT_CLOUD_RUN_MINUTES = 3 * 24 * 60;
 
+export interface CloudRunProjectOption {
+  readonly title: string;
+  readonly repository: string;
+}
+
+export function cloudRunProjectOptions(
+  projects: ReadonlyArray<Pick<OrchestrationProjectShell, "title" | "repositoryIdentity">>,
+): ReadonlyArray<CloudRunProjectOption> {
+  const seenRepositories = new Set<string>();
+  return projects.flatMap((project) => {
+    if (project.repositoryIdentity?.provider !== "github") return [];
+    const repository = sourceControlRepositorySelector(project.repositoryIdentity);
+    if (repository === null) return [];
+    const key = repository.toLowerCase();
+    if (seenRepositories.has(key)) return [];
+    seenRepositories.add(key);
+    return [{ title: project.title, repository }];
+  });
+}
+
 function defaultModel(entry: ProviderInstanceEntry | undefined): string {
   return (
     entry?.models.find((model) => model.isDefault && !model.isCustom)?.slug ??
@@ -41,6 +63,7 @@ function defaultModel(entry: ProviderInstanceEntry | undefined): string {
 export function createInitialCloudRunDraft(
   snapshot: CloudAllocationSnapshot | null,
   providers: ReadonlyArray<ProviderInstanceEntry>,
+  repository = "",
 ): CloudRunLaunchDraft {
   const maxRunMinutes = Math.max(
     1,
@@ -52,7 +75,7 @@ export function createInitialCloudRunDraft(
   );
   const provider = providers[0];
   return {
-    repository: "",
+    repository,
     selectedRef: "main",
     task: "",
     providerInstanceId: provider?.instanceId ?? "",
@@ -109,6 +132,9 @@ export function buildCloudRunLaunchCommand(input: {
   const runMinutes = minutes(input.draft.runMinutes);
   const inputWaitMinutes = minutes(input.draft.inputWaitMinutes);
 
+  if (repository.length === 0) {
+    return { status: "invalid", message: "Choose a project linked to a GitHub repository." };
+  }
   if (!REPOSITORY_PATTERN.test(repository)) {
     return { status: "invalid", message: "Repository must use the owner/name format." };
   }

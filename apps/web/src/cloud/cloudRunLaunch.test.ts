@@ -1,8 +1,9 @@
 import { describe, expect, it } from "vite-plus/test";
-import type { CloudAllocationLimits } from "@t3tools/contracts";
+import { type CloudAllocationLimits, type RepositoryIdentity } from "@t3tools/contracts";
 import {
   buildCloudRunLaunchCommand,
   cloudRunDisplayState,
+  cloudRunProjectOptions,
   createInitialCloudRunDraft,
   reconcileCloudRunLaunchInstanceType,
   type CloudRunLaunchDraft,
@@ -32,11 +33,63 @@ const draft: CloudRunLaunchDraft = {
 };
 
 describe("cloud run launch", () => {
+  it("offers each saved GitHub repository once", () => {
+    const githubIdentity: RepositoryIdentity = {
+      canonicalKey: "github.com/pingdotgg/t3code",
+      locator: {
+        source: "git-remote",
+        remoteName: "origin",
+        remoteUrl: "https://github.com/pingdotgg/t3code.git",
+      },
+      provider: "github",
+      owner: "pingdotgg",
+      name: "t3code",
+      displayName: "pingdotgg/t3code",
+    };
+
+    expect(
+      cloudRunProjectOptions([
+        {
+          title: "T3 Code",
+          repositoryIdentity: githubIdentity,
+        },
+        {
+          title: "Duplicate checkout",
+          repositoryIdentity: githubIdentity,
+        },
+        {
+          title: "Local only",
+          repositoryIdentity: null,
+        },
+      ]),
+    ).toEqual([
+      {
+        title: "T3 Code",
+        repository: "pingdotgg/t3code",
+      },
+    ]);
+  });
+
   it("starts new cloud threads with the requested defaults", () => {
-    expect(createInitialCloudRunDraft(null, [])).toMatchObject({
+    expect(createInitialCloudRunDraft(null, [], "pingdotgg/t3code")).toMatchObject({
+      repository: "pingdotgg/t3code",
       runtimeMode: "full-access",
       runMinutes: "4320",
       publication: "automatic-draft-pr",
+    });
+  });
+
+  it("requires a saved GitHub project", () => {
+    expect(
+      buildCloudRunLaunchCommand({
+        draft: { ...draft, repository: "" },
+        limits,
+        now: new Date("2026-09-17T10:00:00.000Z"),
+        requestId: "request-19",
+      }),
+    ).toEqual({
+      status: "invalid",
+      message: "Choose a project linked to a GitHub repository.",
     });
   });
 

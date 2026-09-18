@@ -17,6 +17,7 @@ import { environmentCatalog } from "../../connection/catalog";
 import {
   buildCloudRunLaunchCommand,
   cloudRunDisplayState,
+  cloudRunProjectOptions,
   createInitialCloudRunDraft,
   reconcileCloudRunLaunchInstanceType,
   type CloudRunLaunchDraft,
@@ -25,7 +26,7 @@ import { onOpenCloudLaunchDialog } from "../../cloud/cloudLaunchDialogBus";
 import { buildThreadRouteParams } from "../../threadRoutes";
 import { randomUUID } from "../../lib/utils";
 import { usePrimaryEnvironmentId } from "../../state/environments";
-import { useServerConfigs } from "../../state/entities";
+import { useProjects, useServerConfigs } from "../../state/entities";
 import { cloudAllocations } from "../../state/cloudAllocations";
 import { primaryServerProvidersAtom } from "../../state/server";
 import { useAtomCommand } from "../../state/use-atom-command";
@@ -194,6 +195,7 @@ function CloudRunDialogForEnvironment(props: {
   readonly environmentId: NonNullable<ReturnType<typeof usePrimaryEnvironmentId>>;
 }) {
   const navigate = useNavigate();
+  const projects = useProjects();
   const serverProviders = useAtomValue(primaryServerProvidersAtom);
   const providers = useMemo(
     () =>
@@ -210,10 +212,13 @@ function CloudRunDialogForEnvironment(props: {
     cloudAllocations.snapshot({ environmentId: props.environmentId, input: {} }),
   );
   const snapshot = Option.getOrNull(AsyncResult.value(snapshotResult));
+  const projectOptions = useMemo(() => cloudRunProjectOptions(projects), [projects]);
   const dispatch = useAtomCommand(cloudAllocations.dispatch, { reportFailure: false });
   const registerEnvironment = useAtomCommand(environmentCatalog.register, { reportFailure: false });
   const [open, setOpen] = useState(false);
-  const [draft, setDraft] = useState(() => createInitialCloudRunDraft(snapshot, providers));
+  const [draft, setDraft] = useState(() =>
+    createInitialCloudRunDraft(snapshot, providers, projectOptions[0]?.repository),
+  );
   const [requestId, setRequestId] = useState(randomUUID);
   const [launchedId, setLaunchedId] = useState<string | null>(null);
   const [busyAllocationId, setBusyAllocationId] = useState<string | null>(null);
@@ -227,13 +232,13 @@ function CloudRunDialogForEnvironment(props: {
   useEffect(
     () =>
       onOpenCloudLaunchDialog(() => {
-        setDraft(createInitialCloudRunDraft(snapshot, providers));
+        setDraft(createInitialCloudRunDraft(snapshot, providers, projectOptions[0]?.repository));
         setRequestId(randomUUID());
         setLaunchedId(null);
         setError(null);
         setOpen(true);
       }),
-    [providers, snapshot],
+    [projectOptions, providers, snapshot],
   );
 
   const selectedProvider = providers.find(
@@ -351,13 +356,27 @@ function CloudRunDialogForEnvironment(props: {
                     <Input value="Cloud worker" disabled />
                   </label>
                   <label className={fieldClassName}>
-                    <span className={labelClassName}>Repository</span>
-                    <Input
+                    <span className={labelClassName}>Project</span>
+                    <select
+                      aria-label="Project"
+                      className={selectClassName}
                       value={draft.repository}
                       onChange={(event) =>
                         setDraft((current) => ({ ...current, repository: event.target.value }))
                       }
-                    />
+                    >
+                      <option value="">Select a linked GitHub project</option>
+                      {projectOptions.map((project) => (
+                        <option key={project.repository} value={project.repository}>
+                          {project.title} · {project.repository}
+                        </option>
+                      ))}
+                    </select>
+                    {projectOptions.length === 0 ? (
+                      <span className="text-xs text-muted-foreground">
+                        Add a project from a GitHub repository or Git URL first.
+                      </span>
+                    ) : null}
                   </label>
                   <label className={fieldClassName}>
                     <span className={labelClassName}>Start ref</span>
@@ -534,6 +553,7 @@ function CloudRunDialogForEnvironment(props: {
               type="submit"
               disabled={
                 snapshot === null ||
+                draft.repository.length === 0 ||
                 providers.length === 0 ||
                 busyAllocationId !== null ||
                 launchedId !== null

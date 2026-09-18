@@ -143,11 +143,12 @@ The controller continues provisioning, observing, and cleaning up the run if the
 disconnects. Keep the controller host and Docker running. Reopen the dialog to see recent runs,
 stop one, or open a registered worker as an ordinary T3 thread.
 
-For the first run, choose the configured `owner/name` repository and a branch, tag, or commit that
-the controller's Git credential can read. New cloud threads default to **Open draft PR**, full
-access, and a 3-day run limit. Choose **Review only** when you do not want the worker to publish its
-changes. The worker validates that Codex is installed, authenticated, and able to use the selected
-model before it starts the turn.
+For the first run, choose a linked project and a branch, tag, or commit that the controller's Git
+credential can read. Projects added from a GitHub repository or Git URL keep that remote and appear
+in the cloud thread project picker. New cloud threads default to **Open draft PR**, full access, and
+a 3-day run limit. Choose **Review only** when you do not want the worker to publish its changes. The
+worker validates that Codex is installed, authenticated, and able to use the selected model before
+it starts the turn.
 
 Set two HTTPS routes before launching a worker. This Tailscale example gives every allocation
 attempt a distinct MagicDNS name:

@@ -1432,8 +1432,17 @@ function OpenCommandPaletteDialog(props: {
         const title = source === "url" ? "Git URL" : `${label} repository`;
         const description =
           source === "url"
-            ? "Clone from a remote URL"
+            ? "Clone and save a GitHub or Git URL"
             : `Clone ${label} ${remoteProjectSourcePathHint(source)}`;
+        const searchTerms = [
+          "clone",
+          "remote",
+          "repository",
+          "repo",
+          "git",
+          label,
+          ...(source === "url" ? ["github"] : []),
+        ];
         const readiness = readinessBySource[source];
         const disabledHint = readiness.hint;
 
@@ -1465,7 +1474,7 @@ function OpenCommandPaletteDialog(props: {
           sourceItems.push({
             kind: "action",
             value: `action:add-project:${environmentId}:${source}:not-ready`,
-            searchTerms: ["clone", "remote", "repository", "repo", "git", label, "setup required"],
+            searchTerms: [...searchTerms, "setup required"],
             title,
             description,
             disabled: true,
@@ -1479,7 +1488,7 @@ function OpenCommandPaletteDialog(props: {
         sourceItems.push({
           kind: "action",
           value: `action:add-project:${environmentId}:${source}`,
-          searchTerms: ["clone", "remote", "repository", "repo", "git", label],
+          searchTerms,
           title,
           description,
           icon: remoteProjectSourceIcon(source, ITEM_ICON_CLASS),
