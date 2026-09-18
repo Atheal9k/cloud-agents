@@ -17,6 +17,8 @@ resource "aws_internet_gateway" "cloud_agents" {
 }
 
 resource "aws_subnet" "controller" {
+  count = var.controller_mode == "ec2" ? 1 : 0
+
   vpc_id                  = aws_vpc.cloud_agents.id
   cidr_block              = var.controller_subnet_cidr
   availability_zone       = data.aws_availability_zones.available.names[0]
@@ -54,7 +56,9 @@ resource "aws_route_table" "public" {
 }
 
 resource "aws_route_table_association" "controller" {
-  subnet_id      = aws_subnet.controller.id
+  count = var.controller_mode == "ec2" ? 1 : 0
+
+  subnet_id      = aws_subnet.controller[0].id
   route_table_id = aws_route_table.public.id
 }
 
@@ -64,6 +68,8 @@ resource "aws_route_table_association" "workers" {
 }
 
 resource "aws_security_group" "controller" {
+  count = var.controller_mode == "ec2" ? 1 : 0
+
   name_prefix = "${var.name_prefix}-controller-"
   description = "Permanent controller ingress and egress"
   vpc_id      = aws_vpc.cloud_agents.id
@@ -79,9 +85,9 @@ resource "aws_security_group" "controller" {
 }
 
 resource "aws_vpc_security_group_ingress_rule" "controller_https" {
-  for_each = toset(var.controller_ingress_cidrs)
+  for_each = var.controller_mode == "ec2" ? toset(var.controller_ingress_cidrs) : toset([])
 
-  security_group_id = aws_security_group.controller.id
+  security_group_id = aws_security_group.controller[0].id
   description       = "HTTPS from a trusted owner network"
   cidr_ipv4         = each.value
   from_port         = var.controller_service_port
@@ -90,7 +96,9 @@ resource "aws_vpc_security_group_ingress_rule" "controller_https" {
 }
 
 resource "aws_vpc_security_group_egress_rule" "controller_https" {
-  security_group_id = aws_security_group.controller.id
+  count = var.controller_mode == "ec2" ? 1 : 0
+
+  security_group_id = aws_security_group.controller[0].id
   description       = "HTTPS to AWS APIs, providers, Git hosts, and package registries"
   cidr_ipv4         = "0.0.0.0/0"
   from_port         = 443
@@ -99,7 +107,9 @@ resource "aws_vpc_security_group_egress_rule" "controller_https" {
 }
 
 resource "aws_vpc_security_group_egress_rule" "controller_worker_control" {
-  security_group_id            = aws_security_group.controller.id
+  count = var.controller_mode == "ec2" ? 1 : 0
+
+  security_group_id            = aws_security_group.controller[0].id
   referenced_security_group_id = aws_security_group.worker.id
   description                  = "T3 traffic to disposable workers"
   from_port                    = var.worker_control_port
@@ -108,7 +118,9 @@ resource "aws_vpc_security_group_egress_rule" "controller_worker_control" {
 }
 
 resource "aws_vpc_security_group_egress_rule" "controller_worker_preview" {
-  security_group_id            = aws_security_group.controller.id
+  count = var.controller_mode == "ec2" ? 1 : 0
+
+  security_group_id            = aws_security_group.controller[0].id
   referenced_security_group_id = aws_security_group.worker.id
   description                  = "Preview proxy traffic to disposable workers"
   from_port                    = var.worker_preview_port_range.from
@@ -132,8 +144,10 @@ resource "aws_security_group" "worker" {
 }
 
 resource "aws_vpc_security_group_ingress_rule" "worker_control" {
+  count = var.controller_mode == "ec2" ? 1 : 0
+
   security_group_id            = aws_security_group.worker.id
-  referenced_security_group_id = aws_security_group.controller.id
+  referenced_security_group_id = aws_security_group.controller[0].id
   description                  = "T3 traffic from the controller"
   from_port                    = var.worker_control_port
   to_port                      = var.worker_control_port
@@ -141,8 +155,10 @@ resource "aws_vpc_security_group_ingress_rule" "worker_control" {
 }
 
 resource "aws_vpc_security_group_ingress_rule" "worker_preview" {
+  count = var.controller_mode == "ec2" ? 1 : 0
+
   security_group_id            = aws_security_group.worker.id
-  referenced_security_group_id = aws_security_group.controller.id
+  referenced_security_group_id = aws_security_group.controller[0].id
   description                  = "Preview traffic from the controller proxy"
   from_port                    = var.worker_preview_port_range.from
   to_port                      = var.worker_preview_port_range.to

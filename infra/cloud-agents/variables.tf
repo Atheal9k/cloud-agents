@@ -15,6 +15,17 @@ variable "name_prefix" {
   }
 }
 
+variable "controller_mode" {
+  description = "Where the cloud-agent controller runs. Use ec2 for the permanent AWS host or local for a T3 process on the operator's machine."
+  type        = string
+  default     = "ec2"
+
+  validation {
+    condition     = contains(["ec2", "local"], var.controller_mode)
+    error_message = "controller_mode must be either ec2 or local."
+  }
+}
+
 variable "vpc_cidr" {
   description = "CIDR for the cloud-agent VPC."
   type        = string
@@ -279,6 +290,12 @@ variable "worker_claude_oauth_token_secret_arn" {
 
 variable "allow_retained_data_destroy" {
   description = "Allow OpenTofu to delete retained controller data and artifact objects. Set only for an isolated sandbox teardown."
+  type        = bool
+  default     = false
+}
+
+variable "allow_controller_data_destroy" {
+  description = "Allow OpenTofu to delete only the retained controller volume when switching an existing stack to local-controller mode."
   type        = bool
   default     = false
 }

@@ -4,13 +4,21 @@ output "aws_region" {
 }
 
 output "controller" {
-  description = "Stable references for the permanent controller."
-  value = {
-    instance_id       = aws_instance.controller.id
-    public_ip         = aws_eip.controller.public_ip
-    role_arn          = aws_iam_role.controller.arn
-    data_volume       = aws_ebs_volume.controller_data.id
-    security_group_id = aws_security_group.controller.id
+  description = "Controller deployment mode and EC2 references when controller_mode is ec2."
+  value = var.controller_mode == "ec2" ? {
+    mode              = var.controller_mode
+    instance_id       = aws_instance.controller[0].id
+    public_ip         = aws_eip.controller[0].public_ip
+    role_arn          = aws_iam_role.controller[0].arn
+    data_volume       = aws_ebs_volume.controller_data[0].id
+    security_group_id = aws_security_group.controller[0].id
+    } : {
+    mode              = var.controller_mode
+    instance_id       = null
+    public_ip         = null
+    role_arn          = null
+    data_volume       = null
+    security_group_id = null
   }
 }
 

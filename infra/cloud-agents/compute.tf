@@ -3,11 +3,13 @@ locals {
 }
 
 resource "aws_instance" "controller" {
+  count = var.controller_mode == "ec2" ? 1 : 0
+
   ami                         = local.controller_image_id
   instance_type               = var.controller_instance_type
-  subnet_id                   = aws_subnet.controller.id
-  vpc_security_group_ids      = [aws_security_group.controller.id]
-  iam_instance_profile        = aws_iam_instance_profile.controller.name
+  subnet_id                   = aws_subnet.controller[0].id
+  vpc_security_group_ids      = [aws_security_group.controller[0].id]
+  iam_instance_profile        = aws_iam_instance_profile.controller[0].name
   associate_public_ip_address = false
   disable_api_termination     = var.controller_termination_protection
   user_data_replace_on_change = true
@@ -52,6 +54,8 @@ resource "aws_instance" "controller" {
 }
 
 resource "aws_eip" "controller" {
+  count = var.controller_mode == "ec2" ? 1 : 0
+
   domain = "vpc"
 
   tags = {
@@ -62,14 +66,18 @@ resource "aws_eip" "controller" {
 }
 
 resource "aws_eip_association" "controller" {
-  allocation_id = aws_eip.controller.id
-  instance_id   = aws_instance.controller.id
+  count = var.controller_mode == "ec2" ? 1 : 0
+
+  allocation_id = aws_eip.controller[0].id
+  instance_id   = aws_instance.controller[0].id
 }
 
 resource "aws_volume_attachment" "controller_data" {
+  count = var.controller_mode == "ec2" ? 1 : 0
+
   device_name = "/dev/sdf"
-  volume_id   = aws_ebs_volume.controller_data.id
-  instance_id = aws_instance.controller.id
+  volume_id   = aws_ebs_volume.controller_data[0].id
+  instance_id = aws_instance.controller[0].id
 }
 
 resource "aws_launch_template" "worker" {

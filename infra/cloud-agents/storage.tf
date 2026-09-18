@@ -106,7 +106,9 @@ resource "aws_s3_bucket_policy" "artifacts" {
 }
 
 resource "aws_ebs_volume" "controller_data" {
-  availability_zone = aws_subnet.controller.availability_zone
+  count = var.controller_mode == "ec2" ? 1 : 0
+
+  availability_zone = aws_subnet.controller[0].availability_zone
   encrypted         = true
   size              = var.controller_data_volume_size_gib
   type              = "gp3"
@@ -118,6 +120,6 @@ resource "aws_ebs_volume" "controller_data" {
   }
 
   lifecycle {
-    prevent_destroy = !var.allow_retained_data_destroy
+    prevent_destroy = !(var.allow_controller_data_destroy || var.allow_retained_data_destroy)
   }
 }

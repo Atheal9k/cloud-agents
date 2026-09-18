@@ -15,6 +15,8 @@ data "aws_iam_policy_document" "ec2_assume_role" {
 }
 
 resource "aws_iam_role" "controller" {
+  count = var.controller_mode == "ec2" ? 1 : 0
+
   name_prefix        = "${var.name_prefix}-controller-"
   assume_role_policy = data.aws_iam_policy_document.ec2_assume_role.json
 
@@ -33,7 +35,9 @@ resource "aws_iam_role" "worker" {
 }
 
 resource "aws_iam_role_policy_attachment" "controller_ssm" {
-  role       = aws_iam_role.controller.name
+  count = var.controller_mode == "ec2" ? 1 : 0
+
+  role       = aws_iam_role.controller[0].name
   policy_arn = "arn:${data.aws_partition.current.partition}:iam::aws:policy/AmazonSSMManagedInstanceCore"
 }
 
@@ -65,13 +69,14 @@ data "aws_iam_policy_document" "controller_artifacts" {
 }
 
 resource "aws_iam_role_policy" "controller_artifacts" {
+  count  = var.controller_mode == "ec2" ? 1 : 0
   name   = "retained-artifacts"
-  role   = aws_iam_role.controller.id
+  role   = aws_iam_role.controller[0].id
   policy = data.aws_iam_policy_document.controller_artifacts.json
 }
 
 data "aws_iam_policy_document" "controller_credentials" {
-  count = length(var.controller_credential_secret_arns) == 0 ? 0 : 1
+  count = var.controller_mode == "ec2" && length(var.controller_credential_secret_arns) > 0 ? 1 : 0
 
   statement {
     sid = "ReadConfiguredControllerCredentials"
@@ -84,9 +89,9 @@ data "aws_iam_policy_document" "controller_credentials" {
 }
 
 resource "aws_iam_role_policy" "controller_credentials" {
-  count  = length(var.controller_credential_secret_arns) == 0 ? 0 : 1
+  count  = var.controller_mode == "ec2" && length(var.controller_credential_secret_arns) > 0 ? 1 : 0
   name   = "controller-credentials"
-  role   = aws_iam_role.controller.id
+  role   = aws_iam_role.controller[0].id
   policy = data.aws_iam_policy_document.controller_credentials[0].json
 }
 
@@ -192,8 +197,9 @@ data "aws_iam_policy_document" "controller_worker_allocation" {
 }
 
 resource "aws_iam_role_policy" "controller_worker_allocation" {
+  count  = var.controller_mode == "ec2" ? 1 : 0
   name   = "worker-allocation"
-  role   = aws_iam_role.controller.id
+  role   = aws_iam_role.controller[0].id
   policy = data.aws_iam_policy_document.controller_worker_allocation.json
 }
 
@@ -269,8 +275,10 @@ resource "aws_iam_role_policy" "worker_claude_credentials" {
 }
 
 resource "aws_iam_instance_profile" "controller" {
+  count = var.controller_mode == "ec2" ? 1 : 0
+
   name_prefix = "${var.name_prefix}-controller-"
-  role        = aws_iam_role.controller.name
+  role        = aws_iam_role.controller[0].name
 }
 
 resource "aws_iam_instance_profile" "worker" {

@@ -1,16 +1,21 @@
 # Personal AWS stack
 
-This OpenTofu stack creates the CA-03 infrastructure boundary:
+This OpenTofu stack creates the CA-03 infrastructure boundary. Set `controller_mode` to `ec2`
+for a permanent AWS controller or `local` when a T3 process on the operator's machine coordinates
+the workers:
 
-- one permanent Linux controller with a stable Elastic IP and retained encrypted data volume;
+- an optional permanent Linux controller with a stable Elastic IP and retained encrypted data volume;
 - disposable Linux worker launch templates with encrypted root volumes;
-- separate controller, worker, and cleanup identities;
-- controller-only worker ingress and configurable trusted HTTPS ingress to the controller;
+- separate worker and cleanup identities, plus a controller identity in `ec2` mode;
+- controller-only worker ingress in `ec2` mode and outbound worker registration in either mode;
 - an encrypted, versioned artifact bucket;
 - fixed SSM recovery diagnostics that cannot launch agent jobs; and
 - a scheduled cleanup function that terminates expired tagged workers even when the controller is unavailable.
 
-The controller still uses the configurable controller AMI. Workers require the versioned image built from `image/worker.pkr.hcl`; there is no generic Amazon Linux fallback. Normal startup does not call SSM.
+The EC2 controller uses the configurable controller AMI. Local-controller mode omits its instance,
+Elastic IP, data volume, subnet, security group, and IAM role. Workers require the versioned image
+built from `image/worker.pkr.hcl`; there is no generic Amazon Linux fallback. Normal startup does
+not call SSM.
 
 ## Worker image
 
@@ -86,12 +91,19 @@ CloudFormation retains the state bucket if its stack is deleted. `backend.hcl`, 
 
 ## Configure and plan
 
-Copy `terraform.tfvars.example` to `terraform.tfvars` and change only non-secret deployment settings. Image IDs, instance shapes, disks, CIDRs, TTL, artifact retention, and Linux worker profiles are configurable. Do not place credentials or provider tokens in variables.
+Copy `terraform.tfvars.example` to `terraform.tfvars` and change only non-secret deployment settings.
+Set `controller_mode = "local"` when the controller runs on your PC. That mode preserves worker
+launch templates, worker IAM, provider-secret access, artifacts, and expiry cleanup without paying
+for a permanent controller host. The local T3 process uses its own AWS credentials, which need the
+worker-allocation and controller-secret permissions described in the Docker controller guide.
+Image IDs, instance shapes, disks, CIDRs, TTL, artifact retention, and Linux worker profiles are
+configurable. Do not place credentials or provider tokens in variables.
 
-For Git publication, add the full Secrets Manager ARNs for the SSH key and GitHub API token to
-`controller_credential_secret_arns`. This grants `DescribeSecret` and `GetSecretValue` only to
-the controller role. The worker role has no access to either master credential. Configure their
-names or ARNs at controller runtime with `T3CODE_CLOUD_GIT_SSH_SECRET_REF` and
+For Git publication in `ec2` mode, add the full Secrets Manager ARNs for the SSH key and GitHub API
+token to `controller_credential_secret_arns`. This grants `DescribeSecret` and `GetSecretValue`
+only to the controller role. In `local` mode, grant those actions to the AWS identity used by the
+local T3 process instead. The worker role has no access to either master credential. Configure
+their names or ARNs at controller runtime with `T3CODE_CLOUD_GIT_SSH_SECRET_REF` and
 `T3CODE_CLOUD_GITHUB_TOKEN_SECRET_REF`; do not put secret values in OpenTofu variables.
 
 Set the applicable provider secret ARNs in `terraform.tfvars`. Codex API-key and Claude setup-token
@@ -107,7 +119,11 @@ tofu plan
 tofu apply
 ```
 
-The permanent controller has API termination protection. The retained EBS volume and artifact bucket also reject OpenTofu destruction by default. A worker instance launched from a template cannot delete any of those resources.
+In `ec2` mode, the permanent controller has API termination protection. Its retained EBS volume
+and the artifact bucket also reject OpenTofu destruction by default. A worker instance launched
+from a template cannot delete any of those resources. Switching an existing stack to `local`
+requires one apply with `allow_controller_data_destroy = true` so OpenTofu can remove the controller
+volume; set it back to `false` immediately afterward.
 
 ## Verify
 

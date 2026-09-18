@@ -63,6 +63,7 @@ run "protected_plan" {
   }
 
   variables {
+    controller_mode = "ec2"
     controller_credential_secret_arns = [
       "arn:aws:secretsmanager:us-west-1:123456789012:secret:cloud-agent-victor-key-AbCdEf",
       "arn:aws:secretsmanager:us-west-1:123456789012:secret:cloud-agent-github-token-AbCdEf",
@@ -89,7 +90,7 @@ run "protected_plan" {
   }
 
   assert {
-    condition     = aws_iam_role.controller.name_prefix != aws_iam_role.worker.name_prefix
+    condition     = aws_iam_role.controller[0].name_prefix != aws_iam_role.worker.name_prefix
     error_message = "The controller and workers must use separate IAM roles."
   }
 
@@ -109,9 +110,9 @@ run "protected_plan" {
 
   assert {
     condition = alltrue([
-      aws_vpc_security_group_ingress_rule.worker_control.from_port != 8443,
-      aws_vpc_security_group_ingress_rule.worker_preview.from_port != 8443,
-      aws_vpc_security_group_ingress_rule.worker_preview.to_port != 8443,
+      aws_vpc_security_group_ingress_rule.worker_control[0].from_port != 8443,
+      aws_vpc_security_group_ingress_rule.worker_preview[0].from_port != 8443,
+      aws_vpc_security_group_ingress_rule.worker_preview[0].to_port != 8443,
     ])
     error_message = "Amazon DCV must not have direct worker security-group ingress."
   }
@@ -136,17 +137,17 @@ run "protected_plan" {
   }
 
   assert {
-    condition     = aws_instance.controller.disable_api_termination
+    condition     = aws_instance.controller[0].disable_api_termination
     error_message = "The permanent controller must default to termination protection."
   }
 
   assert {
-    condition     = aws_instance.controller.root_block_device[0].encrypted
+    condition     = aws_instance.controller[0].root_block_device[0].encrypted
     error_message = "The controller root volume must be encrypted."
   }
 
   assert {
-    condition     = aws_ebs_volume.controller_data.encrypted
+    condition     = aws_ebs_volume.controller_data[0].encrypted
     error_message = "The retained controller data volume must be encrypted."
   }
 
@@ -179,7 +180,7 @@ run "protected_plan" {
   }
 
   assert {
-    condition     = aws_iam_role_policy.controller_worker_allocation.role == aws_iam_role.controller.id
+    condition     = aws_iam_role_policy.controller_worker_allocation[0].role == aws_iam_role.controller[0].id
     error_message = "Only the controller role may allocate and terminate workers."
   }
 
@@ -200,12 +201,12 @@ run "protected_plan" {
   }
 
   assert {
-    condition     = aws_vpc_security_group_ingress_rule.worker_control.referenced_security_group_id == aws_security_group.controller.id
+    condition     = aws_vpc_security_group_ingress_rule.worker_control[0].referenced_security_group_id == aws_security_group.controller[0].id
     error_message = "Worker control ingress must be scoped to the controller security group."
   }
 
   assert {
-    condition     = aws_vpc_security_group_egress_rule.controller_worker_control.referenced_security_group_id == aws_security_group.worker.id
+    condition     = aws_vpc_security_group_egress_rule.controller_worker_control[0].referenced_security_group_id == aws_security_group.worker.id
     error_message = "Controller control egress must be scoped to the worker security group."
   }
 
@@ -220,6 +221,58 @@ run "protected_plan" {
   }
 }
 
+run "local_controller_plan" {
+  command = plan
+
+  providers = {
+    archive = archive.mock
+    aws     = aws.mock
+  }
+
+  variables {
+    controller_mode = "local"
+    controller_credential_secret_arns = [
+      "arn:aws:secretsmanager:us-west-1:123456789012:secret:cloud-agent-victor-key-AbCdEf",
+    ]
+    worker_codex_auth_json_secret_arn = "arn:aws:secretsmanager:us-west-1:123456789012:secret:cloud-agent-codex-auth-json-AbCdEf"
+    worker_profiles = {
+      linux-web = {
+        ami_id               = "ami-0123456789abcdef0"
+        image_version        = "0.0.42-ca27.1"
+        instance_type        = "t3.medium"
+        root_volume_size_gib = 30
+      }
+    }
+  }
+
+  assert {
+    condition = alltrue([
+      length(aws_instance.controller) == 0,
+      length(aws_eip.controller) == 0,
+      length(aws_ebs_volume.controller_data) == 0,
+      length(aws_subnet.controller) == 0,
+      length(aws_security_group.controller) == 0,
+      length(aws_iam_role.controller) == 0,
+      length(aws_iam_instance_profile.controller) == 0,
+      length(aws_iam_role_policy.controller_credentials) == 0,
+      length(aws_iam_role_policy.controller_worker_allocation) == 0,
+    ])
+    error_message = "Local-controller mode must not provision permanent EC2 controller resources."
+  }
+
+  assert {
+    condition = alltrue([
+      length(aws_vpc_security_group_ingress_rule.worker_control) == 0,
+      length(aws_vpc_security_group_ingress_rule.worker_preview) == 0,
+      length(aws_launch_template.worker) == 1,
+      length(aws_iam_role_policy.worker_codex_account_credentials) == 1,
+      output.controller.mode == "local",
+      output.controller.instance_id == null,
+    ])
+    error_message = "Local-controller mode must retain outbound-routed worker infrastructure without opening worker ingress."
+  }
+}
+
 run "api_key_plan" {
   command = plan
 
@@ -229,7 +282,9 @@ run "api_key_plan" {
   }
 
   variables {
-    worker_codex_api_key_secret_arn = "arn:aws:secretsmanager:us-west-1:123456789012:secret:cloud-agent-codex-api-key-AbCdEf"
+    worker_claude_oauth_token_secret_arn = null
+    worker_codex_api_key_secret_arn      = "arn:aws:secretsmanager:us-west-1:123456789012:secret:cloud-agent-codex-api-key-AbCdEf"
+    worker_codex_auth_json_secret_arn    = null
     worker_profiles = {
       linux-web = {
         ami_id               = "ami-0123456789abcdef0"
@@ -284,9 +339,13 @@ run "sandbox_apply" {
   }
 
   variables {
-    allow_retained_data_destroy       = true
-    controller_termination_protection = false
-    name_prefix                       = "t3-ca03-test"
+    allow_retained_data_destroy          = true
+    controller_mode                      = "ec2"
+    controller_termination_protection    = false
+    name_prefix                          = "t3-ca03-test"
+    worker_claude_oauth_token_secret_arn = null
+    worker_codex_api_key_secret_arn      = null
+    worker_codex_auth_json_secret_arn    = null
     worker_profiles = {
       linux-web = {
         ami_id               = "ami-0123456789abcdef0"
@@ -303,7 +362,7 @@ run "sandbox_apply" {
   }
 
   assert {
-    condition     = !aws_instance.controller.disable_api_termination
+    condition     = !aws_instance.controller[0].disable_api_termination
     error_message = "An isolated sandbox must disable controller termination protection before teardown."
   }
 

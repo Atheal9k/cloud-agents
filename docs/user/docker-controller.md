@@ -30,11 +30,12 @@ backstop, not a replacement for the controller.
    shared Agent browser. Record each AMI ID and image version in
    `infra/cloud-agents/terraform.tfvars`.
 2. Create the remote OpenTofu state and apply `infra/cloud-agents` as described in its README.
+   Set `controller_mode = "local"` so the stack does not create a second controller on EC2.
    Configure at least one provider credential using [Provider subscriptions](#provider-subscriptions).
-3. Store the Git SSH key and GitHub API token in Secrets Manager. Add their full ARNs to
-   `controller_credential_secret_arns` for the stack's controller role. The AWS identity mounted
-   into the local Docker controller also needs read access to those secrets. Give the GitHub token
-   pull-request write access only to the repository or repositories you intend to use.
+3. Store the Git SSH key and GitHub API token in Secrets Manager. In `ec2` mode, add their full
+   ARNs to `controller_credential_secret_arns` for the stack's controller role. In `local` mode,
+   the AWS identity mounted into the Docker controller needs read access to those secrets. Give
+   the GitHub token pull-request write access only to the repositories you intend to use.
 4. Create the protected controller credential directory described under [State and
    credentials](#state-and-credentials). Its AWS identity needs the same scoped worker-allocation
    and secret-read permissions as the controller role. Set `T3CODE_CLOUD_GIT_SSH_SECRET_REF` and

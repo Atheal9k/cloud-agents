@@ -1,5 +1,13 @@
 aws_region = "us-west-1"
 
+# Run the controller on a permanent EC2 instance, or select "local" when a
+# local T3 process coordinates the AWS workers.
+controller_mode = "ec2"
+
+# Set this to true for the one apply that changes an existing EC2 controller
+# to local mode, then restore false.
+allow_controller_data_destroy = false
+
 # Keep this empty until CA-04 configures application authentication and TLS.
 # Then add only the trusted networks that should reach the controller.
 controller_ingress_cidrs = []
