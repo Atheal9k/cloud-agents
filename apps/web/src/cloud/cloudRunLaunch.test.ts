@@ -3,6 +3,7 @@ import type { CloudAllocationLimits } from "@t3tools/contracts";
 import {
   buildCloudRunLaunchCommand,
   cloudRunDisplayState,
+  createInitialCloudRunDraft,
   reconcileCloudRunLaunchInstanceType,
   type CloudRunLaunchDraft,
 } from "./cloudRunLaunch";
@@ -31,6 +32,34 @@ const draft: CloudRunLaunchDraft = {
 };
 
 describe("cloud run launch", () => {
+  it("starts new cloud threads with the requested defaults", () => {
+    expect(createInitialCloudRunDraft(null, [])).toMatchObject({
+      runtimeMode: "full-access",
+      runMinutes: "4320",
+      publication: "automatic-draft-pr",
+    });
+  });
+
+  it("caps the initial run limit to a controller's lower maximum", () => {
+    expect(
+      createInitialCloudRunDraft(
+        {
+          controller: {
+            mode: "local",
+            requiresHostOnline: true,
+            admission: { status: "open" },
+          },
+          limits,
+          workerPriceAssumptions: [],
+          spendingControl: "estimate-only",
+          allocations: [],
+          usage: [],
+        },
+        [],
+      ).runMinutes,
+    ).toBe("120");
+  });
+
   it("selects an allowed worker when controller limits arrive after the draft", () => {
     const pendingDraft = { ...draft, instanceType: "" };
     const reconciled = reconcileCloudRunLaunchInstanceType(pendingDraft, limits);

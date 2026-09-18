@@ -1,7 +1,7 @@
 [Unit]
 Description=T3 disposable cloud worker
-After=network-online.target
-Wants=network-online.target
+After=network-online.target docker.service
+Wants=network-online.target docker.service
 ConditionPathExists=/etc/t3/worker.env
 
 [Service]

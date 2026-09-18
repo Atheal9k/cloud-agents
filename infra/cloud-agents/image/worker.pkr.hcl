@@ -98,6 +98,16 @@ variable "github_cli_linux_x64_sha256" {
   default = "9bca2d1c16825f109907a23307628a2f0698fbf99662b73a5cf0b020293072b8"
 }
 
+variable "docker_compose_version" {
+  type    = string
+  default = "2.24.5"
+}
+
+variable "docker_compose_linux_x64_sha256" {
+  type    = string
+  default = "94355be1d1d395040bbda1490f98d5c7627c30798a7955e1f2a78fda33a4b3e1"
+}
+
 locals {
   desktop_layer = var.install_shared_browser ? "shared-browser" : (var.install_desktop_dependencies ? "desktop" : "headless")
 }
@@ -247,6 +257,8 @@ build {
       "DCV_ARCHIVE_SHA256=${var.dcv_archive_sha256}",
       "DCV_GPG_KEY_SHA256=${var.dcv_gpg_key_sha256}",
       "DCV_VERSION=${var.dcv_version}",
+      "DOCKER_COMPOSE_LINUX_X64_SHA256=${var.docker_compose_linux_x64_sha256}",
+      "DOCKER_COMPOSE_VERSION=${var.docker_compose_version}",
       "IMAGE_VERSION=${var.image_version}",
       "GITHUB_CLI_LINUX_X64_SHA256=${var.github_cli_linux_x64_sha256}",
       "GITHUB_CLI_VERSION=${var.github_cli_version}",
@@ -267,6 +279,7 @@ build {
     environment_vars = [
       "CLAUDE_CODE_VERSION=${var.claude_code_version}",
       "CODEX_VERSION=${var.codex_version}",
+      "DOCKER_COMPOSE_VERSION=${var.docker_compose_version}",
       "GITHUB_CLI_VERSION=${var.github_cli_version}",
       "DCV_VERSION=${var.dcv_version}",
       "INSTALL_DESKTOP_DEPENDENCIES=${var.install_desktop_dependencies}",

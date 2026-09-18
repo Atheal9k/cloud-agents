@@ -17,6 +17,7 @@ import { environmentCatalog } from "../../connection/catalog";
 import {
   buildCloudRunLaunchCommand,
   cloudRunDisplayState,
+  createInitialCloudRunDraft,
   reconcileCloudRunLaunchInstanceType,
   type CloudRunLaunchDraft,
 } from "../../cloud/cloudRunLaunch";
@@ -31,8 +32,8 @@ import { useAtomCommand } from "../../state/use-atom-command";
 import {
   deriveProviderInstanceEntries,
   isProviderInstancePickerReady,
-  type ProviderInstanceEntry,
 } from "../../providerInstances";
+import { ProviderModelPicker } from "../chat/ProviderModelPicker";
 import { Button } from "../ui/button";
 import {
   Dialog,
@@ -54,39 +55,6 @@ const CLOUD_PROVIDER_DRIVERS = new Set([
   ProviderDriverKind.make("codex"),
   ProviderDriverKind.make("claudeAgent"),
 ]);
-
-function defaultModel(entry: ProviderInstanceEntry | undefined): string {
-  return (
-    entry?.models.find((model) => model.isDefault && !model.isCustom)?.slug ??
-    entry?.models[0]?.slug ??
-    ""
-  );
-}
-
-function initialDraft(
-  snapshot: CloudAllocationSnapshot | null,
-  providers: ReadonlyArray<ProviderInstanceEntry>,
-): CloudRunLaunchDraft {
-  const maxRunMinutes = Math.max(1, Math.floor((snapshot?.limits.maxRunSeconds ?? 7_200) / 60));
-  const maxInputWaitMinutes = Math.max(
-    1,
-    Math.floor((snapshot?.limits.maxInputWaitSeconds ?? 900) / 60),
-  );
-  const provider = providers[0];
-  return {
-    repository: "",
-    selectedRef: "main",
-    task: "",
-    providerInstanceId: provider?.instanceId ?? "",
-    model: defaultModel(provider),
-    runtimeMode: "approval-required",
-    runMinutes: String(Math.min(60, maxRunMinutes)),
-    inputWaitMinutes: String(Math.min(15, maxInputWaitMinutes)),
-    instanceType: snapshot?.limits.allowedInstanceTypes[0] ?? "",
-    publication: "review-only",
-    baseBranch: "main",
-  };
-}
 
 function runtimeMode(value: string): CloudRunLaunchDraft["runtimeMode"] {
   switch (value) {
@@ -245,7 +213,7 @@ function CloudRunDialogForEnvironment(props: {
   const dispatch = useAtomCommand(cloudAllocations.dispatch, { reportFailure: false });
   const registerEnvironment = useAtomCommand(environmentCatalog.register, { reportFailure: false });
   const [open, setOpen] = useState(false);
-  const [draft, setDraft] = useState(() => initialDraft(snapshot, providers));
+  const [draft, setDraft] = useState(() => createInitialCloudRunDraft(snapshot, providers));
   const [requestId, setRequestId] = useState(randomUUID);
   const [launchedId, setLaunchedId] = useState<string | null>(null);
   const [busyAllocationId, setBusyAllocationId] = useState<string | null>(null);
@@ -259,7 +227,7 @@ function CloudRunDialogForEnvironment(props: {
   useEffect(
     () =>
       onOpenCloudLaunchDialog(() => {
-        setDraft(initialDraft(snapshot, providers));
+        setDraft(createInitialCloudRunDraft(snapshot, providers));
         setRequestId(randomUUID());
         setLaunchedId(null);
         setError(null);
@@ -270,6 +238,10 @@ function CloudRunDialogForEnvironment(props: {
 
   const selectedProvider = providers.find(
     (provider) => provider.instanceId === draft.providerInstanceId,
+  );
+  const modelOptionsByInstance = useMemo(
+    () => new Map(providers.map((provider) => [provider.instanceId, provider.models])),
+    [providers],
   );
 
   const recentAllocations = useMemo(
@@ -396,51 +368,32 @@ function CloudRunDialogForEnvironment(props: {
                       }
                     />
                   </label>
-                  <label className={fieldClassName}>
+                  <div className={fieldClassName}>
                     <span className={labelClassName}>Model</span>
-                    <div className="grid grid-cols-2 gap-2">
-                      <select
-                        aria-label="Provider instance"
-                        className={selectClassName}
-                        value={draft.providerInstanceId}
-                        onChange={(event) => {
-                          const provider = providers.find(
-                            (candidate) => candidate.instanceId === event.target.value,
-                          );
+                    {selectedProvider ? (
+                      <ProviderModelPicker
+                        activeInstanceId={selectedProvider.instanceId}
+                        model={draft.model}
+                        lockedProvider={null}
+                        instanceEntries={providers}
+                        modelOptionsByInstance={modelOptionsByInstance}
+                        triggerVariant="outline"
+                        triggerClassName="h-8.5 w-full bg-background px-3 text-sm text-foreground shadow-xs/5 sm:h-7.5"
+                        triggerAriaLabel="Model"
+                        onInstanceModelChange={(instanceId, model) =>
                           setDraft((current) => ({
                             ...current,
-                            providerInstanceId: event.target.value,
-                            model: defaultModel(provider),
-                          }));
-                        }}
-                      >
-                        {providers.map((provider) => (
-                          <option key={provider.instanceId} value={provider.instanceId}>
-                            {provider.displayName}
-                          </option>
-                        ))}
-                      </select>
-                      <select
-                        aria-label="Model"
-                        className={selectClassName}
-                        value={draft.model}
-                        onChange={(event) =>
-                          setDraft((current) => ({ ...current, model: event.target.value }))
+                            providerInstanceId: instanceId,
+                            model,
+                          }))
                         }
-                      >
-                        {(selectedProvider?.models ?? []).map((model) => (
-                          <option key={model.slug} value={model.slug}>
-                            {model.name}
-                          </option>
-                        ))}
-                      </select>
-                    </div>
-                    {providers.length === 0 ? (
+                      />
+                    ) : (
                       <span className="text-xs text-destructive">
                         No ready provider has a supported model.
                       </span>
-                    ) : null}
-                  </label>
+                    )}
+                  </div>
                 </div>
                 <label className={fieldClassName}>
                   <span className={labelClassName}>Task</span>

@@ -43,7 +43,7 @@ const AdmissionRow = Schema.Struct({
 const DEFAULT_LIMITS = {
   maxConcurrentWorkers: 1,
   maxQueueDepth: 8,
-  maxRunSeconds: 2 * 60 * 60,
+  maxRunSeconds: 3 * 24 * 60 * 60,
   maxInputWaitSeconds: 15 * 60,
   previewGraceSeconds: 15 * 60,
   allowedInstanceTypes: ["t3.medium"],
@@ -500,7 +500,9 @@ export const make = Effect.fn("CloudAllocationController.make")(function* (input
 
 const CloudAllocationPolicyConfig = Config.all({
   maxQueueDepth: Config.int("T3CODE_CLOUD_MAX_QUEUE_DEPTH").pipe(Config.withDefault(8)),
-  maxRunSeconds: Config.int("T3CODE_CLOUD_MAX_RUN_SECONDS").pipe(Config.withDefault(2 * 60 * 60)),
+  maxRunSeconds: Config.int("T3CODE_CLOUD_MAX_RUN_SECONDS").pipe(
+    Config.withDefault(3 * 24 * 60 * 60),
+  ),
   maxInputWaitSeconds: Config.int("T3CODE_CLOUD_MAX_INPUT_WAIT_SECONDS").pipe(
     Config.withDefault(15 * 60),
   ),

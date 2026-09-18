@@ -14,6 +14,10 @@ fail() {
   || fail "GitHub CLI version does not match"
 [[ "$(tailscale version | head -n 1)" == "${TAILSCALE_VERSION}" ]] \
   || fail "Tailscale version does not match"
+command -v docker >/dev/null || fail "Docker CLI is unavailable"
+[[ "$(docker compose version --short)" == "${DOCKER_COMPOSE_VERSION}" ]] \
+  || fail "Docker Compose version does not match"
+command -v doppler >/dev/null || fail "Doppler CLI is unavailable"
 command -v aws >/dev/null || fail "AWS CLI is unavailable for provider authentication"
 command -v tailscaled >/dev/null || fail "Tailscale daemon is unavailable"
 [[ -x /opt/t3/bin/cloud-agent-github-credentials ]] \
@@ -22,6 +26,13 @@ command -v tailscaled >/dev/null || fail "Tailscale daemon is unavailable"
   || fail "repository preparation command is unavailable"
 [[ "$(systemctl is-enabled tailscaled.service 2>/dev/null || true)" == "disabled" ]] \
   || fail "Tailscale must remain disabled until worker bootstrap"
+[[ "$(systemctl is-enabled docker.service 2>/dev/null || true)" == "enabled" ]] \
+  || fail "Docker service is not enabled"
+id --groups --name cloudagent | tr ' ' '\n' | grep --fixed-strings --line-regexp docker >/dev/null \
+  || fail "cloudagent is not a member of the docker group"
+systemctl start docker.service
+sudo -u cloudagent docker info >/dev/null \
+  || fail "cloudagent cannot use the Docker daemon"
 systemctl is-active --quiet tailscaled.service && fail "Tailscale is active in the baked image"
 [[ -z "$(find /var/lib/tailscale -mindepth 1 -print -quit)" ]] \
   || fail "Tailscale identity remained in the image"

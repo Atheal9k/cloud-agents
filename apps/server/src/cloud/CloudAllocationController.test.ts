@@ -108,6 +108,7 @@ it.effect("persists allocation events and rebuilds the catalog after restart", (
       requiresHostOnline: true,
       admission: { status: "open" },
     });
+    expect(snapshot.limits.maxRunSeconds).toBe(3 * 24 * 60 * 60);
     expect(snapshot.allocations).toEqual([launched]);
   }).pipe(Effect.provide(SqlitePersistenceMemory)),
 );
@@ -131,8 +132,8 @@ it.effect("rejects invalid shapes and run durations before allocation", () =>
           allocationId: "allocation-long-run",
           deadlines: {
             ...launchInput.deadlines,
-            expiresAt: "2026-09-17T05:00:01.000Z",
-            cleanupBy: "2026-09-17T05:05:01.000Z",
+            expiresAt: "2026-09-20T03:00:01.000Z",
+            cleanupBy: "2026-09-20T03:10:01.000Z",
           },
         }),
       )

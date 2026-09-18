@@ -8,9 +8,11 @@ import {
   type RunAllocation,
   type RunAllocationCommand,
   type RunPublicationIntent,
+  type CloudAllocationSnapshot,
   type CloudAllocationLimits,
   ThreadId,
 } from "@t3tools/contracts";
+import type { ProviderInstanceEntry } from "../providerInstances";
 
 export interface CloudRunLaunchDraft {
   readonly repository: string;
@@ -24,6 +26,44 @@ export interface CloudRunLaunchDraft {
   readonly instanceType: string;
   readonly publication: "review-only" | "automatic-draft-pr";
   readonly baseBranch: string;
+}
+
+const DEFAULT_CLOUD_RUN_MINUTES = 3 * 24 * 60;
+
+function defaultModel(entry: ProviderInstanceEntry | undefined): string {
+  return (
+    entry?.models.find((model) => model.isDefault && !model.isCustom)?.slug ??
+    entry?.models[0]?.slug ??
+    ""
+  );
+}
+
+export function createInitialCloudRunDraft(
+  snapshot: CloudAllocationSnapshot | null,
+  providers: ReadonlyArray<ProviderInstanceEntry>,
+): CloudRunLaunchDraft {
+  const maxRunMinutes = Math.max(
+    1,
+    Math.floor((snapshot?.limits.maxRunSeconds ?? DEFAULT_CLOUD_RUN_MINUTES * 60) / 60),
+  );
+  const maxInputWaitMinutes = Math.max(
+    1,
+    Math.floor((snapshot?.limits.maxInputWaitSeconds ?? 900) / 60),
+  );
+  const provider = providers[0];
+  return {
+    repository: "",
+    selectedRef: "main",
+    task: "",
+    providerInstanceId: provider?.instanceId ?? "",
+    model: defaultModel(provider),
+    runtimeMode: "full-access",
+    runMinutes: String(Math.min(DEFAULT_CLOUD_RUN_MINUTES, maxRunMinutes)),
+    inputWaitMinutes: String(Math.min(15, maxInputWaitMinutes)),
+    instanceType: snapshot?.limits.allowedInstanceTypes[0] ?? "",
+    publication: "automatic-draft-pr",
+    baseBranch: "main",
+  };
 }
 
 export function reconcileCloudRunLaunchInstanceType(

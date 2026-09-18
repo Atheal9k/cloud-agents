@@ -19,7 +19,7 @@ not call SSM.
 
 ## Worker image
 
-Packer 1.16.0 and the Amazon plugin 1.8.2 build the worker AMI. The template requires an exact Amazon Linux 2023 x86_64 source AMI ID. It pins Node.js 24.13.1, T3 0.0.42, Codex 0.154.0, Claude Code 2.1.273, GitHub CLI 2.101.0, and Tailscale 1.102.4, then records those versions and the installed RPM set in `/opt/t3`.
+Packer 1.16.0 and the Amazon plugin 1.8.2 build the worker AMI. The template requires an exact Amazon Linux 2023 x86_64 source AMI ID. It pins Node.js 24.13.1, T3 0.0.42, Codex 0.154.0, Claude Code 2.1.273, GitHub CLI 2.101.0, Tailscale 1.102.4, and Docker Compose 2.24.5. The image also installs Docker Engine from Amazon Linux and the Doppler CLI from Doppler's signed RPM repository, then records runtime versions and the installed RPM set in `/opt/t3`.
 
 ```powershell
 packer init ./image

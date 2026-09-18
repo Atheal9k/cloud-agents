@@ -6,6 +6,8 @@ set -euo pipefail
 : "${DCV_ARCHIVE_SHA256:?DCV_ARCHIVE_SHA256 is required}"
 : "${DCV_GPG_KEY_SHA256:?DCV_GPG_KEY_SHA256 is required}"
 : "${DCV_VERSION:?DCV_VERSION is required}"
+: "${DOCKER_COMPOSE_LINUX_X64_SHA256:?DOCKER_COMPOSE_LINUX_X64_SHA256 is required}"
+: "${DOCKER_COMPOSE_VERSION:?DOCKER_COMPOSE_VERSION is required}"
 : "${GITHUB_CLI_LINUX_X64_SHA256:?GITHUB_CLI_LINUX_X64_SHA256 is required}"
 : "${GITHUB_CLI_VERSION:?GITHUB_CLI_VERSION is required}"
 : "${IMAGE_VERSION:?IMAGE_VERSION is required}"
@@ -21,6 +23,7 @@ set -euo pipefail
 dnf install --assumeyes \
   ca-certificates \
   curl-minimal \
+  docker \
   gcc-c++ \
   git \
   git-lfs \
@@ -37,6 +40,25 @@ dnf install --assumeyes "tailscale-${TAILSCALE_VERSION}"
 systemctl disable --now tailscaled.service || true
 install -d -o root -g root -m 0700 /var/lib/tailscale
 find /var/lib/tailscale -mindepth 1 -delete
+
+compose_plugin_directory=/usr/local/lib/docker/cli-plugins
+compose_plugin="${compose_plugin_directory}/docker-compose"
+install -d -m 0755 "${compose_plugin_directory}"
+curl --fail --location --proto '=https' --tlsv1.2 \
+  --output "${compose_plugin}" \
+  "https://github.com/docker/compose/releases/download/v${DOCKER_COMPOSE_VERSION}/docker-compose-linux-x86_64"
+echo "${DOCKER_COMPOSE_LINUX_X64_SHA256}  ${compose_plugin}" | sha256sum --check --strict
+chmod 0755 "${compose_plugin}"
+
+curl --fail --location --proto '=https' --tlsv1.2 \
+  --output /tmp/doppler-cli.gpg \
+  "https://packages.doppler.com/public/cli/gpg.DE2A7741A397C129.key"
+rpm --import /tmp/doppler-cli.gpg
+rm -f /tmp/doppler-cli.gpg
+curl --fail --location --proto '=https' --tlsv1.2 \
+  --output /etc/yum.repos.d/doppler-cli.repo \
+  "https://packages.doppler.com/public/cli/config.rpm.txt"
+dnf install --assumeyes doppler
 
 install -d -m 0755 /opt/t3/bin
 
@@ -132,6 +154,8 @@ getent group cloudagent >/dev/null || groupadd --system cloudagent
 if ! id cloudagent >/dev/null 2>&1; then
   useradd --system --gid cloudagent --create-home --home-dir /home/cloudagent --shell /bin/bash cloudagent
 fi
+usermod --append --groups docker cloudagent
+systemctl enable docker.service
 
 install -d -o cloudagent -g cloudagent -m 0700 /var/lib/t3-worker/t3
 install -d -o cloudagent -g cloudagent -m 0750 /work
@@ -158,6 +182,9 @@ jq --null-input \
   --arg codex "${CODEX_VERSION}" \
   --arg tailscale "${TAILSCALE_VERSION}" \
   --arg github_cli "${GITHUB_CLI_VERSION}" \
+  --arg docker "$(docker --version)" \
+  --arg docker_compose "$(docker compose version --short)" \
+  --arg doppler "$(doppler --version)" \
   --argjson desktop_dependencies "${INSTALL_DESKTOP_DEPENDENCIES}" \
   --argjson shared_browser "${INSTALL_SHARED_BROWSER}" \
   --arg dcv "${DCV_VERSION}" \
@@ -172,6 +199,9 @@ jq --null-input \
       codex: $codex,
       tailscale: $tailscale,
       githubCli: $github_cli,
+      docker: $docker,
+      dockerCompose: $docker_compose,
+      doppler: $doppler,
       dcv: (if $shared_browser then $dcv else null end)
     },
     capabilities: {

@@ -118,7 +118,7 @@ launch workers with the project and worker tags, and terminate workers carrying 
 The personal controller admits one active worker. Configure its waiting queue and time limits with
 `T3CODE_CLOUD_MAX_QUEUE_DEPTH`, `T3CODE_CLOUD_MAX_RUN_SECONDS`,
 `T3CODE_CLOUD_MAX_INPUT_WAIT_SECONDS`, and `T3CODE_CLOUD_PREVIEW_GRACE_SECONDS`. The defaults are
-8 waiting jobs, a 2-hour run, a 15-minute unanswered input request, and a 15-minute preview grace
+8 waiting jobs, a 3-day run, a 15-minute unanswered input request, and a 15-minute preview grace
 period. Requests with a longer run or an unapproved instance type fail before AWS launches
 anything.
 
@@ -144,10 +144,10 @@ disconnects. Keep the controller host and Docker running. Reopen the dialog to s
 stop one, or open a registered worker as an ordinary T3 thread.
 
 For the first run, choose the configured `owner/name` repository and a branch, tag, or commit that
-the controller's Git credential can read. Start with **Review only** and a short run limit. Use
-**Open draft PR** after the review-only run has cloned, changed, verified, retained, and cleaned up
-successfully. The worker validates that Codex is installed, authenticated, and able to use the
-selected model before it starts the turn.
+the controller's Git credential can read. New cloud threads default to **Open draft PR**, full
+access, and a 3-day run limit. Choose **Review only** when you do not want the worker to publish its
+changes. The worker validates that Codex is installed, authenticated, and able to use the selected
+model before it starts the turn.
 
 Set two HTTPS routes before launching a worker. This Tailscale example gives every allocation
 attempt a distinct MagicDNS name:
