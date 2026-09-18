@@ -51,6 +51,10 @@ artifact_retention_days = 30
 # T3CODE_CLOUD_GITHUB_TOKEN_SECRET_REF environment variables.
 controller_credential_secret_arns = []
 
+# Root reads this key during cloud-init, clones the assigned repository, and
+# deletes it before the unprivileged T3 worker service starts.
+worker_git_ssh_secret_arn = null
+
 # Choose one Codex mode. The API-key secret contains a raw OpenAI API key. The
 # auth-json secret contains the complete auth.json from a ChatGPT account login
 # and permits workers to persist refreshed credentials back to the same secret.

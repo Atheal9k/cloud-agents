@@ -243,6 +243,21 @@ variable "controller_credential_secret_arns" {
   }
 }
 
+variable "worker_git_ssh_secret_arn" {
+  description = "Optional Secrets Manager ARN containing an SSH private key used only by root during worker bootstrap to fetch the assigned repository. The key is removed before the T3 worker service starts."
+  type        = string
+  default     = null
+  nullable    = true
+
+  validation {
+    condition = (
+      var.worker_git_ssh_secret_arn == null ||
+      can(regex("^arn:[A-Za-z0-9-]+:secretsmanager:[a-z0-9-]+:[0-9]{12}:secret:[A-Za-z0-9/_+=.@-]+$", var.worker_git_ssh_secret_arn))
+    )
+    error_message = "worker_git_ssh_secret_arn must be a full AWS Secrets Manager ARN."
+  }
+}
+
 variable "worker_codex_api_key_secret_arn" {
   description = "Optional Secrets Manager ARN containing the raw OpenAI API key used to authenticate Codex on disposable workers."
   type        = string

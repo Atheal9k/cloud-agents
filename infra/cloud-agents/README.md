@@ -54,7 +54,7 @@ The worker service keeps package-manager downloads in `/var/cache/t3-worker-depe
 
 Cloud run records include image boot, service startup, clone, setup, and provider-start timing data. The image writes the boot and service measurements to `/var/lib/t3-worker/startup-timings.json`; run workspaces and provider credentials stay outside the dependency cache.
 
-The baked image leaves `cloud-agent-worker.service` and `cloud-agent-worker-registration.service` disabled. Cloud-init enables the worker only after provider credentials are ready, then enables registration after the private route is online. T3, registration, Codex, Claude Code, and every child process run as `cloudagent`; the provider processes remain in the worker service's systemd cgroup. Provider credentials live under `/run/t3-worker` and Claude Code does not check for automatic updates. The worker unit drops capabilities, blocks EC2 metadata for the cgroup, restricts writable paths, kills the whole cgroup on stop, preserves temporary credentials across automatic restarts, and removes its runtime directory on final stop. Its preflight checks the pinned tools in throwaway provider homes and confirms an IMDSv2 token cannot be obtained before T3 starts. The registration unit alone reads the short-lived allocation tags, verifies the local T3 service, and registers its configured HTTPS route. The worker role has no access to the controller's Git or GitHub secrets.
+The baked image leaves `cloud-agent-worker.service` and `cloud-agent-worker-registration.service` disabled. Cloud-init fetches the assigned repository before enabling the worker, then enables registration after the private route is online. When `worker_git_ssh_secret_arn` is configured, root reads that key into `/run`, fetches the selected ref, checks out the output branch, and deletes the key before T3 starts. T3, registration, Codex, Claude Code, and every child process run as `cloudagent`; the provider processes remain in the worker service's systemd cgroup. Provider credentials live under `/run/t3-worker` and Claude Code does not check for automatic updates. The worker unit drops capabilities, blocks EC2 metadata for the cgroup, restricts writable paths, kills the whole cgroup on stop, preserves temporary credentials across automatic restarts, and removes its runtime directory on final stop. Its preflight checks the pinned tools in throwaway provider homes and confirms an IMDSv2 token cannot be obtained before T3 starts. The registration unit verifies the local T3 service and registers its configured HTTPS route. The task cgroup cannot read the bootstrap Git key, the controller's GitHub API token, or the worker instance role.
 
 Codex supports either API-key authentication or a ChatGPT account cache; configure exactly one.
 `worker_codex_api_key_secret_arn` points to a secret containing the raw OpenAI API key.
@@ -105,10 +105,12 @@ worker-allocation and controller-secret permissions described in the Docker cont
 Image IDs, instance shapes, disks, CIDRs, TTL, artifact retention, and Linux worker profiles are
 configurable. Do not place credentials or provider tokens in variables.
 
-For Git publication in `ec2` mode, add the full Secrets Manager ARNs for the SSH key and GitHub API
-token to `controller_credential_secret_arns`. This grants `DescribeSecret` and `GetSecretValue`
+Set `worker_git_ssh_secret_arn` to a repository-scoped read key so cloud-init can prepare private
+repositories before the task service starts. The key is not written to the task workspace or
+worker environment. For Git publication in `ec2` mode, add the full Secrets Manager ARNs for the
+SSH key and GitHub API token to `controller_credential_secret_arns`. This grants `DescribeSecret` and `GetSecretValue`
 only to the controller role. In `local` mode, grant those actions to the AWS identity used by the
-local T3 process instead. The worker role has no access to either master credential. Configure
+local T3 process instead. The worker role has no access to the GitHub API token. Configure
 their names or ARNs at controller runtime with `T3CODE_CLOUD_GIT_SSH_SECRET_REF` and
 `T3CODE_CLOUD_GITHUB_TOKEN_SECRET_REF`; do not put secret values in OpenTofu variables.
 

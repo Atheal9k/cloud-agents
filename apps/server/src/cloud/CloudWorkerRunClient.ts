@@ -63,8 +63,8 @@ function taskPrompt(allocation: RunAllocation): string {
   const execution = allocation.execution;
   if (execution === undefined) return "";
   return [
-    `Prepare ${allocation.target.repository} at ${execution.selectedRef} in /work/repository before changing files.`,
-    `Use the output branch ${allocation.target.branch}. Do not print or copy credentials into the workspace.`,
+    `${allocation.target.repository} is prepared at ${execution.selectedRef} in /work/repository.`,
+    `Work on the checked-out output branch ${allocation.target.branch}.`,
     "",
     execution.turn.prompt,
   ].join("\n");
@@ -115,7 +115,7 @@ export const make = Effect.fn("CloudWorkerRunClient.make")(function* () {
           commandId: CommandId.make(`${execution.turn.commandId}:project`),
           projectId: executionProjectId,
           title: allocation.target.repository,
-          workspaceRoot: "/work",
+          workspaceRoot: "/work/repository",
           createdAt: execution.turn.createdAt,
         },
       });

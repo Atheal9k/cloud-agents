@@ -133,6 +133,7 @@ resource "aws_launch_template" "worker" {
     image_version                 = each.value.image_version
     profile_name                  = each.key
     service_port                  = var.worker_control_port
+    git_ssh_secret_arn            = var.worker_git_ssh_secret_arn == null ? "" : var.worker_git_ssh_secret_arn
     tailscale_auth_key_secret_arn = var.worker_tailscale_auth_key_secret_arn == null ? "" : var.worker_tailscale_auth_key_secret_arn
     ttl_minutes                   = var.worker_default_ttl_minutes
   }))
@@ -178,6 +179,7 @@ resource "aws_launch_template" "worker" {
   }
 
   depends_on = [
+    aws_iam_role_policy.worker_git_credentials,
     aws_iam_role_policy_attachment.worker_ssm,
     aws_route_table_association.workers,
   ]

@@ -32,8 +32,10 @@ backstop, not a replacement for the controller.
 2. Create the remote OpenTofu state and apply `infra/cloud-agents` as described in its README.
    Set `controller_mode = "local"` so the stack does not create a second controller on EC2.
    Configure at least one provider credential using [Provider subscriptions](#provider-subscriptions).
-3. Store the Git SSH key and GitHub API token in Secrets Manager. In `ec2` mode, add their full
-   ARNs to `controller_credential_secret_arns` for the stack's controller role. In `local` mode,
+3. Store the Git SSH key and GitHub API token in Secrets Manager. Set
+   `worker_git_ssh_secret_arn` to a repository-scoped read key so worker bootstrap can clone before
+   the agent starts. In `ec2` mode, add the publication key and token's full ARNs to
+   `controller_credential_secret_arns` for the stack's controller role. In `local` mode,
    the AWS identity mounted into the Docker controller needs read access to those secrets. Give
    the GitHub token pull-request write access only to the repositories you intend to use.
 4. Create the protected controller credential directory described under [State and
@@ -220,12 +222,16 @@ string field containing that key. JSON escaped newlines and CRLF keys are normal
 The GitHub secret may likewise be a raw token or a one-field JSON object. The controller reads
 Secrets Manager for each operation, so rotation applies without rebuilding the image.
 
-Clone and push use a temporary run directory below the controller's protected state. The Git
+Controller-side publication fetches and pushes use a temporary run directory below the protected state. The Git
 remote is supplied by the controller, SSH is forced through `ssh.github.com` on port 443, and the
 wrapper accepts only GitHub's pinned Ed25519 host key. No SSH agent is started or passed to task
 code. The controller removes the run directory after the operation. Draft PR creation passes the
 configured token directly to `gh api`; it does not read a browser or initiating client's GitHub
 login. The controller machine and container must stay online until publication finishes.
+
+Worker bootstrap separately reads `worker_git_ssh_secret_arn` as root, fetches the assigned ref,
+checks out `/work/repository` on the requested output branch, and removes the key before starting
+T3. The agent cannot reach instance metadata and receives neither the key nor its secret ARN.
 
 Grant the GitHub token `Pull requests: write` for the target repository. If
 `cloud-agent-victor-key` is an account SSH key, its Git access is as broad as that account's

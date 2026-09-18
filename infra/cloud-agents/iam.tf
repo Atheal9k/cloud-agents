@@ -220,6 +220,23 @@ resource "aws_iam_role_policy" "worker_artifacts" {
   policy = data.aws_iam_policy_document.worker_artifacts.json
 }
 
+data "aws_iam_policy_document" "worker_git_credentials" {
+  count = var.worker_git_ssh_secret_arn == null ? 0 : 1
+
+  statement {
+    sid       = "ReadBootstrapGitCredential"
+    actions   = ["secretsmanager:GetSecretValue"]
+    resources = [var.worker_git_ssh_secret_arn]
+  }
+}
+
+resource "aws_iam_role_policy" "worker_git_credentials" {
+  count  = var.worker_git_ssh_secret_arn == null ? 0 : 1
+  name   = "bootstrap-git-credential"
+  role   = aws_iam_role.worker.id
+  policy = data.aws_iam_policy_document.worker_git_credentials[0].json
+}
+
 data "aws_iam_policy_document" "worker_codex_credentials" {
   count = var.worker_codex_api_key_secret_arn == null ? 0 : 1
 

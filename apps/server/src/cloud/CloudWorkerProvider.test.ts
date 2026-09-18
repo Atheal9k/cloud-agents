@@ -63,6 +63,9 @@ it.effect("pins the discovered template and reuses one AWS client token", () =>
     const launchInput = {
       allocationId,
       attempt,
+      repository: "t3tools/t3code",
+      selectedRef: "main",
+      outputBranch: "cloud/allocation-1",
       expiresAt: "2026-09-17T05:00:00.000Z",
       instanceType: "t3.medium",
       maxInputWaitSeconds: 900,
@@ -85,6 +88,10 @@ it.effect("pins the discovered template and reuses one AWS client token", () =>
     expect(launches[0]?.args.join(" ")).toContain("CloudAgentExpiresAtEpoch");
     expect(launches[0]?.args.join(" ")).toContain("CloudAgentRegistrationCredential");
     expect(launches[0]?.args.join(" ")).toContain("CloudAgentMaxInputWaitSeconds");
+    expect(launches[0]?.args.join(" ")).toContain("CloudAgentRepository");
+    expect(launches[0]?.args.join(" ")).toContain("t3tools/t3code");
+    expect(launches[0]?.args.join(" ")).toContain("CloudAgentSelectedRef");
+    expect(launches[0]?.args.join(" ")).toContain("CloudAgentOutputBranch");
     expect(launches[0]?.args).toContain("--instance-type");
     expect(launches[0]?.args).toContain("t3.medium");
   }),
@@ -111,6 +118,9 @@ it.effect("classifies AWS capacity failures as retryable", () =>
       .launch({
         allocationId,
         attempt,
+        repository: "t3tools/t3code",
+        selectedRef: "main",
+        outputBranch: "cloud/allocation-1",
         expiresAt: "2026-09-17T05:00:00.000Z",
         instanceType: "t3.medium",
         maxInputWaitSeconds: 900,
@@ -147,6 +157,9 @@ it.effect("resolves a stable, attempt-specific worker route", () =>
     const launchInput = {
       allocationId,
       attempt,
+      repository: "t3tools/t3code",
+      selectedRef: "main",
+      outputBranch: "cloud/allocation-1",
       expiresAt: "2026-09-17T05:00:00.000Z",
       instanceType: "t3.medium",
       maxInputWaitSeconds: 900,
@@ -186,6 +199,9 @@ it.effect("rejects controller-local routing before launching a worker", () =>
       .launch({
         allocationId,
         attempt,
+        repository: "t3tools/t3code",
+        selectedRef: "main",
+        outputBranch: "cloud/allocation-1",
         expiresAt: "2026-09-17T05:00:00.000Z",
         instanceType: "t3.medium",
         maxInputWaitSeconds: 900,

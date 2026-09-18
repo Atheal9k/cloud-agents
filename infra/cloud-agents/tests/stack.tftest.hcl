@@ -68,6 +68,7 @@ run "protected_plan" {
       "arn:aws:secretsmanager:us-west-1:123456789012:secret:cloud-agent-victor-key-AbCdEf",
       "arn:aws:secretsmanager:us-west-1:123456789012:secret:cloud-agent-github-token-AbCdEf",
     ]
+    worker_git_ssh_secret_arn            = "arn:aws:secretsmanager:us-west-1:123456789012:secret:cloud-agent-worker-git-AbCdEf"
     worker_claude_oauth_token_secret_arn = "arn:aws:secretsmanager:us-west-1:123456789012:secret:cloud-agent-claude-oauth-AbCdEf"
     worker_codex_auth_json_secret_arn    = "arn:aws:secretsmanager:us-west-1:123456789012:secret:cloud-agent-codex-auth-json-AbCdEf"
     worker_tailscale_auth_key_secret_arn = "arn:aws:secretsmanager:us-west-1:123456789012:secret:cloud-agent-tailscale-auth-AbCdEf"
@@ -126,10 +127,14 @@ run "protected_plan" {
   assert {
     condition = alltrue([
       length(aws_iam_role_policy.worker_codex_credentials) == 0,
+      length(aws_iam_role_policy.worker_git_credentials) == 1,
       length(aws_iam_role_policy.worker_codex_account_credentials) == 1,
       length(aws_iam_role_policy.worker_claude_credentials) == 1,
       length(aws_iam_role_policy.worker_tailscale_credentials) == 1,
       strcontains(base64decode(aws_launch_template.worker["linux-web"].user_data), "cloud-agent-codex-auth-json-AbCdEf"),
+      strcontains(base64decode(aws_launch_template.worker["linux-web"].user_data), "cloud-agent-worker-git-AbCdEf"),
+      strcontains(base64decode(aws_launch_template.worker["linux-web"].user_data), "CloudAgentRepository"),
+      strcontains(base64decode(aws_launch_template.worker["linux-web"].user_data), "cleanup_repository_credential"),
       strcontains(base64decode(aws_launch_template.worker["linux-web"].user_data), "install -d -o cloudagent -g cloudagent -m 0700 /run/t3-worker/credentials"),
       strcontains(base64decode(aws_launch_template.worker["linux-web"].user_data), "cli_auth_credentials_store = \"file\""),
       strcontains(base64decode(aws_launch_template.worker["linux-web"].user_data), "cloud-agent-codex-auth-sync.path"),
@@ -241,6 +246,7 @@ run "local_controller_plan" {
     controller_credential_secret_arns = [
       "arn:aws:secretsmanager:us-west-1:123456789012:secret:cloud-agent-victor-key-AbCdEf",
     ]
+    worker_git_ssh_secret_arn            = "arn:aws:secretsmanager:us-west-1:123456789012:secret:cloud-agent-worker-git-AbCdEf"
     worker_codex_auth_json_secret_arn    = "arn:aws:secretsmanager:us-west-1:123456789012:secret:cloud-agent-codex-auth-json-AbCdEf"
     worker_tailscale_auth_key_secret_arn = "arn:aws:secretsmanager:us-west-1:123456789012:secret:cloud-agent-tailscale-auth-AbCdEf"
     worker_profiles = {
@@ -273,6 +279,7 @@ run "local_controller_plan" {
       length(aws_vpc_security_group_ingress_rule.worker_control) == 0,
       length(aws_vpc_security_group_ingress_rule.worker_preview) == 0,
       length(aws_launch_template.worker) == 1,
+      length(aws_iam_role_policy.worker_git_credentials) == 1,
       length(aws_iam_role_policy.worker_codex_account_credentials) == 1,
       length(aws_iam_role_policy.worker_tailscale_credentials) == 1,
       output.controller.mode == "local",
@@ -294,6 +301,7 @@ run "api_key_plan" {
     worker_claude_oauth_token_secret_arn = null
     worker_codex_api_key_secret_arn      = "arn:aws:secretsmanager:us-west-1:123456789012:secret:cloud-agent-codex-api-key-AbCdEf"
     worker_codex_auth_json_secret_arn    = null
+    worker_git_ssh_secret_arn            = null
     worker_tailscale_auth_key_secret_arn = null
     worker_profiles = {
       linux-web = {
@@ -327,6 +335,7 @@ run "ambiguous_codex_authentication" {
   variables {
     worker_codex_api_key_secret_arn      = "arn:aws:secretsmanager:us-west-1:123456789012:secret:cloud-agent-codex-api-key-AbCdEf"
     worker_codex_auth_json_secret_arn    = "arn:aws:secretsmanager:us-west-1:123456789012:secret:cloud-agent-codex-auth-json-AbCdEf"
+    worker_git_ssh_secret_arn            = null
     worker_tailscale_auth_key_secret_arn = null
     worker_profiles = {
       linux-web = {
@@ -357,6 +366,7 @@ run "sandbox_apply" {
     worker_claude_oauth_token_secret_arn = null
     worker_codex_api_key_secret_arn      = null
     worker_codex_auth_json_secret_arn    = null
+    worker_git_ssh_secret_arn            = null
     worker_tailscale_auth_key_secret_arn = null
     worker_profiles = {
       linux-web = {
@@ -381,10 +391,11 @@ run "sandbox_apply" {
   assert {
     condition = alltrue([
       length(aws_iam_role_policy.worker_codex_credentials) == 0,
+      length(aws_iam_role_policy.worker_git_credentials) == 0,
       length(aws_iam_role_policy.worker_codex_account_credentials) == 0,
       length(aws_iam_role_policy.worker_claude_credentials) == 0,
       length(aws_iam_role_policy.worker_tailscale_credentials) == 0,
     ])
-    error_message = "Workers must not receive provider-secret access unless provider authentication is configured."
+    error_message = "Workers must not receive secret access unless the corresponding worker feature is configured."
   }
 }

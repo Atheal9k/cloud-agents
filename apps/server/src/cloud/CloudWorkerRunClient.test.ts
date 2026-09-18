@@ -100,7 +100,7 @@ it.effect("creates the project and thread before starting the provider turn", ()
       {
         type: "project.create",
         projectId: "cloud:allocation-1:1",
-        workspaceRoot: "/work",
+        workspaceRoot: "/work/repository",
       },
       {
         type: "thread.create",
@@ -116,7 +116,7 @@ it.effect("creates the project and thread before starting the provider turn", ()
         commandId: "cloud-launch:allocation-1:worker-turn",
         threadId: "thread-allocation-1-1",
         message: {
-          text: expect.stringContaining("Prepare t3tools/t3code at main"),
+          text: expect.stringContaining("t3tools/t3code is prepared at main"),
         },
         modelSelection: { instanceId: "codex", model: "gpt-5.6-sol" },
       },

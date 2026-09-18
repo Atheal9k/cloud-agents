@@ -314,6 +314,9 @@ export const make = Effect.fn("CloudAllocationReconciler.make")(function* (input
           .launch({
             allocationId: allocation.id,
             attempt: allocation.attempt,
+            repository: allocation.target.repository,
+            selectedRef: allocation.execution?.selectedRef ?? allocation.target.baseCommit,
+            outputBranch: allocation.target.branch,
             expiresAt: allocation.deadlines.expiresAt,
             instanceType,
             maxInputWaitSeconds,

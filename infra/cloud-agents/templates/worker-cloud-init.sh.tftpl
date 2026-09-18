@@ -46,6 +46,21 @@ worker_route_url="$(
     --header "X-aws-ec2-metadata-token: $${metadata_token}" \
     "$${metadata_base}/meta-data/tags/instance/CloudAgentWorkerRouteUrl"
 )"
+repository="$(
+  curl --noproxy '*' --silent --show-error --fail --max-time 5 \
+    --header "X-aws-ec2-metadata-token: $${metadata_token}" \
+    "$${metadata_base}/meta-data/tags/instance/CloudAgentRepository"
+)"
+selected_ref="$(
+  curl --noproxy '*' --silent --show-error --fail --max-time 5 \
+    --header "X-aws-ec2-metadata-token: $${metadata_token}" \
+    "$${metadata_base}/meta-data/tags/instance/CloudAgentSelectedRef"
+)"
+output_branch="$(
+  curl --noproxy '*' --silent --show-error --fail --max-time 5 \
+    --header "X-aws-ec2-metadata-token: $${metadata_token}" \
+    "$${metadata_base}/meta-data/tags/instance/CloudAgentOutputBranch"
+)"
 [[ "$${max_input_wait_seconds}" =~ ^[1-9][0-9]*$ ]] || {
   echo "cloud-agent bootstrap failed: input-wait limit tag is invalid" >&2
   exit 1
@@ -58,6 +73,19 @@ worker_route_url="$(
   echo "cloud-agent bootstrap failed: attempt tag is invalid" >&2
   exit 1
 }
+[[ "$${repository}" =~ ^[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+$ ]] || {
+  echo "cloud-agent bootstrap failed: repository tag is invalid" >&2
+  exit 1
+}
+if [[ ! "$${selected_ref}" =~ ^[A-Za-z0-9][A-Za-z0-9._/-]{0,254}$ ]] ||
+  [[ "$${selected_ref}" == *..* || "$${selected_ref}" == *"@{"* || "$${selected_ref}" == *//* ]]; then
+  echo "cloud-agent bootstrap failed: selected ref tag is invalid" >&2
+  exit 1
+fi
+if ! git check-ref-format --branch "$${output_branch}" >/dev/null 2>&1; then
+  echo "cloud-agent bootstrap failed: output branch tag is invalid" >&2
+  exit 1
+fi
 
 cat >/etc/t3/worker.env.pending <<ENV
 T3_WORKER_PROFILE=${profile_name}
@@ -79,8 +107,9 @@ chmod 0640 /etc/t3/worker.env.pending
 codex_api_key_secret_arn='${codex_api_key_secret_arn}'
 codex_auth_json_secret_arn='${codex_auth_json_secret_arn}'
 claude_oauth_token_secret_arn='${claude_oauth_token_secret_arn}'
+git_ssh_secret_arn='${git_ssh_secret_arn}'
 tailscale_auth_key_secret_arn='${tailscale_auth_key_secret_arn}'
-if [[ -n "$${codex_api_key_secret_arn}" || -n "$${codex_auth_json_secret_arn}" || -n "$${claude_oauth_token_secret_arn}" || -n "$${tailscale_auth_key_secret_arn}" ]]; then
+if [[ -n "$${codex_api_key_secret_arn}" || -n "$${codex_auth_json_secret_arn}" || -n "$${claude_oauth_token_secret_arn}" || -n "$${git_ssh_secret_arn}" || -n "$${tailscale_auth_key_secret_arn}" ]]; then
   command -v aws >/dev/null || {
     echo "cloud-agent bootstrap failed: AWS CLI is unavailable for worker credentials" >&2
     exit 1
@@ -180,6 +209,78 @@ if [[ -n "$${claude_oauth_token_secret_arn}" ]]; then
   chown root:cloudagent /run/t3-worker/runtime.env
   chmod 0640 /run/t3-worker/runtime.env
 fi
+
+repository_url="https://github.com/$${repository}.git"
+repository_credential_directory=''
+cleanup_repository_credential() {
+  if [[ -n "$${repository_credential_directory}" ]]; then
+    rm -f -- \
+      "$${repository_credential_directory}/secret" \
+      "$${repository_credential_directory}/github.key" \
+      "$${repository_credential_directory}/known_hosts"
+    rmdir -- "$${repository_credential_directory}" 2>/dev/null || true
+  fi
+}
+trap cleanup_repository_credential EXIT
+if [[ -n "$${git_ssh_secret_arn}" ]]; then
+  repository_credential_directory="$(mktemp --directory /run/t3-worker/repository-git.XXXXXX)"
+  chmod 0700 "$${repository_credential_directory}"
+  repository_secret_file="$${repository_credential_directory}/secret"
+  repository_key_file="$${repository_credential_directory}/github.key"
+  repository_known_hosts="$${repository_credential_directory}/known_hosts"
+  if ! aws secretsmanager get-secret-value \
+    --region '${aws_region}' \
+    --secret-id "$${git_ssh_secret_arn}" \
+    --query SecretString \
+    --output text >"$${repository_secret_file}"; then
+    echo "cloud-agent bootstrap failed: Git SSH secret is unavailable" >&2
+    exit 1
+  fi
+  if grep --quiet '^-----BEGIN OPENSSH PRIVATE KEY-----' "$${repository_secret_file}"; then
+    mv "$${repository_secret_file}" "$${repository_key_file}"
+  elif ! jq --exit-status --raw-output \
+    'if type == "object" and length == 1 then .[] else empty end | select(type == "string")' \
+    "$${repository_secret_file}" >"$${repository_key_file}"; then
+    echo "cloud-agent bootstrap failed: Git SSH secret is not an OpenSSH private key" >&2
+    exit 1
+  else
+    rm -f "$${repository_secret_file}"
+  fi
+  chmod 0600 "$${repository_key_file}"
+  if ! ssh-keygen -y -P '' -f "$${repository_key_file}" >/dev/null 2>&1; then
+    echo "cloud-agent bootstrap failed: Git SSH key is invalid or encrypted" >&2
+    exit 1
+  fi
+  cat >"$${repository_known_hosts}" <<'KNOWN_HOSTS'
+[ssh.github.com]:443 ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIOMqqnkVzrm0SdG6UOoqKLsabgH5C9okWi0dh2l9GKJl
+KNOWN_HOSTS
+  chmod 0600 "$${repository_known_hosts}"
+  repository_url="ssh://git@ssh.github.com:443/$${repository}.git"
+  export GIT_SSH_COMMAND="ssh -F /dev/null -i $${repository_key_file} -o IdentitiesOnly=yes -o IdentityAgent=none -o BatchMode=yes -o StrictHostKeyChecking=yes -o HostKeyAlgorithms=ssh-ed25519 -o GlobalKnownHostsFile=/dev/null -o UserKnownHostsFile=$${repository_known_hosts}"
+fi
+
+if [[ -e /work/repository ]]; then
+  echo "cloud-agent bootstrap failed: repository workspace already exists" >&2
+  exit 1
+fi
+git -c core.hooksPath=/dev/null init --quiet /work/repository
+git -C /work/repository remote add origin "$${repository_url}"
+if ! GIT_TERMINAL_PROMPT=0 git -c core.hooksPath=/dev/null -C /work/repository \
+  fetch --no-tags --force -- origin "$${selected_ref}"; then
+  echo "cloud-agent bootstrap failed: assigned repository ref could not be fetched" >&2
+  exit 1
+fi
+resolved_commit="$(git -C /work/repository rev-parse --verify 'FETCH_HEAD^{commit}')"
+git -c core.hooksPath=/dev/null -C /work/repository \
+  checkout --quiet -B "$${output_branch}" "$${resolved_commit}"
+git -C /work/repository config --local t3.cloudBaseCommit "$${resolved_commit}"
+git -C /work/repository config --local t3.cloudAllocationId "$${allocation_id}"
+git -C /work/repository config --local t3.cloudAttempt "$${attempt}"
+chown -R cloudagent:cloudagent /work/repository
+unset GIT_SSH_COMMAND
+cleanup_repository_credential
+repository_credential_directory=''
+trap - EXIT
 
 cat >/etc/systemd/system/cloud-agent-hard-ttl.service <<'UNIT'
 [Unit]

@@ -68,6 +68,9 @@ export class CloudWorkerProvider extends Context.Service<
     readonly launch: (input: {
       readonly allocationId: RunAllocationId;
       readonly attempt: RunAllocationAttempt;
+      readonly repository: string;
+      readonly selectedRef: string;
+      readonly outputBranch: string;
       readonly expiresAt: string;
       readonly instanceType: string;
       readonly maxInputWaitSeconds: number;
@@ -332,6 +335,16 @@ export const make = Effect.fn("CloudWorkerProvider.make")(function* (input: {
           "The worker expiry is not a valid timestamp.",
         );
       }
+      if (
+        launchInput.repository.length > 256 ||
+        launchInput.selectedRef.length > 256 ||
+        launchInput.outputBranch.length > 256
+      ) {
+        return yield* providerError(
+          "invalid-config",
+          "Cloud repository, ref, and output branch values must fit in EC2 instance tags.",
+        );
+      }
       const tags = [
         { Key: "CloudAgentProject", Value: input.project },
         { Key: "CloudAgentRole", Value: "worker" },
@@ -339,6 +352,9 @@ export const make = Effect.fn("CloudWorkerProvider.make")(function* (input: {
         { Key: "CloudAgentAttempt", Value: String(launchInput.attempt) },
         { Key: "CloudAgentExpiresAtEpoch", Value: String(Math.floor(expiresAtMillis / 1000)) },
         { Key: "CloudAgentMaxInputWaitSeconds", Value: String(launchInput.maxInputWaitSeconds) },
+        { Key: "CloudAgentRepository", Value: launchInput.repository },
+        { Key: "CloudAgentSelectedRef", Value: launchInput.selectedRef },
+        { Key: "CloudAgentOutputBranch", Value: launchInput.outputBranch },
         { Key: "CloudAgentControllerUrl", Value: controllerUrl },
         { Key: "CloudAgentWorkerRouteUrl", Value: workerRouteUrl },
         { Key: "CloudAgentRegistrationCredential", Value: launchInput.registrationCredential },
