@@ -274,6 +274,23 @@ resource "aws_iam_role_policy" "worker_claude_credentials" {
   policy = data.aws_iam_policy_document.worker_claude_credentials[0].json
 }
 
+data "aws_iam_policy_document" "worker_tailscale_credentials" {
+  count = var.worker_tailscale_auth_key_secret_arn == null ? 0 : 1
+
+  statement {
+    sid       = "ReadTailscaleAuthKey"
+    actions   = ["secretsmanager:GetSecretValue"]
+    resources = [var.worker_tailscale_auth_key_secret_arn]
+  }
+}
+
+resource "aws_iam_role_policy" "worker_tailscale_credentials" {
+  count  = var.worker_tailscale_auth_key_secret_arn == null ? 0 : 1
+  name   = "tailscale-auth-key"
+  role   = aws_iam_role.worker.id
+  policy = data.aws_iam_policy_document.worker_tailscale_credentials[0].json
+}
+
 resource "aws_iam_instance_profile" "controller" {
   count = var.controller_mode == "ec2" ? 1 : 0
 

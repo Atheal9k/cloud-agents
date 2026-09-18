@@ -288,6 +288,21 @@ variable "worker_claude_oauth_token_secret_arn" {
   }
 }
 
+variable "worker_tailscale_auth_key_secret_arn" {
+  description = "Optional Secrets Manager ARN containing the raw Tailscale auth key used to enroll disposable workers."
+  type        = string
+  default     = null
+  nullable    = true
+
+  validation {
+    condition = (
+      var.worker_tailscale_auth_key_secret_arn == null ||
+      can(regex("^arn:[A-Za-z0-9-]+:secretsmanager:[a-z0-9-]+:[0-9]{12}:secret:[A-Za-z0-9/_+=.@-]+$", var.worker_tailscale_auth_key_secret_arn))
+    )
+    error_message = "worker_tailscale_auth_key_secret_arn must be a full AWS Secrets Manager ARN."
+  }
+}
+
 variable "allow_retained_data_destroy" {
   description = "Allow OpenTofu to delete retained controller data and artifact objects. Set only for an isolated sandbox teardown."
   type        = bool

@@ -176,6 +176,17 @@ function clientToken(input: {
     .slice(0, 61)}`;
 }
 
+function workerHostname(input: {
+  readonly allocationId: RunAllocationId;
+  readonly attempt: RunAllocationAttempt;
+}): string {
+  const suffix = NodeCrypto.createHash("sha256")
+    .update(`${input.allocationId}:${input.attempt}`)
+    .digest("hex")
+    .slice(0, 16);
+  return `t3-worker-${suffix}`;
+}
+
 function resourceFromInstance(instance: typeof AwsListedInstance.Type): CloudWorkerResource {
   const tags = new Map((instance.Tags ?? []).map((tag) => [tag.Key, tag.Value]));
   const allocationId = decodeAllocationId(tags.get("CloudAgentAllocationId"));
@@ -305,7 +316,9 @@ export const make = Effect.fn("CloudWorkerProvider.make")(function* (input: {
   const launch: CloudWorkerProvider["Service"]["launch"] = (launchInput) =>
     Effect.gen(function* () {
       const controllerUrl = normalizeHttpsOrigin(input.controllerUrl);
-      const workerRouteUrl = normalizeHttpsOrigin(input.workerRouteUrl);
+      const workerRouteUrl = normalizeHttpsOrigin(
+        input.workerRouteUrl?.replaceAll("{workerHostname}", workerHostname(launchInput)),
+      );
       if (controllerUrl === null || workerRouteUrl === null) {
         return yield* providerError(
           "invalid-config",

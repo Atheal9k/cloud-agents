@@ -9,6 +9,7 @@ import { make } from "./CloudWorkerProvider.ts";
 
 const allocationId = Schema.decodeSync(RunAllocationId)("allocation-1");
 const attempt = Schema.decodeSync(RunAllocationAttempt)(1);
+const secondAttempt = Schema.decodeSync(RunAllocationAttempt)(2);
 
 function output(input: {
   readonly stdout?: string;
@@ -119,6 +120,53 @@ it.effect("classifies AWS capacity failures as retryable", () =>
       .pipe(Effect.flip);
 
     expect(error.reason).toBe("retryable");
+  }),
+);
+
+it.effect("resolves a stable, attempt-specific worker route", () =>
+  Effect.gen(function* () {
+    const invocations: ProcessRunner.ProcessRunInput[] = [];
+    const runner = ProcessRunner.ProcessRunner.of({
+      run: (input) => {
+        invocations.push(input);
+        return Effect.succeed(
+          output({
+            stdout: JSON.stringify({
+              Instances: [{ InstanceId: "i-worker", State: { Name: "pending" } }],
+            }),
+          }),
+        );
+      },
+    });
+    const provider = yield* make({
+      region: "us-west-1",
+      project: "t3-cloud-agents",
+      controllerUrl: "https://controller.example.test/",
+      workerRouteUrl: "https://{workerHostname}.tailnet.example.test/",
+    }).pipe(Effect.provideService(ProcessRunner.ProcessRunner, runner));
+    const launchInput = {
+      allocationId,
+      attempt,
+      expiresAt: "2026-09-17T05:00:00.000Z",
+      instanceType: "t3.medium",
+      maxInputWaitSeconds: 900,
+      launchTemplate: { id: "lt-worker", version: 7 },
+      registrationCredential: "registration-credential",
+    };
+
+    yield* provider.launch(launchInput);
+    yield* provider.launch({ ...launchInput, attempt: secondAttempt });
+
+    const routes = invocations.map(
+      (invocation) =>
+        invocation.args
+          .join(" ")
+          .match(/https:\/\/t3-worker-[0-9a-f]{16}\.tailnet\.example\.test\//)?.[0],
+    );
+    expect(routes[0]).toMatch(/^https:\/\/t3-worker-[0-9a-f]{16}\.tailnet\.example\.test\/$/);
+    expect(routes[1]).toMatch(/^https:\/\/t3-worker-[0-9a-f]{16}\.tailnet\.example\.test\/$/);
+    expect(routes[1]).not.toBe(routes[0]);
+    expect(invocations[0]?.args.join(" ")).not.toContain("{workerHostname}");
   }),
 );
 

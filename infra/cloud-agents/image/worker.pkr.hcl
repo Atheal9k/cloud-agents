@@ -83,6 +83,11 @@ variable "claude_code_version" {
   default = "2.1.273"
 }
 
+variable "tailscale_version" {
+  type    = string
+  default = "1.102.4"
+}
+
 locals {
   desktop_layer = var.install_shared_browser ? "shared-browser" : (var.install_desktop_dependencies ? "desktop" : "headless")
 }
@@ -121,6 +126,7 @@ source "amazon-ebs" "worker" {
     T3Version                     = var.t3_version
     CodexVersion                  = var.codex_version
     ClaudeCodeVersion             = var.claude_code_version
+    TailscaleVersion              = var.tailscale_version
   }
 }
 
@@ -228,6 +234,7 @@ build {
       "PROFILE_NAME=${var.profile_name}",
       "SOURCE_AMI_ID=${var.source_ami_id}",
       "T3_VERSION=${var.t3_version}",
+      "TAILSCALE_VERSION=${var.tailscale_version}",
     ]
     execute_command = "chmod +x {{ .Path }}; {{ .Vars }} sudo -E '{{ .Path }}'"
     script          = "${path.root}/scripts/install-worker-image.sh"
@@ -242,6 +249,7 @@ build {
       "INSTALL_SHARED_BROWSER=${var.install_shared_browser}",
       "NODE_VERSION=${var.node_version}",
       "T3_VERSION=${var.t3_version}",
+      "TAILSCALE_VERSION=${var.tailscale_version}",
     ]
     execute_command = "chmod +x {{ .Path }}; {{ .Vars }} sudo -E '{{ .Path }}'"
     script          = "${path.root}/scripts/verify-worker-image.sh"

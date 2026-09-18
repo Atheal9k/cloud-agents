@@ -133,6 +133,7 @@ resource "aws_launch_template" "worker" {
     image_version                 = each.value.image_version
     profile_name                  = each.key
     service_port                  = var.worker_control_port
+    tailscale_auth_key_secret_arn = var.worker_tailscale_auth_key_secret_arn == null ? "" : var.worker_tailscale_auth_key_secret_arn
     ttl_minutes                   = var.worker_default_ttl_minutes
   }))
 
