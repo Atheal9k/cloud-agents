@@ -7,18 +7,21 @@ import * as ChildProcessSpawner from "effect/unstable/process/ChildProcessSpawne
 import * as ProcessRunner from "../processRunner.ts";
 import { make } from "./SharedBrowserHost.ts";
 
-function runner(stdout: string) {
+function runner(stdout: string, calls?: Array<{ command: string; args: ReadonlyArray<string> }>) {
   return Layer.succeed(ProcessRunner.ProcessRunner, {
-    run: () =>
-      Effect.succeed({
-        stdout,
-        stderr: "",
-        code: ChildProcessSpawner.ExitCode(0),
-        timedOut: false,
-        stdoutTruncated: false,
-        stderrTruncated: false,
-        stdoutInvalidUtf8: false,
-        stderrInvalidUtf8: false,
+    run: (input) =>
+      Effect.sync(() => {
+        calls?.push({ command: input.command, args: input.args });
+        return {
+          stdout: input.args.length === 0 ? stdout : "",
+          stderr: "",
+          code: ChildProcessSpawner.ExitCode(0),
+          timedOut: false,
+          stdoutTruncated: false,
+          stderrTruncated: false,
+          stdoutInvalidUtf8: false,
+          stderrInvalidUtf8: false,
+        };
       }),
   });
 }
@@ -57,5 +60,29 @@ it.effect("rejects descriptors that can route the gateway off the worker", () =>
     );
     const error = yield* Effect.flip(host.prepare(ThreadId.make("thread-allocation-1-2")));
     expect(error.reason).toBe("lifecycle-failed");
+  }),
+);
+
+it.effect("changes DCV input permissions only through the configured worker helper", () =>
+  Effect.gen(function* () {
+    const calls: Array<{ command: string; args: ReadonlyArray<string> }> = [];
+    const host = yield* make({
+      lifecycleCommand: "shared-browser",
+      permissionCommand: "shared-browser-permissions",
+    }).pipe(
+      Effect.provide(
+        runner(
+          '{"upstreamUrl":"http://127.0.0.1:8090","sessionId":"t3-allocation-1-2","display":":1","attemptKey":"allocation-1:2","threadId":"thread-allocation-1-2"}',
+          calls,
+        ),
+      ),
+    );
+    yield* host.setInputEnabled(ThreadId.make("thread-allocation-1-2"), true);
+    yield* host.setInputEnabled(ThreadId.make("thread-allocation-1-2"), false);
+    expect(calls).toEqual([
+      { command: "shared-browser", args: [] },
+      { command: "shared-browser-permissions", args: ["human"] },
+      { command: "shared-browser-permissions", args: ["agent"] },
+    ]);
   }),
 );

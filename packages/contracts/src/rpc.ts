@@ -406,6 +406,8 @@ export const WS_METHODS = {
   cloudAllocationSetAdmission: "cloud.allocations.setAdmission",
   sharedBrowserIssue: "sharedBrowser.issue",
   sharedBrowserKeepAlive: "sharedBrowser.keepAlive",
+  sharedBrowserTakeControl: "sharedBrowser.takeControl",
+  sharedBrowserReturnControl: "sharedBrowser.returnControl",
   sharedBrowserRelease: "sharedBrowser.release",
 
   // Pull request methods
@@ -708,6 +710,18 @@ const WsSharedBrowserIssueRpc = Rpc.make(WS_METHODS.sharedBrowserIssue, {
 });
 
 const WsSharedBrowserKeepAliveRpc = Rpc.make(WS_METHODS.sharedBrowserKeepAlive, {
+  payload: SharedBrowserViewerInput,
+  success: SharedBrowserGrant,
+  error: Schema.Union([SharedBrowserError, EnvironmentAuthorizationError]),
+});
+
+const WsSharedBrowserTakeControlRpc = Rpc.make(WS_METHODS.sharedBrowserTakeControl, {
+  payload: SharedBrowserViewerInput,
+  success: SharedBrowserGrant,
+  error: Schema.Union([SharedBrowserError, EnvironmentAuthorizationError]),
+});
+
+const WsSharedBrowserReturnControlRpc = Rpc.make(WS_METHODS.sharedBrowserReturnControl, {
   payload: SharedBrowserViewerInput,
   success: SharedBrowserGrant,
   error: Schema.Union([SharedBrowserError, EnvironmentAuthorizationError]),
@@ -1473,6 +1487,8 @@ export const WsRpcGroup = RpcGroup.make(
   WsCloudAllocationSetAdmissionRpc,
   WsSharedBrowserIssueRpc,
   WsSharedBrowserKeepAliveRpc,
+  WsSharedBrowserTakeControlRpc,
+  WsSharedBrowserReturnControlRpc,
   WsSharedBrowserReleaseRpc,
   WsPullRequestsListRpc,
   WsPullRequestsListStatsRpc,

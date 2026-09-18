@@ -3,8 +3,12 @@
 /* oxlint-disable react/iframe-missing-sandbox -- The cross-origin DCV client requires scripts and its own origin for storage and WebSockets. */
 
 import { squashAtomCommandFailure } from "@t3tools/client-runtime/state/runtime";
-import type { SharedBrowserViewerId, ScopedThreadRef } from "@t3tools/contracts";
-import { MonitorUp, RefreshCw } from "lucide-react";
+import type {
+  SharedBrowserControlState,
+  SharedBrowserViewerId,
+  ScopedThreadRef,
+} from "@t3tools/contracts";
+import { MonitorUp, MousePointer2, RefreshCw } from "lucide-react";
 import { useEffect, useState } from "react";
 
 import { sharedBrowserGatewayUrl } from "~/browser/sharedBrowserGatewayUrl";
@@ -34,12 +38,20 @@ export function SharedBrowserView({ threadRef, visible }: Props) {
   const environmentHttpBaseUrl = useEnvironmentHttpBaseUrl(threadRef.environmentId);
   const issue = useAtomCommand(sharedBrowserEnvironment.issue, { reportFailure: false });
   const keepAlive = useAtomCommand(sharedBrowserEnvironment.keepAlive, { reportFailure: false });
+  const takeControl = useAtomCommand(sharedBrowserEnvironment.takeControl, {
+    reportFailure: false,
+  });
+  const returnControl = useAtomCommand(sharedBrowserEnvironment.returnControl, {
+    reportFailure: false,
+  });
   const release = useAtomCommand(sharedBrowserEnvironment.release, { reportFailure: false });
   const [documentVisible, setDocumentVisible] = useState(
     () => typeof document === "undefined" || document.visibilityState === "visible",
   );
   const [viewerUrl, setViewerUrl] = useState<string | null>(null);
   const [viewerId, setViewerId] = useState<SharedBrowserViewerId | null>(null);
+  const [control, setControl] = useState<SharedBrowserControlState | null>(null);
+  const [handoffPending, setHandoffPending] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [retry, setRetry] = useState(0);
 
@@ -81,6 +93,7 @@ export function SharedBrowserView({ threadRef, visible }: Props) {
 
       activeViewerId = result.value.viewerId;
       setViewerId(result.value.viewerId);
+      setControl(result.value.control);
       setViewerUrl(sharedBrowserGatewayUrl(environmentHttpBaseUrl, result.value, retry));
       heartbeat = setInterval(() => {
         if (activeViewerId === null) return;
@@ -90,6 +103,8 @@ export function SharedBrowserView({ threadRef, visible }: Props) {
         }).then((heartbeatResult) => {
           if (!disposed && heartbeatResult._tag === "Failure") {
             setRetry((current) => current + 1);
+          } else if (!disposed && heartbeatResult._tag === "Success") {
+            setControl(heartbeatResult.value.control);
           }
         });
       }, 30_000);
@@ -100,6 +115,7 @@ export function SharedBrowserView({ threadRef, visible }: Props) {
       if (heartbeat !== null) clearInterval(heartbeat);
       setViewerUrl(null);
       setViewerId(null);
+      setControl(null);
       if (activeViewerId !== null) {
         void release({
           environmentId: threadRef.environmentId,
@@ -121,22 +137,62 @@ export function SharedBrowserView({ threadRef, visible }: Props) {
 
   if (!visible || !documentVisible) return null;
 
+  const ownsControl =
+    control?.owner === "human" && viewerId !== null && control.viewerId === viewerId;
+  const controlledElsewhere = control?.owner === "human" && !ownsControl;
+  const ownerLabel = ownsControl
+    ? "You have control"
+    : controlledElsewhere
+      ? "Controlled elsewhere"
+      : control?.owner === "none"
+        ? "Agent paused"
+        : "Agent has control";
+
+  const changeControl = async () => {
+    if (viewerId === null || handoffPending) return;
+    setHandoffPending(true);
+    setError(null);
+    const command = ownsControl ? returnControl : takeControl;
+    const result = await command({
+      environmentId: threadRef.environmentId,
+      input: { threadId: threadRef.threadId, viewerId },
+    });
+    if (result._tag === "Success") {
+      setControl(result.value.control);
+    } else {
+      setError(messageFromFailure(squashAtomCommandFailure(result)));
+    }
+    setHandoffPending(false);
+  };
+
   return (
     <div className="flex min-h-0 flex-1 flex-col bg-background">
       <div className="flex h-10 shrink-0 items-center gap-2 border-b border-border px-3">
         <MonitorUp className="size-4 text-muted-foreground" />
         <span className="text-sm font-medium">Agent browser</span>
-        <span className="text-xs text-muted-foreground">View only</span>
+        <span className="text-xs text-muted-foreground">{ownerLabel}</span>
+        {viewerUrl !== null && error !== null ? (
+          <span className="text-xs text-destructive">Handoff failed</span>
+        ) : null}
         {viewerId !== null ? (
           <span className="ml-auto text-xs text-muted-foreground">Live</span>
         ) : null}
+        <Button
+          size="xs"
+          variant={ownsControl ? "secondary" : "outline"}
+          disabled={handoffPending || controlledElsewhere || viewerId === null}
+          onClick={() => void changeControl()}
+        >
+          <MousePointer2 />
+          {handoffPending ? "Switching..." : ownsControl ? "Return control" : "Take control"}
+        </Button>
       </div>
       {viewerUrl !== null ? (
         <iframe
           className="min-h-0 flex-1 border-0 bg-black"
           src={viewerUrl}
           title="Agent browser"
-          allow="fullscreen"
+          allow="clipboard-read; clipboard-write; fullscreen"
           referrerPolicy="no-referrer"
           sandbox="allow-downloads allow-forms allow-pointer-lock allow-popups allow-same-origin allow-scripts"
         />

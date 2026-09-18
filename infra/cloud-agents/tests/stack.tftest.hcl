@@ -76,7 +76,7 @@ run "protected_plan" {
       }
       linux-web-browser = {
         ami_id               = "ami-0123456789abcdef0"
-        image_version        = "0.0.42-ca34.1"
+        image_version        = "0.0.42-ca35.1"
         instance_type        = "t3.medium"
         root_volume_size_gib = 30
         capabilities         = ["coding", "web-preview", "shared-browser"]
@@ -95,6 +95,7 @@ run "protected_plan" {
     condition = alltrue([
       strcontains(base64decode(aws_launch_template.worker["linux-web-browser"].user_data), "T3CODE_SHARED_BROWSER_THREAD_ID"),
       strcontains(base64decode(aws_launch_template.worker["linux-web-browser"].user_data), "T3CODE_SHARED_BROWSER_COMMAND"),
+      strcontains(base64decode(aws_launch_template.worker["linux-web-browser"].user_data), "T3CODE_SHARED_BROWSER_PERMISSION_COMMAND"),
       one([
         for specification in aws_launch_template.worker["linux-web-browser"].tag_specifications :
         specification.tags["CloudAgentSharedBrowser"]

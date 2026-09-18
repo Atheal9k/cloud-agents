@@ -105,6 +105,10 @@ if [[ "${INSTALL_SHARED_BROWSER}" == "true" ]]; then
      (.xAuthority | type == "string" and length > 0)' \
     <<<"${browser_descriptor}" >/dev/null \
     || fail "shared-browser lifecycle helper returned an invalid descriptor"
+  sudo -u cloudagent /opt/t3/bin/cloud-agent-shared-browser-permissions human \
+    || fail "shared-browser input permissions could not be granted"
+  sudo -u cloudagent /opt/t3/bin/cloud-agent-shared-browser-permissions agent \
+    || fail "shared-browser input permissions could not be revoked"
   sudo -u cloudagent dcv close-session t3-image-build-1
   [[ -z "$(sudo -u cloudagent dcv list-sessions)" ]] \
     || fail "shared-browser verification session remained open"

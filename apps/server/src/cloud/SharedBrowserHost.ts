@@ -32,6 +32,10 @@ export class SharedBrowserHost extends Context.Service<
     readonly prepare: (
       threadId: ThreadId,
     ) => Effect.Effect<SharedBrowserHostDescriptor, SharedBrowserError>;
+    readonly setInputEnabled: (
+      threadId: ThreadId,
+      enabled: boolean,
+    ) => Effect.Effect<void, SharedBrowserError>;
   }
 >()("t3/cloud/SharedBrowserHost") {}
 
@@ -65,77 +69,115 @@ function applyBrowserEnvironment(descriptor: SharedBrowserHostDescriptor): void 
 
 export const make = Effect.fn("SharedBrowserHost.make")(function* (input?: {
   readonly lifecycleCommand?: string;
+  readonly permissionCommand?: string;
 }) {
   const runner = yield* ProcessRunner.ProcessRunner;
   const lifecycleCommand = input?.lifecycleCommand;
   const prepared = yield* Ref.make<SharedBrowserHostDescriptor | null>(null);
   const semaphore = yield* Semaphore.make(1);
 
+  const prepareUnlocked = Effect.fn("SharedBrowserHost.prepareUnlocked")(function* (
+    threadId: ThreadId,
+  ) {
+    const current = yield* Ref.get(prepared);
+    if (current !== null) {
+      if (current.threadId !== threadId) {
+        return yield* sharedBrowserError(
+          "wrong-thread",
+          "The shared browser belongs to another thread on this worker.",
+        );
+      }
+      applyBrowserEnvironment(current);
+      return current;
+    }
+    if (lifecycleCommand === undefined) {
+      return yield* sharedBrowserError(
+        "unavailable",
+        "This worker profile does not provide a shared browser session.",
+      );
+    }
+
+    const result = yield* runner
+      .run({
+        command: lifecycleCommand,
+        args: [],
+        timeout: "30 seconds",
+        maxOutputBytes: 8 * 1_024,
+      })
+      .pipe(
+        Effect.mapError(() =>
+          sharedBrowserError(
+            "lifecycle-failed",
+            "The worker could not start its shared browser session.",
+          ),
+        ),
+      );
+    if (result.code !== 0 || result.stdoutInvalidUtf8 || result.stdoutTruncated) {
+      return yield* sharedBrowserError(
+        "lifecycle-failed",
+        "The worker shared browser helper returned an invalid result.",
+      );
+    }
+    const decoded = decodeDescriptor(result.stdout.trim());
+    if (Option.isNone(decoded) || validateLoopbackUpstream(decoded.value.upstreamUrl) === null) {
+      return yield* sharedBrowserError(
+        "lifecycle-failed",
+        "The worker shared browser helper returned an invalid descriptor.",
+      );
+    }
+    if (decoded.value.threadId !== threadId) {
+      return yield* sharedBrowserError(
+        "wrong-thread",
+        "The shared browser descriptor does not match this thread.",
+      );
+    }
+    yield* Ref.set(prepared, decoded.value);
+    applyBrowserEnvironment(decoded.value);
+    return decoded.value;
+  });
+
   const prepare: SharedBrowserHost["Service"]["prepare"] = (threadId) =>
+    semaphore.withPermits(1)(prepareUnlocked(threadId));
+
+  const setInputEnabled: SharedBrowserHost["Service"]["setInputEnabled"] = (threadId, enabled) =>
     semaphore.withPermits(1)(
       Effect.gen(function* () {
-        const current = yield* Ref.get(prepared);
-        if (current !== null) {
-          if (current.threadId !== threadId) {
-            return yield* sharedBrowserError(
-              "wrong-thread",
-              "The shared browser belongs to another thread on this worker.",
-            );
-          }
-          applyBrowserEnvironment(current);
-          return current;
-        }
-        if (lifecycleCommand === undefined) {
+        yield* prepareUnlocked(threadId);
+        if (input?.permissionCommand === undefined) {
           return yield* sharedBrowserError(
             "unavailable",
-            "This worker profile does not provide a shared browser session.",
+            "This worker image does not support shared browser input handoff.",
           );
         }
-
         const result = yield* runner
           .run({
-            command: lifecycleCommand,
-            args: [],
-            timeout: "30 seconds",
-            maxOutputBytes: 8 * 1_024,
+            command: input.permissionCommand,
+            args: [enabled ? "human" : "agent"],
+            timeout: "10 seconds",
+            maxOutputBytes: 4 * 1_024,
           })
           .pipe(
             Effect.mapError(() =>
               sharedBrowserError(
                 "lifecycle-failed",
-                "The worker could not start its shared browser session.",
+                "The worker could not change shared browser input permissions.",
               ),
             ),
           );
-        if (result.code !== 0 || result.stdoutInvalidUtf8 || result.stdoutTruncated) {
+        if (result.code !== 0 || result.stdoutTruncated || result.stderrTruncated) {
           return yield* sharedBrowserError(
             "lifecycle-failed",
-            "The worker shared browser helper returned an invalid result.",
+            "The worker could not change shared browser input permissions.",
           );
         }
-        const decoded = decodeDescriptor(result.stdout.trim());
-        if (
-          Option.isNone(decoded) ||
-          validateLoopbackUpstream(decoded.value.upstreamUrl) === null
-        ) {
-          return yield* sharedBrowserError(
-            "lifecycle-failed",
-            "The worker shared browser helper returned an invalid descriptor.",
-          );
-        }
-        if (decoded.value.threadId !== threadId) {
-          return yield* sharedBrowserError(
-            "wrong-thread",
-            "The shared browser descriptor does not match this thread.",
-          );
-        }
-        yield* Ref.set(prepared, decoded.value);
-        applyBrowserEnvironment(decoded.value);
-        return decoded.value;
       }),
     );
 
-  return SharedBrowserHost.of({ available: lifecycleCommand !== undefined, prepare });
+  return SharedBrowserHost.of({
+    available: lifecycleCommand !== undefined,
+    prepare,
+    setInputEnabled,
+  });
 });
 
 export const layer = Layer.effect(
@@ -143,6 +185,16 @@ export const layer = Layer.effect(
   Effect.gen(function* () {
     const command = yield* Config.string("T3CODE_SHARED_BROWSER_COMMAND").pipe(Config.option);
     const lifecycleCommand = Option.getOrUndefined(command);
-    return yield* make(lifecycleCommand === undefined ? undefined : { lifecycleCommand });
+    const permissionCommand = Option.getOrUndefined(
+      yield* Config.string("T3CODE_SHARED_BROWSER_PERMISSION_COMMAND").pipe(Config.option),
+    );
+    return yield* make(
+      lifecycleCommand === undefined
+        ? undefined
+        : {
+            lifecycleCommand,
+            ...(permissionCommand === undefined ? {} : { permissionCommand }),
+          },
+    );
   }),
 );

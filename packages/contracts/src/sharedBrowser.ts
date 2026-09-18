@@ -16,12 +16,29 @@ export const SharedBrowserViewerInput = Schema.Struct({
 });
 export type SharedBrowserViewerInput = typeof SharedBrowserViewerInput.Type;
 
+export const SharedBrowserControlState = Schema.Union([
+  Schema.Struct({
+    owner: Schema.Literal("agent"),
+  }),
+  Schema.Struct({
+    owner: Schema.Literal("human"),
+    viewerId: SharedBrowserViewerId,
+    expiresAt: IsoDateTime,
+  }),
+  Schema.Struct({
+    owner: Schema.Literal("none"),
+    reason: Schema.Literals(["viewer-disconnected", "viewer-expired", "handoff-failed"]),
+  }),
+]);
+export type SharedBrowserControlState = typeof SharedBrowserControlState.Type;
+
 export const SharedBrowserGrant = Schema.Struct({
   viewerId: SharedBrowserViewerId,
   bootstrapPath: TrimmedNonEmptyString,
   attemptKey: TrimmedNonEmptyString,
   transport: Schema.Literal("dcv"),
   expiresAt: IsoDateTime,
+  control: SharedBrowserControlState,
 });
 export type SharedBrowserGrant = typeof SharedBrowserGrant.Type;
 
@@ -33,7 +50,15 @@ export type SharedBrowserReleaseResult = typeof SharedBrowserReleaseResult.Type;
 export class SharedBrowserError extends Schema.TaggedError<SharedBrowserError>()(
   "SharedBrowserError",
   {
-    reason: Schema.Literals(["unavailable", "wrong-thread", "lifecycle-failed", "viewer-expired"]),
+    reason: Schema.Literals([
+      "unavailable",
+      "wrong-thread",
+      "lifecycle-failed",
+      "viewer-expired",
+      "control-busy",
+      "control-not-owned",
+      "handoff-failed",
+    ]),
     message: TrimmedNonEmptyString,
   },
 ) {}
