@@ -29,6 +29,26 @@ export function createSharedBrowserAtoms<R, E>(
       },
       execute: (input) => request(WS_METHODS.sharedBrowserKeepAlive, input),
     }),
+    takeControl: createEnvironmentRpcCommand(runtime, {
+      label: "environment-data:shared-browser:take-control",
+      tag: WS_METHODS.sharedBrowserTakeControl,
+      scheduler,
+      concurrency: {
+        mode: "singleFlight",
+        key: ({ environmentId, input }) => `${environmentId}:${input.viewerId}`,
+      },
+      execute: (input) => request(WS_METHODS.sharedBrowserTakeControl, input),
+    }),
+    returnControl: createEnvironmentRpcCommand(runtime, {
+      label: "environment-data:shared-browser:return-control",
+      tag: WS_METHODS.sharedBrowserReturnControl,
+      scheduler,
+      concurrency: {
+        mode: "singleFlight",
+        key: ({ environmentId, input }) => `${environmentId}:${input.viewerId}`,
+      },
+      execute: (input) => request(WS_METHODS.sharedBrowserReturnControl, input),
+    }),
     release: createEnvironmentRpcCommand(runtime, {
       label: "environment-data:shared-browser:release",
       tag: WS_METHODS.sharedBrowserRelease,

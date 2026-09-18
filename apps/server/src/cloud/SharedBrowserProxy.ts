@@ -84,6 +84,8 @@ function responseHeaders(response: {
 const proxyWebSocket = Effect.fn("SharedBrowserProxy.proxyWebSocket")(function* (
   request: HttpServerRequest.HttpServerRequest,
   upstreamUrl: string,
+  token: string,
+  waitUntilRevoked: Effect.Effect<void>,
 ) {
   const downstream = yield* request.upgrade;
   const protocols = request.headers["sec-websocket-protocol"]
@@ -98,9 +100,22 @@ const proxyWebSocket = Effect.fn("SharedBrowserProxy.proxyWebSocket")(function* 
     Effect.gen(function* () {
       const writeDownstream = yield* downstream.writer;
       const writeUpstream = yield* upstream.writer;
+      const gateway = yield* SharedBrowserGateway;
+      const waitForViewerExpiry = Effect.gen(function* () {
+        while (true) {
+          yield* Effect.sleep("1 second");
+          if ((yield* gateway.resolve(token)) === null) return;
+        }
+      });
       yield* Effect.raceFirst(
-        upstream.runRaw((data) => writeDownstream(data)),
-        downstream.runRaw((data) => writeUpstream(data)),
+        Effect.raceFirst(
+          Effect.raceFirst(
+            upstream.runRaw((data) => writeDownstream(data)),
+            downstream.runRaw((data) => writeUpstream(data)),
+          ),
+          waitUntilRevoked,
+        ),
+        waitForViewerExpiry,
       );
     }),
   ).pipe(Effect.ignoreCause);
@@ -185,7 +200,17 @@ export const sharedBrowserProxyMiddlewareLayer = HttpRouter.middleware(
       const origin = upstreamOrigin(target.upstreamUrl);
       const upstreamPath = `${url.value.pathname}${url.value.search}`;
       if (isWebSocketUpgrade(request)) {
-        return yield* proxyWebSocket(request, `${origin.replace(/^http/, "ws")}${upstreamPath}`);
+        const connection = yield* gateway.attachWebSocket(token);
+        if (connection === null) {
+          return HttpServerResponse.text("Viewer expired", { status: 410 });
+        }
+        const connectionOrigin = upstreamOrigin(connection.target.upstreamUrl);
+        return yield* proxyWebSocket(
+          request,
+          `${connectionOrigin.replace(/^http/, "ws")}${upstreamPath}`,
+          token,
+          connection.waitUntilRevoked,
+        ).pipe(Effect.ensuring(gateway.detachWebSocket(connection.connectionId)));
       }
       return yield* proxyHttp(request, `${origin}${upstreamPath}`, origin);
     }),

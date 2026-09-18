@@ -52,6 +52,24 @@ describe("RPC authorization scopes", () => {
     );
   });
 
+  it("lets read-only clients observe the shared browser without sending input", () => {
+    expect(requiredScopeForRpcMethod(WS_METHODS.sharedBrowserIssue)).toBe(
+      AuthOrchestrationReadScope,
+    );
+    expect(requiredScopeForRpcMethod(WS_METHODS.sharedBrowserKeepAlive)).toBe(
+      AuthOrchestrationReadScope,
+    );
+    expect(requiredScopeForRpcMethod(WS_METHODS.sharedBrowserRelease)).toBe(
+      AuthOrchestrationReadScope,
+    );
+    expect(requiredScopeForRpcMethod(WS_METHODS.sharedBrowserTakeControl)).toBe(
+      AuthOrchestrationOperateScope,
+    );
+    expect(requiredScopeForRpcMethod(WS_METHODS.sharedBrowserReturnControl)).toBe(
+      AuthOrchestrationOperateScope,
+    );
+  });
+
   it("requires permission to operate on a thread before uploading feedback", () => {
     expect(requiredScopeForRpcMethod(WS_METHODS.providerUploadFeedback)).toBe(
       AuthOrchestrationOperateScope,

@@ -64,6 +64,8 @@ ENV
 if jq --exit-status '.capabilities.desktopStreamService == true' "$manifest" >/dev/null; then
   echo 'T3CODE_SHARED_BROWSER_COMMAND=/opt/t3/bin/cloud-agent-shared-browser' \
     >>/etc/t3/worker.env
+  echo 'T3CODE_SHARED_BROWSER_PERMISSION_COMMAND=/opt/t3/bin/cloud-agent-shared-browser-permissions' \
+    >>/etc/t3/worker.env
 fi
 chown root:cloudagent /etc/t3/worker.env
 chmod 0640 /etc/t3/worker.env

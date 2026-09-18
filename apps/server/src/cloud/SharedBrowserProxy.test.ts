@@ -1,4 +1,4 @@
-import { ThreadId } from "@t3tools/contracts";
+import { SharedBrowserViewerId, ThreadId } from "@t3tools/contracts";
 import { afterEach, describe, expect, it } from "vite-plus/test";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
@@ -55,11 +55,16 @@ function fixture() {
   const gateway = SharedBrowserGateway.of({
     issue: () => Effect.die("not used"),
     keepAlive: () => Effect.die("not used"),
+    takeControl: () => Effect.die("not used"),
+    returnControl: () => Effect.die("not used"),
     release: () => Effect.die("not used"),
+    attachWebSocket: () => Effect.die("not used"),
+    detachWebSocket: () => Effect.die("not used"),
     resolve: (token) =>
       Effect.succeed(
         token === TOKEN
           ? {
+              viewerId: SharedBrowserViewerId.make("viewer-1"),
               threadId: ThreadId.make("thread-allocation-1-2"),
               upstreamUrl: "http://127.0.0.1:8090",
               sessionId: "t3-allocation-1-2",

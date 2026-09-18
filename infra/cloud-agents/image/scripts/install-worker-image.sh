@@ -73,19 +73,24 @@ if [[ "${INSTALL_SHARED_BROWSER}" == "true" ]]; then
 
   install -m 0644 /tmp/dcv.conf /etc/dcv/dcv.conf
   install -m 0644 /tmp/shared-browser.perm /etc/dcv/shared-browser.perm
+  install -m 0644 /tmp/shared-browser-control.perm /etc/dcv/shared-browser-control.perm
   install -m 0644 /tmp/shared-browser-nginx.conf /etc/nginx/conf.d/t3-shared-browser.conf
   install -m 0755 /tmp/cloud-agent-shared-browser /opt/t3/bin/cloud-agent-shared-browser
   install -m 0755 /tmp/cloud-agent-shared-browser-session \
     /opt/t3/bin/cloud-agent-shared-browser-session
+  install -m 0755 /tmp/cloud-agent-shared-browser-permissions \
+    /opt/t3/bin/cloud-agent-shared-browser-permissions
   install -m 0755 /tmp/measure-shared-browser.sh /opt/t3/bin/measure-shared-browser
   systemctl enable dcvserver.service nginx.service
 fi
 rm -f \
   /tmp/dcv.conf \
   /tmp/shared-browser.perm \
+  /tmp/shared-browser-control.perm \
   /tmp/shared-browser-nginx.conf \
   /tmp/cloud-agent-shared-browser \
   /tmp/cloud-agent-shared-browser-session \
+  /tmp/cloud-agent-shared-browser-permissions \
   /tmp/measure-shared-browser.sh
 
 node_archive="node-v${NODE_VERSION}-linux-x64.tar.xz"

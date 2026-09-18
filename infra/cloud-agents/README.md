@@ -31,7 +31,7 @@ The default `linux-web` image has no mobile SDK, X server, browser, or display-s
 packer build `
   -var "source_ami_id=ami-0123456789abcdef0" `
   -var "profile_name=linux-web-browser" `
-  -var "image_version=0.0.42-ca34.1" `
+  -var "image_version=0.0.42-ca35.1" `
   -var "install_desktop_dependencies=true" `
   -var "install_shared_browser=true" `
   ./image
@@ -41,7 +41,7 @@ The browser image pins Amazon DCV 2025.0-20103 by archive checksum and installs 
 
 `dcvserver` and its loopback nginx bridge start with the instance, but no desktop session is created at boot. The first provider turn or visible Agent browser panel creates one virtual session for that allocation attempt. Provider-launched Chromium receives that session's `DISPLAY` and `XAUTHORITY`, so automation and the viewer observe the same browser. DCV listens only on `127.0.0.1:8443`; the authenticated T3 route proxies its HTTP and WebSocket traffic, and the worker security group has no DCV ingress. Viewer grants expire after 75 seconds without a visible-panel heartbeat, and a replacement worker cannot resolve a prior attempt's in-memory token.
 
-The Agent browser is view-only in CA-34. It works in the web client and the desktop app on the latest three major Chrome, Firefox, Edge, and Safari releases in the [Amazon DCV browser requirements](https://docs.aws.amazon.com/dcv/latest/userguide/requirements.html). Amazon DCV's bundled browser client does not support iOS or Android, so phones should use the direct app preview until a supported mobile transport is added. Direct app previews do not start or require DCV.
+The Agent browser starts in observe mode. Taking control interrupts an active provider turn before the worker grants keyboard, pointer, touch, scrolling, and clipboard-paste input to the viewer. Returning control revokes input first, then starts a follow-up that tells the agent to inspect the changed browser state. Closing or losing the viewer revokes input without resuming the agent. The viewer works in the web client and the desktop app on the latest three major Chrome, Firefox, Edge, and Safari releases in the [Amazon DCV browser requirements](https://docs.aws.amazon.com/dcv/latest/userguide/requirements.html). Amazon DCV's bundled browser client does not support iOS or Android, so phones should use the direct app preview until a supported mobile transport is added. Direct app previews do not start or require DCV.
 
 To measure contention on an actual browser-profile worker, open the Agent browser panel, start Chromium in the agent workflow, then run `/opt/t3/bin/measure-shared-browser <build command>`. The command emits build exit status, elapsed time, average DCV/Xdcv/Chromium CPU, peak RSS, viewer first-byte latency, and network bytes. Capture an idle baseline and the same build without a visible viewer before accepting a profile size. This repository does not run that billable AWS measurement during offline verification.
 

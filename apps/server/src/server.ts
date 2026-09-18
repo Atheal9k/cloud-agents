@@ -145,6 +145,7 @@ import * as CloudGitCredentials from "./cloud/CloudGitCredentials.ts";
 import * as CloudRepositoryPreparation from "./cloud/CloudRepositoryPreparation.ts";
 import * as CloudProviderExecution from "./cloud/CloudProviderExecution.ts";
 import * as SharedBrowserGateway from "./cloud/SharedBrowserGateway.ts";
+import * as SharedBrowserAgentHandoff from "./cloud/SharedBrowserAgentHandoff.ts";
 import * as SharedBrowserHost from "./cloud/SharedBrowserHost.ts";
 import {
   sharedBrowserBootstrapRouteLayer,
@@ -635,7 +636,9 @@ const commandReadinessLayer = HttpRouter.middleware(
 );
 
 const PreviewGatewayLayerLive = PreviewGateway.layer;
-const SharedBrowserGatewayLayerLive = SharedBrowserGateway.layer;
+const SharedBrowserGatewayLayerLive = SharedBrowserGateway.layer.pipe(
+  Layer.provide(SharedBrowserAgentHandoff.layer),
+);
 const BrowserGatewayLayersLive = Layer.mergeAll(
   PreviewGatewayLayerLive,
   SharedBrowserGatewayLayerLive,

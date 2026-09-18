@@ -70,6 +70,8 @@ export const RPC_REQUIRED_SCOPES = {
   [WS_METHODS.cloudAllocationSetAdmission]: AuthOrchestrationOperateScope,
   [WS_METHODS.sharedBrowserIssue]: AuthOrchestrationReadScope,
   [WS_METHODS.sharedBrowserKeepAlive]: AuthOrchestrationReadScope,
+  [WS_METHODS.sharedBrowserTakeControl]: AuthOrchestrationOperateScope,
+  [WS_METHODS.sharedBrowserReturnControl]: AuthOrchestrationOperateScope,
   [WS_METHODS.sharedBrowserRelease]: AuthOrchestrationReadScope,
   [WS_METHODS.pullRequestsList]: AuthOrchestrationReadScope,
   [WS_METHODS.pullRequestsListStats]: AuthOrchestrationReadScope,

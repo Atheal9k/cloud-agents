@@ -149,6 +149,7 @@ import * as ServerLifecycleEvents from "./serverLifecycleEvents.ts";
 import * as ServerRuntimeStartup from "./serverRuntimeStartup.ts";
 import * as ServiceLauncherClient from "./cloud/serviceLauncherClient.ts";
 import * as SharedBrowserGateway from "./cloud/SharedBrowserGateway.ts";
+import * as SharedBrowserAgentHandoff from "./cloud/SharedBrowserAgentHandoff.ts";
 import * as SharedBrowserHost from "./cloud/SharedBrowserHost.ts";
 import * as ServerSettings from "./serverSettings.ts";
 import * as TerminalManager from "./terminal/Manager.ts";
@@ -767,10 +768,17 @@ const buildAppUnderTest = (options?: {
       PreviewGateway.layer.pipe(Layer.provide(portDiscoveryLayer)),
       SharedBrowserGateway.layer.pipe(
         Layer.provide(
-          Layer.succeed(SharedBrowserHost.SharedBrowserHost, {
-            available: false,
-            prepare: () => Effect.die("Shared browser host not stubbed in this test"),
-          }),
+          Layer.mergeAll(
+            Layer.succeed(SharedBrowserHost.SharedBrowserHost, {
+              available: false,
+              prepare: () => Effect.die("Shared browser host not stubbed in this test"),
+              setInputEnabled: () => Effect.die("Shared browser host not stubbed in this test"),
+            }),
+            Layer.succeed(SharedBrowserAgentHandoff.SharedBrowserAgentHandoff, {
+              pause: () => Effect.die("Shared browser handoff not stubbed in this test"),
+              resume: () => Effect.die("Shared browser handoff not stubbed in this test"),
+            }),
+          ),
         ),
       ),
     );

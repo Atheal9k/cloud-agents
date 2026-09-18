@@ -13,6 +13,7 @@ describe("sharedBrowserGatewayUrl", () => {
           attemptKey: "allocation-1:2",
           transport: "dcv",
           expiresAt: "2026-09-17T01:02:03.000Z",
+          control: { owner: "agent" },
         },
         3,
       ),

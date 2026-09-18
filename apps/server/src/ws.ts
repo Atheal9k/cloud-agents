@@ -3427,6 +3427,22 @@ const makeWsRpcLayer = (
               "rpc.aggregate": "shared-browser",
             },
           ),
+        [WS_METHODS.sharedBrowserTakeControl]: (input) =>
+          observeRpcEffect(
+            WS_METHODS.sharedBrowserTakeControl,
+            sharedBrowserGateway.takeControl(input),
+            {
+              "rpc.aggregate": "shared-browser",
+            },
+          ),
+        [WS_METHODS.sharedBrowserReturnControl]: (input) =>
+          observeRpcEffect(
+            WS_METHODS.sharedBrowserReturnControl,
+            sharedBrowserGateway.returnControl(input),
+            {
+              "rpc.aggregate": "shared-browser",
+            },
+          ),
         [WS_METHODS.sharedBrowserRelease]: (input) =>
           observeRpcEffect(WS_METHODS.sharedBrowserRelease, sharedBrowserGateway.release(input), {
             "rpc.aggregate": "shared-browser",

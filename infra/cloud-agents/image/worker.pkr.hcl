@@ -144,6 +144,11 @@ build {
   }
 
   provisioner "file" {
+    source      = "${path.root}/files/shared-browser-control.perm"
+    destination = "/tmp/shared-browser-control.perm"
+  }
+
+  provisioner "file" {
     source      = "${path.root}/files/shared-browser-nginx.conf"
     destination = "/tmp/shared-browser-nginx.conf"
   }
@@ -156,6 +161,11 @@ build {
   provisioner "file" {
     source      = "${path.root}/scripts/cloud-agent-shared-browser-session"
     destination = "/tmp/cloud-agent-shared-browser-session"
+  }
+
+  provisioner "file" {
+    source      = "${path.root}/scripts/cloud-agent-shared-browser-permissions"
+    destination = "/tmp/cloud-agent-shared-browser-permissions"
   }
 
   provisioner "file" {

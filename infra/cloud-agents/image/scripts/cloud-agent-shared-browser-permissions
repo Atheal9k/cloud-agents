@@ -1,0 +1,31 @@
+#!/bin/bash
+set -euo pipefail
+
+fail() {
+  echo "shared browser permission change failed: $*" >&2
+  exit 1
+}
+
+[[ -r /etc/t3/worker.env ]] || fail "worker environment is unavailable"
+source /etc/t3/worker.env
+: "${T3CODE_SHARED_BROWSER_ATTEMPT_KEY:?attempt key is required}"
+
+mode="${1:-}"
+session_id="t3-${T3CODE_SHARED_BROWSER_ATTEMPT_KEY//:/-}"
+[[ "${session_id}" =~ ^[A-Za-z0-9_-]{1,128}$ ]] || fail "session id is invalid"
+
+case "${mode}" in
+  agent)
+    permissions_file=/etc/dcv/shared-browser.perm
+    ;;
+  human)
+    permissions_file=/etc/dcv/shared-browser-control.perm
+    ;;
+  *)
+    fail "mode must be agent or human"
+    ;;
+esac
+
+dcv describe-session "${session_id}" --json >/dev/null 2>&1 \
+  || fail "shared browser session is unavailable"
+dcv set-permissions --session "${session_id}" --file "${permissions_file}" >/dev/null
