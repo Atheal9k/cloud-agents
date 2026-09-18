@@ -331,6 +331,21 @@ const build = Effect.fn("CloudProviderExecution.build")(function* (input?: {
       projectId: executionProjectId,
       scripts: [...devServerScripts(request.preparation)],
     });
+    yield* dispatch({
+      type: "thread.create",
+      commandId: CommandId.make(
+        `cloud:${request.preparation.allocationId}:${request.preparation.attempt}:thread-create`,
+      ),
+      threadId: request.threadId,
+      projectId: executionProjectId,
+      title: request.title,
+      modelSelection: request.turn.modelSelection,
+      runtimeMode: request.turn.runtimeMode,
+      interactionMode: request.turn.interactionMode,
+      branch: request.preparation.outputBranch,
+      worktreePath: null,
+      createdAt: request.turn.createdAt,
+    });
     const receipt = yield* dispatch({
       type: "thread.turn.start",
       commandId: request.turn.commandId,
@@ -344,18 +359,6 @@ const build = Effect.fn("CloudProviderExecution.build")(function* (input?: {
       modelSelection: request.turn.modelSelection,
       runtimeMode: request.turn.runtimeMode,
       interactionMode: request.turn.interactionMode,
-      bootstrap: {
-        createThread: {
-          projectId: executionProjectId,
-          title: request.title,
-          modelSelection: request.turn.modelSelection,
-          runtimeMode: request.turn.runtimeMode,
-          interactionMode: request.turn.interactionMode,
-          branch: request.preparation.outputBranch,
-          worktreePath: null,
-          createdAt: request.turn.createdAt,
-        },
-      },
       createdAt: request.turn.createdAt,
     });
     const providerStartCompletedAt = yield* DateTime.now;

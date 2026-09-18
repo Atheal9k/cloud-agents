@@ -74,7 +74,7 @@ const allocation = decodeAllocation({
   updatedAt: "2026-09-17T03:01:00.000Z",
 });
 
-it.effect("starts the ordinary project and provider turn through the registered worker route", () =>
+it.effect("creates the project and thread before starting the provider turn", () =>
   Effect.gen(function* () {
     const commands: Array<ClientOrchestrationCommand> = [];
     const urls: Array<string> = [];
@@ -94,6 +94,7 @@ it.effect("starts the ordinary project and provider turn through the registered 
     expect(urls).toEqual([
       "https://worker.example.test/api/orchestration/dispatch",
       "https://worker.example.test/api/orchestration/dispatch",
+      "https://worker.example.test/api/orchestration/dispatch",
     ]);
     expect(commands).toMatchObject([
       {
@@ -102,19 +103,22 @@ it.effect("starts the ordinary project and provider turn through the registered 
         workspaceRoot: "/work",
       },
       {
+        type: "thread.create",
+        commandId: "cloud-launch:allocation-1:thread",
+        threadId: "thread-allocation-1-1",
+        projectId: "cloud:allocation-1:1",
+        title: "Fix the failing test",
+        modelSelection: { instanceId: "codex", model: "gpt-5.6-sol" },
+        branch: "cloud/allocation-1",
+      },
+      {
         type: "thread.turn.start",
-        commandId: "cloud-launch:allocation-1",
+        commandId: "cloud-launch:allocation-1:worker-turn",
         threadId: "thread-allocation-1-1",
         message: {
           text: expect.stringContaining("Prepare t3tools/t3code at main"),
         },
         modelSelection: { instanceId: "codex", model: "gpt-5.6-sol" },
-        bootstrap: {
-          createThread: {
-            projectId: "cloud:allocation-1:1",
-            branch: "cloud/allocation-1",
-          },
-        },
       },
     ]);
   }),

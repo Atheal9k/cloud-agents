@@ -122,8 +122,24 @@ export const make = Effect.fn("CloudWorkerRunClient.make")(function* () {
       yield* execute({
         allocation,
         command: {
+          type: "thread.create",
+          commandId: CommandId.make(`${execution.turn.commandId}:thread`),
+          threadId: execution.threadId,
+          projectId: executionProjectId,
+          title: execution.title,
+          modelSelection: execution.turn.modelSelection,
+          runtimeMode: execution.turn.runtimeMode,
+          interactionMode: execution.turn.interactionMode,
+          branch: allocation.target.branch,
+          worktreePath: null,
+          createdAt: execution.turn.createdAt,
+        },
+      });
+      yield* execute({
+        allocation,
+        command: {
           type: "thread.turn.start",
-          commandId: execution.turn.commandId,
+          commandId: CommandId.make(`${execution.turn.commandId}:worker-turn`),
           threadId: execution.threadId,
           message: {
             messageId: execution.turn.messageId,
@@ -135,18 +151,6 @@ export const make = Effect.fn("CloudWorkerRunClient.make")(function* () {
           titleSeed: execution.title,
           runtimeMode: execution.turn.runtimeMode,
           interactionMode: execution.turn.interactionMode,
-          bootstrap: {
-            createThread: {
-              projectId: executionProjectId,
-              title: execution.title,
-              modelSelection: execution.turn.modelSelection,
-              runtimeMode: execution.turn.runtimeMode,
-              interactionMode: execution.turn.interactionMode,
-              branch: allocation.target.branch,
-              worktreePath: null,
-              createdAt: execution.turn.createdAt,
-            },
-          },
           createdAt: execution.turn.createdAt,
         },
       });

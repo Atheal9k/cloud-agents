@@ -141,7 +141,7 @@ function fixture(
   });
 }
 
-it.effect("starts Codex through ordinary project and turn orchestration commands", () =>
+it.effect("creates the project and thread before starting the Codex turn", () =>
   Effect.gen(function* () {
     const { commands, execution } = yield* fixture([readyCodex]);
     const result = yield* execution.start(startInput());
@@ -151,7 +151,7 @@ it.effect("starts Codex through ordinary project and turn orchestration commands
       attempt: 1,
       projectId: "cloud:allocation-11:1",
       threadId: "thread-allocation-11",
-      acceptedSequence: 3,
+      acceptedSequence: 4,
       providerStartTiming: { durationMs: 0 },
     });
     expect(commands).toEqual([
@@ -179,6 +179,19 @@ it.effect("starts Codex through ordinary project and turn orchestration commands
         ],
       },
       {
+        type: "thread.create",
+        commandId: "cloud:allocation-11:1:thread-create",
+        threadId: "thread-allocation-11",
+        projectId: "cloud:allocation-11:1",
+        title: "Implement CA-11",
+        modelSelection: { instanceId: "codex-cloud", model: "gpt-5.6-sol" },
+        runtimeMode: "approval-required",
+        interactionMode: "default",
+        branch: "cloud/run/ca11",
+        worktreePath: null,
+        createdAt: "2026-09-17T05:01:00.000Z",
+      },
+      {
         type: "thread.turn.start",
         commandId: "cloud-turn-start-11",
         threadId: "thread-allocation-11",
@@ -199,18 +212,6 @@ it.effect("starts Codex through ordinary project and turn orchestration commands
         modelSelection: { instanceId: "codex-cloud", model: "gpt-5.6-sol" },
         runtimeMode: "approval-required",
         interactionMode: "default",
-        bootstrap: {
-          createThread: {
-            projectId: "cloud:allocation-11:1",
-            title: "Implement CA-11",
-            modelSelection: { instanceId: "codex-cloud", model: "gpt-5.6-sol" },
-            runtimeMode: "approval-required",
-            interactionMode: "default",
-            branch: "cloud/run/ca11",
-            worktreePath: null,
-            createdAt: "2026-09-17T05:01:00.000Z",
-          },
-        },
         createdAt: "2026-09-17T05:01:00.000Z",
       },
     ]);
@@ -508,7 +509,7 @@ it.effect("starts Claude through the same cloud orchestration path", () =>
       },
     });
 
-    expect(result.acceptedSequence).toBe(3);
+    expect(result.acceptedSequence).toBe(4);
     expect(commands.at(-1)).toMatchObject({
       type: "thread.turn.start",
       modelSelection: { instanceId: "claude-cloud", model: "claude-sonnet-4-5" },
