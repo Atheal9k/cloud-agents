@@ -42,3 +42,8 @@ artifact_retention_days = 30
 # controller's T3CODE_CLOUD_GIT_SSH_SECRET_REF and
 # T3CODE_CLOUD_GITHUB_TOKEN_SECRET_REF environment variables.
 controller_credential_secret_arns = []
+
+# The first release qualifies Codex only. Store the raw OpenAI API key in this
+# Secrets Manager secret. Disposable workers may read this one secret, while
+# task processes remain unable to obtain the worker's AWS role credentials.
+worker_codex_api_key_secret_arn = null

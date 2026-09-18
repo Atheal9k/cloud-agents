@@ -67,6 +67,7 @@ run "protected_plan" {
       "arn:aws:secretsmanager:us-west-1:123456789012:secret:cloud-agent-victor-key-AbCdEf",
       "arn:aws:secretsmanager:us-west-1:123456789012:secret:cloud-agent-github-token-AbCdEf",
     ]
+    worker_codex_api_key_secret_arn = "arn:aws:secretsmanager:us-west-1:123456789012:secret:cloud-agent-codex-api-key-AbCdEf"
     worker_profiles = {
       linux-web = {
         ami_id               = "ami-0123456789abcdef0"
@@ -117,6 +118,15 @@ run "protected_plan" {
   assert {
     condition     = length(aws_iam_role_policy.controller_credentials) == 1
     error_message = "Configured Git and GitHub master credentials must be readable only by the controller role."
+  }
+
+  assert {
+    condition = alltrue([
+      length(aws_iam_role_policy.worker_codex_credentials) == 1,
+      strcontains(base64decode(aws_launch_template.worker["linux-web"].user_data), "cloud-agent-codex-api-key-AbCdEf"),
+      strcontains(base64decode(aws_launch_template.worker["linux-web"].user_data), "codex login --with-api-key"),
+    ])
+    error_message = "Configured Codex authentication must be fetched by the disposable worker without embedding the API key."
   }
 
   assert {
@@ -234,5 +244,10 @@ run "sandbox_apply" {
   assert {
     condition     = !aws_instance.controller.disable_api_termination
     error_message = "An isolated sandbox must disable controller termination protection before teardown."
+  }
+
+  assert {
+    condition     = length(aws_iam_role_policy.worker_codex_credentials) == 0
+    error_message = "Workers must not receive provider-secret access unless Codex authentication is configured."
   }
 }
