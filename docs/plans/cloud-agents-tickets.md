@@ -166,29 +166,29 @@ same client screens. Struck-through tickets are already done. Waves 20 and 21
 hold the deferred tickets; nothing in waves 1 to 19 depends on them, so they
 stay last until you choose to pick them up.
 
-| Wave | Tickets that may run in parallel       | Primary ownership boundary                                                                 |
-| ---- | -------------------------------------- | ------------------------------------------------------------------------------------------ |
-| 1    | ~~CA-40~~                              | Durable agent, run, and runtime model.                                                     |
-| 2    | ~~CA-41~~                              | Environment model and config resolution.                                                   |
-| 3    | ~~CA-04B~~, ~~CA-48~~                  | Controller deployment and host cutover; artifact, computer-use, and desktop-viewing paths. |
-| 4    | ~~CA-42~~                              | Build records, preparation, and activation.                                                |
-| 5    | ~~CA-43~~                              | Runtime snapshot, hibernate, and wake lifecycle.                                           |
-| 6    | ~~CA-38~~, ~~CA-46~~                   | macOS worker infrastructure; retention and deletion services.                              |
-| 7    | ~~CA-44~~                              | Linux fleet and Firecracker runtime infrastructure.                                        |
-| 8    | ~~CA-21~~, ~~CA-45~~                   | Retained-results review UI; fleet capacity and Build pre-warming.                          |
-| 9    | ~~CA-05~~, ~~CA-37~~, ~~CA-47~~        | AWS settings UI; Android worker profile; public Cloud Agents API.                          |
-| 10   | ~~CA-49~~                              | Shared secret, identity, encryption, and network policy.                                   |
-| 11   | ~~CA-12~~, ~~CA-13~~, ~~CA-26~~        | Environment recipes; event-stream performance; local/cloud handoff.                        |
-| 12   | ~~CA-36~~, ~~CA-51~~, ~~CA-55~~        | Preview leases; provider extensibility; usage and audit accounting.                        |
-| 13   | ~~CA-32~~, ~~CA-50~~                   | Private dependency networking; source-control and collaboration entry points.              |
-| 14   | ~~CA-56~~, ~~CA-58~~                   | Multi-repository environments; self-hosted pools.                                          |
-| 15   | CA-28, ~~CA-39~~, ~~CA-57~~, ~~CA-59~~ | Scheduling; simulator display; commit signing; repository-owned environment setup.         |
-| 16   | CA-29, ~~CA-30~~, CA-33                | GitHub triggers; persistent assistants; remote administration UI.                          |
-| 17   | ~~CA-52~~                              | Subscription wake and CI autofix.                                                          |
-| 18   | CA-53                                  | Generalized automations.                                                                   |
-| 19   | CA-54                                  | Outbound webhooks and typed SDKs.                                                          |
-| 20   | CA-31, CA-20                           | Deferred: provider adapters; native T3 mobile controls.                                    |
-| 21   | CA-22                                  | Deferred: native push and mobile activity integration.                                     |
+| Wave | Tickets that may run in parallel           | Primary ownership boundary                                                                 |
+| ---- | ------------------------------------------ | ------------------------------------------------------------------------------------------ |
+| 1    | ~~CA-40~~                                  | Durable agent, run, and runtime model.                                                     |
+| 2    | ~~CA-41~~                                  | Environment model and config resolution.                                                   |
+| 3    | ~~CA-04B~~, ~~CA-48~~                      | Controller deployment and host cutover; artifact, computer-use, and desktop-viewing paths. |
+| 4    | ~~CA-42~~                                  | Build records, preparation, and activation.                                                |
+| 5    | ~~CA-43~~                                  | Runtime snapshot, hibernate, and wake lifecycle.                                           |
+| 6    | ~~CA-38~~, ~~CA-46~~                       | macOS worker infrastructure; retention and deletion services.                              |
+| 7    | ~~CA-44~~                                  | Linux fleet and Firecracker runtime infrastructure.                                        |
+| 8    | ~~CA-21~~, ~~CA-45~~                       | Retained-results review UI; fleet capacity and Build pre-warming.                          |
+| 9    | ~~CA-05~~, ~~CA-37~~, ~~CA-47~~            | AWS settings UI; Android worker profile; public Cloud Agents API.                          |
+| 10   | ~~CA-49~~                                  | Shared secret, identity, encryption, and network policy.                                   |
+| 11   | ~~CA-12~~, ~~CA-13~~, ~~CA-26~~            | Environment recipes; event-stream performance; local/cloud handoff.                        |
+| 12   | ~~CA-36~~, ~~CA-51~~, ~~CA-55~~            | Preview leases; provider extensibility; usage and audit accounting.                        |
+| 13   | ~~CA-32~~, ~~CA-50~~                       | Private dependency networking; source-control and collaboration entry points.              |
+| 14   | ~~CA-56~~, ~~CA-58~~                       | Multi-repository environments; self-hosted pools.                                          |
+| 15   | ~~CA-28~~, ~~CA-39~~, ~~CA-57~~, ~~CA-59~~ | Scheduling; simulator display; commit signing; repository-owned environment setup.         |
+| 16   | ~~CA-29~~, ~~CA-30~~, CA-33                | GitHub triggers; persistent assistants; remote administration UI.                          |
+| 17   | ~~CA-52~~                                  | Subscription wake and CI autofix.                                                          |
+| 18   | CA-53                                      | Generalized automations.                                                                   |
+| 19   | CA-54                                      | Outbound webhooks and typed SDKs.                                                          |
+| 20   | CA-31, CA-20                               | Deferred: provider adapters; native T3 mobile controls.                                    |
+| 21   | CA-22                                      | Deferred: native push and mobile activity integration.                                     |
 
 Within a parallel wave, each ticket owns only the area named in the third
 column. Before the wave starts, assign any shared schema, migration,
