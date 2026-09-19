@@ -93,6 +93,78 @@ it.effect("rejects admission beyond the durable queue bound", () =>
   }).pipe(Effect.provide(SqlitePersistenceMemory)),
 );
 
+it.effect("rejects macOS iOS admission in us-west-1 instead of placing elsewhere", () =>
+  Effect.gen(function* () {
+    const controller = yield* make({
+      enabled: true,
+      region: "us-west-1",
+      limits: {
+        maxConcurrentWorkers: 1,
+        maxQueueDepth: 8,
+        maxRunSeconds: 7_200,
+        maxInputWaitSeconds: 900,
+        previewGraceSeconds: 900,
+        idleReleaseSeconds: 3_600,
+        allowedInstanceTypes: ["mac2-m2.metal"],
+      },
+    });
+    const error = yield* controller
+      .dispatch(
+        decodeCommand({
+          ...launchInput,
+          profile: {
+            id: "macos-ios",
+            os: "darwin",
+            arch: "arm64",
+            device: "ios",
+            instanceType: "mac2-m2.metal",
+          },
+        }),
+      )
+      .pipe(Effect.flip);
+
+    expect(error.reason).toBe("invalid-request");
+    expect(error.message).toContain("us-west-1");
+  }).pipe(Effect.provide(SqlitePersistenceMemory)),
+);
+
+it.effect("admits an Apple Silicon iOS worker in a supported Mac region", () =>
+  Effect.gen(function* () {
+    const controller = yield* make({
+      enabled: true,
+      region: "us-west-2",
+      limits: {
+        maxConcurrentWorkers: 1,
+        maxQueueDepth: 8,
+        maxRunSeconds: 7_200,
+        maxInputWaitSeconds: 900,
+        previewGraceSeconds: 900,
+        idleReleaseSeconds: 3_600,
+        allowedInstanceTypes: ["mac2-m2.metal"],
+      },
+    });
+    const allocation = yield* controller.dispatch(
+      decodeCommand({
+        ...launchInput,
+        profile: {
+          id: "macos-ios",
+          os: "darwin",
+          arch: "arm64",
+          device: "ios",
+          instanceType: "mac2-m2.metal",
+        },
+      }),
+    );
+
+    expect(allocation.profile).toMatchObject({
+      id: "macos-ios",
+      os: "darwin",
+      device: "ios",
+      instanceType: "mac2-m2.metal",
+    });
+  }).pipe(Effect.provide(SqlitePersistenceMemory)),
+);
+
 it.effect("persists allocation events and rebuilds the catalog after restart", () =>
   Effect.gen(function* () {
     const firstController = yield* make({ enabled: true });

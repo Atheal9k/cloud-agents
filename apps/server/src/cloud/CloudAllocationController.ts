@@ -19,6 +19,9 @@ import {
   type CloudEnvironmentSaveInput,
   type CloudRunUsage,
   CloudWorkerPriceAssumption,
+  isMacIosWorkerProfile,
+  admitMacIosWorker,
+  macDedicatedHostUsageCost,
   RunAllocationEvent,
   RunAllocationId,
   type RunAllocation,
@@ -42,6 +45,7 @@ import { projectCloudControlPlane } from "./cloudControlPlane.ts";
 import * as CloudEnvironmentBuildCatalog from "./CloudEnvironmentBuildCatalog.ts";
 import { isCloudEnvironmentBuildStale } from "./cloudEnvironmentBuildPolicy.ts";
 import * as CloudEnvironmentCatalog from "./CloudEnvironmentCatalog.ts";
+import * as CloudMacHostCatalog from "./CloudMacHostCatalog.ts";
 import * as ControllerSettings from "./controllerSettings.ts";
 import {
   decideRunAllocationCommand,
@@ -182,12 +186,15 @@ export const make = Effect.fn("CloudAllocationController.make")(function* (input
   readonly mode?: CloudAllocationControllerMode;
   readonly limits?: CloudAllocationLimits;
   readonly workerPriceAssumptions?: ReadonlyArray<CloudWorkerPriceAssumption>;
+  readonly region?: string;
 }) {
   const sql = yield* SqlClient.SqlClient;
   const environments = yield* CloudEnvironmentCatalog.make();
   const builds = yield* CloudEnvironmentBuildCatalog.make();
+  const macHosts = yield* CloudMacHostCatalog.make();
   const settings = yield* ControllerSettings.make();
   const mode = input.mode ?? "local";
+  const region = input.region ?? "us-west-1";
   const changes = yield* PubSub.unbounded<CloudAllocationSnapshot>();
   const mutex = yield* Semaphore.make(1);
   const limits = input.limits ?? DEFAULT_LIMITS;
@@ -271,6 +278,7 @@ export const make = Effect.fn("CloudAllocationController.make")(function* (input
     allocation: RunAllocation,
     events: ReadonlyArray<RunAllocationEvent>,
     now: DateTime.Utc,
+    hosts: ReadonlyArray<import("@t3tools/contracts").CloudMacHost>,
   ): CloudRunUsage => {
     // Compute is billed while a guest runs, and hibernation stops it. Summing
     // the running intervals is what keeps an open conversation from reporting
@@ -311,8 +319,25 @@ export const make = Effect.fn("CloudAllocationController.make")(function* (input
               Math.round(
                 ((elapsedWorkerSeconds / 3_600) * price.hourlyUsd + Number.EPSILON) * 1e6,
               ) / 1e6,
-            assumption: `${price.region} ${price.instanceType} at $${price.hourlyUsd}/hour; excludes taxes and discounts.`,
+            assumption: isMacIosWorkerProfile(allocation.profile)
+              ? `${price.region} ${price.instanceType} guest runtime at $${price.hourlyUsd}/hour; Dedicated Host charges are recorded separately and survive job cancellation.`
+              : `${price.region} ${price.instanceType} at $${price.hourlyUsd}/hour; excludes taxes and discounts.`,
           };
+    const host = hosts.find(
+      (candidate) =>
+        candidate.occupiedBy?.allocationId === allocation.id ||
+        (allocationInstanceId(allocation) !== undefined &&
+          candidate.instanceId === allocationInstanceId(allocation)),
+    );
+    const dedicatedHost =
+      host === undefined || price === undefined
+        ? undefined
+        : macDedicatedHostUsageCost({
+            host,
+            hourlyUsd: price.hourlyUsd,
+            region: price.region,
+            now: DateTime.formatIso(now),
+          });
     return {
       allocationId: allocation.id,
       attempt: allocation.attempt,
@@ -329,6 +354,7 @@ export const make = Effect.fn("CloudAllocationController.make")(function* (input
               : "The permanent controller host is billed continuously, not per allocation.",
         },
         workerCompute,
+        ...(dedicatedHost === undefined ? {} : { dedicatedHost }),
         storage: {
           status: "unknown",
           reason: "Worker and retained-result storage are billed separately from compute.",
@@ -347,13 +373,15 @@ export const make = Effect.fn("CloudAllocationController.make")(function* (input
 
   const readSnapshot = Effect.gen(function* () {
     yield* requireEnabled;
-    const [rows, controllerSettings, now, environmentCatalog, buildCatalog] = yield* Effect.all([
-      readAllEventRows({}),
-      settings.read({}),
-      DateTime.now,
-      environments.list,
-      builds.list,
-    ]).pipe(Effect.mapError(persistenceError));
+    const [rows, controllerSettings, now, environmentCatalog, buildCatalog, macHostCatalog] =
+      yield* Effect.all([
+        readAllEventRows({}),
+        settings.read({}),
+        DateTime.now,
+        environments.list,
+        builds.list,
+        macHosts.list,
+      ]).pipe(Effect.mapError(persistenceError));
     const grouped = new Map<RunAllocationId, Array<RunAllocationEvent>>();
     for (const row of rows) {
       const events = grouped.get(row.event.allocationId) ?? [];
@@ -393,8 +421,9 @@ export const make = Effect.fn("CloudAllocationController.make")(function* (input
       runtimeAttempts: controlPlane.runtimeAttempts,
       environments: environmentCatalog,
       builds: buildCatalog,
+      macHosts: macHostCatalog,
       usage: allocations.map((allocation) =>
-        usageForAllocation(allocation, grouped.get(allocation.id) ?? [], now),
+        usageForAllocation(allocation, grouped.get(allocation.id) ?? [], now, macHostCatalog),
       ),
     } satisfies CloudAllocationSnapshot;
   });
@@ -419,6 +448,15 @@ export const make = Effect.fn("CloudAllocationController.make")(function* (input
         "invalid-request",
         `Instance type '${instanceType}' is not allowed by this controller.`,
       );
+    }
+    if (command.type === "allocation.launch" && isMacIosWorkerProfile(command.profile)) {
+      const admitted = admitMacIosWorker({
+        profile: command.profile,
+        region,
+      });
+      if (admitted.status === "rejected") {
+        return controllerError("invalid-request", admitted.message);
+      }
     }
     if (
       command.type !== "allocation.launch" &&
@@ -797,6 +835,7 @@ export const layer = Layer.effect(
       mode: serverConfig.cloudControllerMode ?? "local",
       limits,
       workerPriceAssumptions,
+      region: policy.region,
     });
   }),
 );

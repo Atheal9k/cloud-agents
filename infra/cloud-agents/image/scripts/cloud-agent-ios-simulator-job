@@ -1,0 +1,64 @@
+#!/bin/bash
+set -euo pipefail
+
+# Reserve, boot, build, install, and launch one Simulator for this job.
+# Signing is simulator-only. Device certificates are never required.
+
+udid=""
+device_name=""
+runtime=""
+checkout=""
+scheme=""
+workspace=""
+artifact_dir=""
+
+while [[ $# -gt 0 ]]; do
+  case "$1" in
+    --udid) udid="$2"; shift 2 ;;
+    --device-name) device_name="$2"; shift 2 ;;
+    --runtime) runtime="$2"; shift 2 ;;
+    --checkout) checkout="$2"; shift 2 ;;
+    --scheme) scheme="$2"; shift 2 ;;
+    --workspace) workspace="$2"; shift 2 ;;
+    --artifact-dir) artifact_dir="$2"; shift 2 ;;
+    *) echo "unknown argument: $1" >&2; exit 2 ;;
+  esac
+done
+
+: "${device_name:?--device-name is required}"
+: "${runtime:?--runtime is required}"
+: "${checkout:?--checkout is required}"
+: "${artifact_dir:?--artifact-dir is required}"
+
+mkdir -p "${artifact_dir}"
+if [[ -z "${udid}" ]]; then
+  udid="$(xcrun simctl create "${device_name}" "iPhone 16" "${runtime}")"
+fi
+xcrun simctl boot "${udid}" || true
+xcrun simctl bootstatus "${udid}" -b
+printf '%s\n' "${udid}" > "${artifact_dir}/udid.txt"
+
+if [[ -n "${workspace}" && -n "${scheme}" ]]; then
+  xcodebuild \
+    -workspace "${workspace}" \
+    -scheme "${scheme}" \
+    -destination "id=${udid}" \
+    -derivedDataPath "${checkout}/DerivedData" \
+    -resultBundlePath "${artifact_dir}/TestResults.xcresult" \
+    -configuration Debug \
+    ARCHS=arm64 \
+    ONLY_ACTIVE_ARCH=YES \
+    CODE_SIGNING_ALLOWED=NO \
+    CODE_SIGNING_REQUIRED=NO \
+    CODE_SIGN_IDENTITY=- \
+    build | tee "${artifact_dir}/xcodebuild.log"
+  app="$(find "${checkout}/DerivedData" -name "*.app" -type d | head -n 1)"
+  if [[ -n "${app}" ]]; then
+    xcrun simctl install "${udid}" "${app}"
+    bundle_id="$(/usr/libexec/PlistBuddy -c 'Print :CFBundleIdentifier' "${app}/Info.plist")"
+    xcrun simctl launch "${udid}" "${bundle_id}"
+  fi
+fi
+
+xcrun simctl spawn "${udid}" log collect --output "${artifact_dir}/simulator.log" || true
+xcrun simctl io "${udid}" screenshot "${artifact_dir}/screenshot.png" || true

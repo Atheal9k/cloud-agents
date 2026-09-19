@@ -197,7 +197,8 @@ it.layer(TestLayer)("cloud runtime flush", (it) => {
           Layer.mergeAll(
             projectionLayer(workspace),
             Layer.succeed(HostProcessEnvironment, {
-              CODEX_HOME: path.join(root, "codex-home"),
+              // Durable volume path, not /tmp or /run — those are wiped on stop.
+              CODEX_HOME: "/opt/t3-worker/credentials/codex",
             }),
             makeSqlitePersistenceLive(path.join(root, "userdata", "state.sqlite")),
           ),

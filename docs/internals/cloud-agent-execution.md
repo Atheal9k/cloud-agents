@@ -257,6 +257,11 @@ Three rules keep a stopped guest from being read as an expired one:
   bounds how long a guest may run unattended, not how long the conversation
   lives.
 
+A macos-ios worker is a different cost boundary. The guest can still idle and
+hibernate, but the EC2 Mac Dedicated Host stays allocated for at least 24 hours
+and is billed separately from the job. Cancelling a two-hour Simulator job does
+not release the host. Wake never claims the Simulator process resumed.
+
 A woken guest boots from cloud-init state that ran once, on a different boot.
 Provider credentials live in a runtime directory that is empty every time, so
 `cloud-agent-worker-credentials.service` materializes them from Secrets Manager

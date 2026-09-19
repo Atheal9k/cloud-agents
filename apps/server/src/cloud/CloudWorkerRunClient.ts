@@ -67,7 +67,16 @@ function projectId(allocation: RunAllocation) {
 function taskPrompt(allocation: RunAllocation): string {
   const execution = allocation.execution;
   if (execution === undefined) return "";
+  const ios =
+    allocation.profile.device === "ios"
+      ? [
+          "This runtime is a macOS iOS worker. Reserve one Simulator UDID for this job, build with simulator signing, and keep artifacts under artifacts/ios.",
+          "Do not require device distribution certificates. Do not treat Dedicated Host billing as ended if the job is cancelled.",
+          "",
+        ]
+      : [];
   return [
+    ...ios,
     `${allocation.target.repository} is prepared at ${execution.selectedRef} in /work/repository.`,
     `Work on the checked-out output branch ${allocation.target.branch}.`,
     "",

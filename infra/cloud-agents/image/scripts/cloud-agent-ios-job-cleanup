@@ -1,0 +1,25 @@
+#!/bin/bash
+set -euo pipefail
+
+# Targeted cleanup for one iOS job. Does not shut down the Mac host or claim
+# Dedicated Host billing has ended.
+
+udid=""
+checkout=""
+
+while [[ $# -gt 0 ]]; do
+  case "$1" in
+    --udid) udid="$2"; shift 2 ;;
+    --checkout) checkout="$2"; shift 2 ;;
+    *) echo "unknown argument: $1" >&2; exit 2 ;;
+  esac
+done
+
+: "${udid:?--udid is required}"
+
+xcrun simctl spawn "${udid}" launchctl print system >/dev/null 2>&1 || true
+xcrun simctl shutdown "${udid}" || true
+xcrun simctl delete "${udid}" || true
+if [[ -n "${checkout}" ]]; then
+  rm -rf "${checkout}/DerivedData"
+fi

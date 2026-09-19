@@ -187,7 +187,7 @@ variable "worker_profiles" {
     condition = alltrue([
       for profile in values(var.worker_profiles) : profile.architecture == "x86_64"
     ])
-    error_message = "CA-03 supports x86_64 Linux web workers only. Android and Mac profiles belong to CA-37 and CA-38."
+    error_message = "CA-03 supports x86_64 Linux web workers only. Android profiles belong to CA-37. macOS iOS profiles use mac_worker_profiles."
   }
 
   validation {
@@ -198,6 +198,44 @@ variable "worker_profiles" {
       )
     ])
     error_message = "A shared-browser worker profile must enable desktop_dependencies and declare the shared-browser capability."
+  }
+}
+
+variable "mac_worker_profiles" {
+  description = "macOS iOS Simulator worker images launched onto EC2 Mac Dedicated Hosts. Hosts are allocated on demand and kept for the 24-hour minimum; they are not disposable Linux workers."
+  type = map(object({
+    ami_id               = string
+    image_version        = string
+    instance_type        = string
+    root_volume_size_gib = number
+    macos                = string
+    xcode                = string
+    simulator_runtime    = string
+  }))
+  default = {}
+
+  validation {
+    condition = alltrue([
+      for name in keys(var.mac_worker_profiles) :
+      can(regex("^[a-z0-9][a-z0-9-]{0,31}$", name))
+    ])
+    error_message = "Mac worker profile names must contain at most 32 lowercase letters, numbers, or hyphens."
+  }
+
+  validation {
+    condition = alltrue([
+      for profile in values(var.mac_worker_profiles) :
+      contains(["mac2.metal", "mac2-m1ultra.metal", "mac2-m2.metal", "mac2-m2pro.metal"], profile.instance_type)
+    ])
+    error_message = "Mac worker profiles must use Apple Silicon EC2 Mac instance types."
+  }
+
+  validation {
+    condition = alltrue([
+      for profile in values(var.mac_worker_profiles) :
+      profile.root_volume_size_gib >= 100 && profile.root_volume_size_gib <= 500
+    ])
+    error_message = "Each Mac worker root volume must be between 100 and 500 GiB so Xcode and simulators fit."
   }
 }
 

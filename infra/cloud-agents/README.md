@@ -10,7 +10,7 @@ the workers:
 - controller-only worker ingress in `ec2` mode and outbound worker registration in either mode;
 - an encrypted, versioned artifact bucket;
 - fixed SSM recovery diagnostics that cannot launch agent jobs; and
-- a scheduled cleanup function that terminates expired tagged workers even when the controller is unavailable.
+- a scheduled cleanup function that terminates expired tagged Linux workers even when the controller is unavailable. Mac Dedicated Host instances are tagged `Ephemeral=false` and are not terminated by that backstop.
 
 The EC2 controller runs the container image the repository Dockerfile builds, the same one the
 [Docker controller guide](../../docs/user/docker-controller.md) uses locally. Cloud-init installs
@@ -161,6 +161,10 @@ The offline test uses mocked providers. It plans the protected configuration, ap
 ```powershell
 tofu test
 ```
+
+## macOS iOS workers
+
+`mac_worker_profiles` is a separate map from Linux `worker_profiles`. Each entry is an Apple Silicon AMI launched with host tenancy. Dedicated Hosts are allocated on demand by the controller, not by OpenTofu, and stay billed for 24 hours. See [macOS iOS worker image](../../docs/operations/macos-ios-worker-image.md). The Linux TTL Lambda does not terminate those instances.
 
 The AWS sandbox check creates billable resources for a few minutes. It uses a separate OpenTofu workspace, uploads a marker to retained storage, launches one worker, expires it through the cleanup Lambda, verifies the controller and marker survived, then destroys the sandbox:
 

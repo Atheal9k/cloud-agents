@@ -446,3 +446,53 @@ run "sandbox_apply" {
     error_message = "Workers must not receive secret access unless the corresponding worker feature is configured."
   }
 }
+
+run "macos_ios_profile" {
+  command = plan
+
+  providers = {
+    archive = archive.mock
+    aws     = aws.mock
+  }
+
+  variables {
+    controller_mode = "local"
+    worker_profiles = {
+      linux-web = {
+        ami_id               = "ami-0123456789abcdef0"
+        image_version        = "0.0.42-ca27.1"
+        instance_type        = "t3.medium"
+        root_volume_size_gib = 30
+      }
+    }
+    mac_worker_profiles = {
+      macos-ios = {
+        ami_id               = "ami-0123456789abcdef0"
+        image_version        = "0.0.42-ca38.1"
+        instance_type        = "mac2-m2.metal"
+        root_volume_size_gib = 200
+        macos                = "15.6"
+        xcode                = "16.4"
+        simulator_runtime    = "iOS 18.5"
+      }
+    }
+  }
+
+  assert {
+    condition = alltrue([
+      aws_launch_template.mac_worker["macos-ios"].instance_initiated_shutdown_behavior == "stop",
+      one([
+        for specification in aws_launch_template.mac_worker["macos-ios"].tag_specifications :
+        specification.tags["Ephemeral"]
+        if specification.resource_type == "instance"
+      ]) == "false",
+      one([
+        for specification in aws_launch_template.mac_worker["macos-ios"].tag_specifications :
+        specification.tags["CloudAgentLifecycle"]
+        if specification.resource_type == "instance"
+      ]) == "dedicated-host",
+      strcontains(base64decode(aws_launch_template.mac_worker["macos-ios"].user_data), "no hard TTL shutdown"),
+    ])
+    error_message = "The macos-ios profile must keep the Dedicated Host and must not use the Linux disposable TTL."
+  }
+}

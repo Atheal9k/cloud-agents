@@ -124,3 +124,37 @@ it.effect("creates the project and thread before starting the provider turn", ()
     ]);
   }),
 );
+
+const iosAllocation = decodeAllocation({
+  ...allocation,
+  profile: {
+    id: "macos-ios",
+    os: "darwin",
+    arch: "arm64",
+    device: "ios",
+    instanceType: "mac2-m2.metal",
+  },
+});
+
+it.effect("tells an iOS worker to reserve a simulator and keep host billing after cancel", () =>
+  Effect.gen(function* () {
+    const commands: Array<ClientOrchestrationCommand> = [];
+    const client = HttpClient.make((request) => {
+      if (request.body._tag === "Uint8Array") {
+        commands.push(decodeCommandJson(new TextDecoder().decode(request.body.body)));
+      }
+      return Effect.succeed(HttpClientResponse.fromWeb(request, Response.json({ sequence: 1 })));
+    });
+    const runClient = yield* make().pipe(Effect.provideService(HttpClient.HttpClient, client));
+
+    yield* runClient.start(iosAllocation);
+
+    const turn = commands.find((command) => command.type === "thread.turn.start");
+    expect(turn?.type === "thread.turn.start" ? turn.message.text : "").toContain(
+      "Reserve one Simulator UDID",
+    );
+    expect(turn?.type === "thread.turn.start" ? turn.message.text : "").toContain(
+      "Do not treat Dedicated Host billing as ended if the job is cancelled.",
+    );
+  }),
+);

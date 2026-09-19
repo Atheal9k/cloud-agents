@@ -143,6 +143,17 @@ function fixture(
           }
           return { instanceId: state.instance.instanceId, state: state.instance.state };
         }),
+      inspectMacCapacity: () =>
+        Effect.succeed({
+          region: "us-west-1",
+          instanceType: "t3.medium",
+          appleSilicon: false,
+          dedicatedHostQuota: { used: 0, limit: 1 },
+          availableHostIds: [],
+          availabilityZones: ["us-west-1a"],
+        }),
+      allocateDedicatedHost: () => Effect.succeed({ hostId: "h-unused" }),
+      releaseDedicatedHost: () => Effect.void,
       revokeRegistrationCredential: () =>
         Effect.sync(() => {
           state.revokeCalls += 1;

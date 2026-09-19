@@ -10,6 +10,7 @@ import {
   type CloudEnvironmentBuild,
   CloudEnvironmentBuildId,
   type CloudEnvironmentVersion,
+  isAppleSiliconMacInstanceType,
   ProviderDriverKind,
   type RunAllocation,
 } from "@t3tools/contracts";
@@ -770,7 +771,9 @@ function CloudRunDialogForEnvironment(props: {
                     >
                       {snapshot.limits.allowedInstanceTypes.map((instanceType) => (
                         <option key={instanceType} value={instanceType}>
-                          {instanceType}
+                          {isAppleSiliconMacInstanceType(instanceType)
+                            ? `${instanceType} (iOS Simulator)`
+                            : instanceType}
                         </option>
                       ))}
                     </select>
@@ -803,6 +806,13 @@ function CloudRunDialogForEnvironment(props: {
                     />
                   </label>
                 </div>
+                {isAppleSiliconMacInstanceType(draft.instanceType) ? (
+                  <p className="text-xs text-muted-foreground">
+                    iOS Simulator jobs use an Apple Silicon Dedicated Host with a 24-hour minimum.
+                    Cancelling the job stops the Simulator work; it does not end the host charge.
+                    The local T3 controller must stay online.
+                  </p>
+                ) : null}
                 <div className="grid gap-3 sm:grid-cols-2">
                   <label className={fieldClassName}>
                     <span className={labelClassName}>Publication</span>

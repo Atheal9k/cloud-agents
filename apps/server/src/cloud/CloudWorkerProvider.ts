@@ -76,7 +76,26 @@ export class CloudWorkerProvider extends Context.Service<
       readonly maxInputWaitSeconds: number;
       readonly launchTemplate: RunLaunchTemplate;
       readonly registrationCredential: string;
+      readonly placementHostId?: string | undefined;
     }) => Effect.Effect<CloudWorkerInstance, CloudWorkerProviderError>;
+    readonly inspectMacCapacity: (input: { readonly instanceType: string }) => Effect.Effect<
+      {
+        readonly region: string;
+        readonly instanceType: string;
+        readonly appleSilicon: boolean;
+        readonly dedicatedHostQuota: { readonly used: number; readonly limit: number };
+        readonly availableHostIds: ReadonlyArray<string>;
+        readonly availabilityZones: ReadonlyArray<string>;
+      },
+      CloudWorkerProviderError
+    >;
+    readonly allocateDedicatedHost: (input: {
+      readonly instanceType: string;
+      readonly availabilityZone: string;
+    }) => Effect.Effect<{ readonly hostId: string }, CloudWorkerProviderError>;
+    readonly releaseDedicatedHost: (
+      hostId: string,
+    ) => Effect.Effect<void, CloudWorkerProviderError>;
     readonly revokeRegistrationCredential: (
       instanceId: string,
     ) => Effect.Effect<void, CloudWorkerProviderError>;
@@ -145,6 +164,40 @@ const decodeRunInstancesResponse = Schema.decodeEffect(Schema.fromJsonString(Run
 const decodeStartInstancesResponse = Schema.decodeEffect(
   Schema.fromJsonString(StartInstancesResponse),
 );
+const AllocateHostsResponse = Schema.Struct({
+  HostIds: Schema.Array(Schema.String),
+});
+const DescribeHostsResponse = Schema.Struct({
+  Hosts: Schema.Array(
+    Schema.Struct({
+      HostId: Schema.String,
+      State: Schema.optionalKey(Schema.String),
+      AvailabilityZone: Schema.optionalKey(Schema.String),
+      HostProperties: Schema.optionalKey(
+        Schema.Struct({
+          InstanceType: Schema.optionalKey(Schema.String),
+        }),
+      ),
+    }),
+  ),
+});
+const InstanceTypeOfferingsResponse = Schema.Struct({
+  InstanceTypeOfferings: Schema.Array(
+    Schema.Struct({
+      InstanceType: Schema.String,
+      Location: Schema.String,
+    }),
+  ),
+});
+const decodeAllocateHostsResponse = Schema.decodeEffect(
+  Schema.fromJsonString(AllocateHostsResponse),
+);
+const decodeDescribeHostsResponse = Schema.decodeEffect(
+  Schema.fromJsonString(DescribeHostsResponse),
+);
+const decodeInstanceTypeOfferingsResponse = Schema.decodeEffect(
+  Schema.fromJsonString(InstanceTypeOfferingsResponse),
+);
 const decodeLaunchTemplate = Schema.decodeEffect(RunLaunchTemplate);
 const decodeAllocationId = Schema.decodeUnknownOption(RunAllocationId);
 const decodeAttempt = Schema.decodeUnknownOption(RunAllocationAttempt);
@@ -195,7 +248,7 @@ function normalizeHttpsOrigin(value: string | undefined): string | null {
 function classifyAwsFailure(stderr: string): CloudWorkerProviderError {
   const message = stderr.trim() || "The AWS CLI command failed without an error message.";
   const retryable =
-    /InsufficientInstanceCapacity|InstanceLimitExceeded|RequestLimitExceeded|Throttl|ServiceUnavailable|InternalError|RequestTimeout|timed out/i.test(
+    /InsufficientInstanceCapacity|InstanceLimitExceeded|HostLimitExceeded|DedicatedHostLimitExceeded|RequestLimitExceeded|Throttl|ServiceUnavailable|InternalError|RequestTimeout|timed out/i.test(
       message,
     );
   return providerError(retryable ? "retryable" : "fatal", message);
@@ -390,6 +443,12 @@ export const make = Effect.fn("CloudWorkerProvider.make")(function* (input: {
         { Key: "CloudAgentControllerUrl", Value: controllerUrl },
         { Key: "CloudAgentWorkerRouteUrl", Value: workerRouteUrl },
         { Key: "CloudAgentRegistrationCredential", Value: launchInput.registrationCredential },
+        ...(launchInput.placementHostId === undefined
+          ? []
+          : [
+              { Key: "CloudAgentLifecycle", Value: "dedicated-host" },
+              { Key: "CloudAgentDedicatedHost", Value: launchInput.placementHostId },
+            ]),
       ];
       const output = yield* runAws([
         "run-instances",
@@ -401,6 +460,9 @@ export const make = Effect.fn("CloudWorkerProvider.make")(function* (input: {
         "1",
         "--client-token",
         clientToken(launchInput),
+        ...(launchInput.placementHostId === undefined
+          ? []
+          : ["--placement", `Tenancy=host,HostId=${launchInput.placementHostId}`]),
         "--tag-specifications",
         encodeTagSpecifications([
           { ResourceType: "instance", Tags: tags },
@@ -519,11 +581,95 @@ export const make = Effect.fn("CloudWorkerProvider.make")(function* (input: {
         Effect.asVoid,
       );
 
+  const inspectMacCapacity: CloudWorkerProvider["Service"]["inspectMacCapacity"] = (
+    capacityInput,
+  ) =>
+    Effect.gen(function* () {
+      const offeringsOutput = yield* runAws([
+        "describe-instance-type-offerings",
+        "--location-type",
+        "availability-zone",
+        "--filters",
+        `Name=instance-type,Values=${capacityInput.instanceType}`,
+      ]);
+      const offerings = yield* decodeInstanceTypeOfferingsResponse(offeringsOutput).pipe(
+        Effect.mapError(() =>
+          providerError("fatal", "The AWS CLI returned an unexpected Mac offering response."),
+        ),
+      );
+      const hostsOutput = yield* runAws([
+        "describe-hosts",
+        "--filter",
+        `Name=instance-type,Values=${capacityInput.instanceType}`,
+      ]);
+      const hosts = yield* decodeDescribeHostsResponse(hostsOutput).pipe(
+        Effect.mapError(() =>
+          providerError("fatal", "The AWS CLI returned an unexpected Dedicated Host response."),
+        ),
+      );
+      const availableHostIds = hosts.Hosts.filter(
+        (host) => (host.State ?? "").toLowerCase() === "available",
+      ).map((host) => host.HostId);
+      const availabilityZones = [
+        ...new Set(offerings.InstanceTypeOfferings.map((offering) => offering.Location)),
+      ];
+      return {
+        region: input.region,
+        instanceType: capacityInput.instanceType,
+        appleSilicon: capacityInput.instanceType.startsWith("mac2"),
+        dedicatedHostQuota: {
+          used: hosts.Hosts.length,
+          limit: Math.max(hosts.Hosts.length + (availableHostIds.length > 0 ? 0 : 1), 1),
+        },
+        availableHostIds,
+        availabilityZones,
+      };
+    });
+
+  const allocateDedicatedHost: CloudWorkerProvider["Service"]["allocateDedicatedHost"] = (
+    allocateInput,
+  ) =>
+    Effect.gen(function* () {
+      const output = yield* runAws([
+        "allocate-hosts",
+        "--instance-type",
+        allocateInput.instanceType,
+        "--availability-zone",
+        allocateInput.availabilityZone,
+        "--quantity",
+        "1",
+        "--auto-placement",
+        "on",
+      ]);
+      const response = yield* decodeAllocateHostsResponse(output).pipe(
+        Effect.mapError(() =>
+          providerError("fatal", "The AWS CLI returned an unexpected AllocateHosts response."),
+        ),
+      );
+      const hostId = response.HostIds[0];
+      if (hostId === undefined) {
+        return yield* providerError("fatal", "AWS accepted the Dedicated Host but returned no id.");
+      }
+      return { hostId };
+    });
+
+  const releaseDedicatedHost: CloudWorkerProvider["Service"]["releaseDedicatedHost"] = (hostId) =>
+    runAws(["release-hosts", "--host-ids", hostId]).pipe(
+      Effect.catchIf(
+        (error) => /InvalidHostID\.NotFound/.test(error.message),
+        () => Effect.void,
+      ),
+      Effect.asVoid,
+    );
+
   return CloudWorkerProvider.of({
     resolveLaunchTemplate,
     findAttemptResources,
     listWorkers,
     launch,
+    inspectMacCapacity,
+    allocateDedicatedHost,
+    releaseDedicatedHost,
     revokeRegistrationCredential,
     hibernate,
     restore,

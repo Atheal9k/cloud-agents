@@ -32,14 +32,24 @@ output "worker" {
     role_arn          = aws_iam_role.worker.arn
     security_group_id = aws_security_group.worker.id
     subnet_id         = aws_subnet.workers.id
-    launch_templates = {
-      for name, template in aws_launch_template.worker : name => {
-        id            = template.id
-        version       = template.latest_version
-        image_id      = var.worker_profiles[name].ami_id
-        image_version = var.worker_profiles[name].image_version
-      }
-    }
+    launch_templates = merge(
+      {
+        for name, template in aws_launch_template.worker : name => {
+          id            = template.id
+          version       = template.latest_version
+          image_id      = var.worker_profiles[name].ami_id
+          image_version = var.worker_profiles[name].image_version
+        }
+      },
+      {
+        for name, template in aws_launch_template.mac_worker : name => {
+          id            = template.id
+          version       = template.latest_version
+          image_id      = var.mac_worker_profiles[name].ami_id
+          image_version = var.mac_worker_profiles[name].image_version
+        }
+      },
+    )
   }
 }
 

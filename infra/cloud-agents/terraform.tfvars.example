@@ -59,6 +59,10 @@ worker_profiles = {
   }
 }
 
+# Apple Silicon iOS Simulator workers. Leave empty until a Mac AMI exists.
+# Hosts are allocated on demand; this map only declares the launch template.
+mac_worker_profiles = {}
+
 artifact_retention_days = 30
 
 # Grant only the controller access to the existing SSH key and the GitHub API token.

@@ -214,6 +214,110 @@ resource "aws_launch_template" "worker" {
   ]
 }
 
+resource "aws_launch_template" "mac_worker" {
+  for_each = var.mac_worker_profiles
+
+  name_prefix   = "${var.name_prefix}-${each.key}-"
+  image_id      = each.value.ami_id
+  instance_type = each.value.instance_type
+
+  update_default_version               = true
+  instance_initiated_shutdown_behavior = "stop"
+
+  placement {
+    tenancy = "host"
+  }
+
+  tags = {
+    CloudAgentProject = var.name_prefix
+    CloudAgentProfile = each.key
+  }
+
+  iam_instance_profile {
+    name = aws_iam_instance_profile.worker.name
+  }
+
+  metadata_options {
+    http_endpoint               = "enabled"
+    http_tokens                 = "required"
+    http_put_response_hop_limit = 1
+    instance_metadata_tags      = "enabled"
+  }
+
+  network_interfaces {
+    associate_public_ip_address = true
+    delete_on_termination       = true
+    device_index                = 0
+    security_groups             = [aws_security_group.worker.id]
+    subnet_id                   = aws_subnet.workers.id
+  }
+
+  block_device_mappings {
+    device_name = "/dev/sda1"
+
+    ebs {
+      delete_on_termination = false
+      encrypted             = true
+      volume_size           = each.value.root_volume_size_gib
+      volume_type           = "gp3"
+    }
+  }
+
+  user_data = base64encode(templatefile("${path.module}/templates/macos-ios-worker-user-data.sh.tftpl", {
+    aws_region                    = var.aws_region
+    claude_oauth_token_secret_arn = var.worker_claude_oauth_token_secret_arn == null ? "" : var.worker_claude_oauth_token_secret_arn
+    codex_api_key_secret_arn      = var.worker_codex_api_key_secret_arn == null ? "" : var.worker_codex_api_key_secret_arn
+    codex_auth_json_secret_arn    = var.worker_codex_auth_json_secret_arn == null ? "" : var.worker_codex_auth_json_secret_arn
+    image_version                 = each.value.image_version
+    macos                         = each.value.macos
+    profile_name                  = each.key
+    service_port                  = var.worker_control_port
+    simulator_runtime             = each.value.simulator_runtime
+    git_ssh_secret_arn            = var.worker_git_ssh_secret_arn == null ? "" : var.worker_git_ssh_secret_arn
+    github_token_secret_arn       = var.worker_github_token_secret_arn == null ? "" : var.worker_github_token_secret_arn
+    tailscale_auth_key_secret_arn = var.worker_tailscale_auth_key_secret_arn == null ? "" : var.worker_tailscale_auth_key_secret_arn
+    xcode                         = each.value.xcode
+  }))
+
+  tag_specifications {
+    resource_type = "instance"
+
+    tags = {
+      Name                        = "${var.name_prefix}-${each.key}"
+      CloudAgentProject           = var.name_prefix
+      CloudAgentRole              = "worker"
+      CloudAgentProfile           = each.key
+      CloudAgentCapabilities      = "coding,ios-simulator"
+      CloudAgentImageVersion      = each.value.image_version
+      CloudAgentMacOS             = each.value.macos
+      CloudAgentXcode             = each.value.xcode
+      CloudAgentSimulatorRuntime  = each.value.simulator_runtime
+      CloudAgentLifecycle         = "dedicated-host"
+      Ephemeral                   = "false"
+    }
+  }
+
+  tag_specifications {
+    resource_type = "volume"
+
+    tags = {
+      Name              = "${var.name_prefix}-${each.key}"
+      CloudAgentProject = var.name_prefix
+      CloudAgentRole    = "worker"
+      Ephemeral         = "false"
+    }
+  }
+
+  lifecycle {
+    create_before_destroy = true
+  }
+
+  depends_on = [
+    aws_iam_role_policy_attachment.worker_ssm,
+    aws_route_table_association.workers,
+  ]
+}
+
 resource "aws_ssm_document" "recovery_diagnostics" {
   name            = "${var.name_prefix}-recovery-diagnostics"
   document_type   = "Command"

@@ -1,0 +1,47 @@
+#!/bin/bash
+set -euo pipefail
+
+# EC2 Mac user data runs through ec2-macos-init. This host is not a disposable
+# Linux worker: there is no hard TTL shutdown, and the Dedicated Host remains
+# billed after a job ends.
+
+manifest=/opt/t3/worker-image-manifest.json
+if [[ ! -r "$manifest" ]]; then
+  echo "cloud-agent bootstrap failed: macOS iOS worker image manifest is missing" >&2
+  exit 1
+fi
+
+if ! /usr/bin/python3 - "$manifest" '${profile_name}' '${image_version}' '${macos}' '${xcode}' '${simulator_runtime}' <<'PY'
+import json, sys
+manifest = json.load(open(sys.argv[1]))
+expected = {
+    "profile": sys.argv[2],
+    "imageVersion": sys.argv[3],
+    "macos": sys.argv[4],
+    "xcode": sys.argv[5],
+    "simulatorRuntime": sys.argv[6],
+}
+for key, value in expected.items():
+    if manifest.get(key) != value:
+        raise SystemExit(f"image {key} {manifest.get(key)!r} does not match {value!r}")
+PY
+then
+  echo "cloud-agent bootstrap failed: macOS iOS image profile does not match the launch template" >&2
+  exit 1
+fi
+
+install -d -o cloudagent -g staff -m 0750 /etc/t3
+install -d -o cloudagent -g staff -m 0700 /var/lib/t3-worker
+install -d -o cloudagent -g staff -m 0700 /work
+
+# Desktop/login session for Simulator. Without a console session simctl can
+# boot devices but GUI automation and screenshots fail. The authorized image
+# already completed first-login and Xcode license acceptance.
+if ! pgrep -x WindowServer >/dev/null; then
+  echo "cloud-agent bootstrap: WindowServer is not running; Simulator GUI work needs the Mac desktop session from the image." >&2
+fi
+
+launchctl bootstrap system /Library/LaunchDaemons/com.t3.cloud-agent-worker.plist 2>/dev/null || \
+  launchctl load -w /Library/LaunchDaemons/com.t3.cloud-agent-worker.plist
+launchctl bootstrap system /Library/LaunchDaemons/com.t3.cloud-agent-worker-registration.plist 2>/dev/null || \
+  launchctl load -w /Library/LaunchDaemons/com.t3.cloud-agent-worker-registration.plist
