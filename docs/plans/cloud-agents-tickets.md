@@ -1397,6 +1397,8 @@ Acceptance criteria:
 
 ### CA-29: Trigger work from GitHub and address feedback
 
+Status: Done on 19 September 2026 in [PR #58](https://github.com/Atheal9k/cloud-agents/pull/58).
+
 Dependencies: CA-06, CA-15, CA-16, CA-18, CA-28, CA-47, CA-50.
 
 Description: Add opted-in issue/PR triggers and bounded repair of review feedback or failing checks.
