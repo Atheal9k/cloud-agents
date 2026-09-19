@@ -1375,6 +1375,8 @@ Acceptance criteria:
 
 Dependencies: CA-12, CA-17, CA-18, CA-24, CA-40, CA-47.
 
+Status: Done on 19 September 2026 in [PR #54](https://github.com/Atheal9k/cloud-agents/pull/54).
+
 Description: Run recurring work through the same agent/run admission path as
 interactive tasks. This ticket supplies T3-native schedules; CA-53 generalizes
 them into Cursor-like automations.
