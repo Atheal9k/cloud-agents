@@ -108,7 +108,8 @@ export function CloudAgentReviewView(props: {
           {cloudSessionAvailabilityLabel("Terminal", review.terminalAvailability)}
         </p>
         <p className="mt-2 text-xs text-muted-foreground">
-          Reviewing retained results does not wake a runtime.
+          Reviewing retained results does not wake a runtime. Shared agent URLs are read-only and
+          require same-team membership plus the viewer's own source-control access.
         </p>
       </div>
       {error === null ? null : <p className="text-sm text-destructive">{error}</p>}

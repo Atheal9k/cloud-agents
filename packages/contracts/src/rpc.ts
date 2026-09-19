@@ -289,6 +289,11 @@ import {
   CloudUsageExportInput,
 } from "./cloudAccounting.ts";
 import {
+  CloudCollaborationError,
+  CloudScmConnection,
+  CloudScmConnectionInput,
+} from "./cloudCollaboration.ts";
+import {
   CloudGuidedSetupInput,
   CloudGuidedSetupResult,
   CloudReadinessCheckInput,
@@ -464,6 +469,9 @@ export const WS_METHODS = {
   cloudAccountingRecordInvoice: "cloud.accounting.recordInvoice",
   cloudAccountingExport: "cloud.accounting.export",
   cloudAccountingListAudit: "cloud.accounting.listAudit",
+  cloudCollaborationListScm: "cloud.collaboration.listScm",
+  cloudCollaborationConnectScm: "cloud.collaboration.connectScm",
+  cloudCollaborationDisconnectScm: "cloud.collaboration.disconnectScm",
   cloudReadinessGet: "cloud.readiness.get",
   cloudReadinessCheck: "cloud.readiness.check",
   cloudReadinessGuidedSetup: "cloud.readiness.guidedSetup",
@@ -808,6 +816,24 @@ const WsCloudAccountingListAuditRpc = Rpc.make(WS_METHODS.cloudAccountingListAud
   payload: CloudAuditListInput,
   success: Schema.Array(CloudAuditEvent),
   error: Schema.Union([CloudAllocationControllerError, EnvironmentAuthorizationError]),
+});
+
+const WsCloudCollaborationListScmRpc = Rpc.make(WS_METHODS.cloudCollaborationListScm, {
+  payload: Schema.Struct({}),
+  success: Schema.Array(CloudScmConnection),
+  error: Schema.Union([CloudCollaborationError, EnvironmentAuthorizationError]),
+});
+
+const WsCloudCollaborationConnectScmRpc = Rpc.make(WS_METHODS.cloudCollaborationConnectScm, {
+  payload: CloudScmConnectionInput,
+  success: CloudScmConnection,
+  error: Schema.Union([CloudCollaborationError, EnvironmentAuthorizationError]),
+});
+
+const WsCloudCollaborationDisconnectScmRpc = Rpc.make(WS_METHODS.cloudCollaborationDisconnectScm, {
+  payload: Schema.Struct({ connectionId: TrimmedNonEmptyString }),
+  success: Schema.Struct({ id: TrimmedNonEmptyString }),
+  error: Schema.Union([CloudCollaborationError, EnvironmentAuthorizationError]),
 });
 
 const WsCloudReadinessGetRpc = Rpc.make(WS_METHODS.cloudReadinessGet, {
@@ -1750,6 +1776,9 @@ export const WsRpcGroup = RpcGroup.make(
   WsCloudAccountingRecordInvoiceRpc,
   WsCloudAccountingExportRpc,
   WsCloudAccountingListAuditRpc,
+  WsCloudCollaborationListScmRpc,
+  WsCloudCollaborationConnectScmRpc,
+  WsCloudCollaborationDisconnectScmRpc,
   WsCloudReadinessGetRpc,
   WsCloudReadinessCheckRpc,
   WsCloudReadinessGuidedSetupRpc,

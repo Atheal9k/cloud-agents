@@ -96,11 +96,16 @@ import { ProviderRegistry } from "../provider/Services/ProviderRegistry.ts";
 import { ProjectionSnapshotQuery } from "../orchestration/Services/ProjectionSnapshotQuery.ts";
 import { sourceControlRepositorySelector } from "@t3tools/shared/sourceControl";
 
+import * as CloudCollaboration from "./CloudCollaboration.ts";
+import { mapCollaborationFailure, teamIdOf } from "./CloudCollaboration.ts";
+import { resolveCloudBranchPlan, repositoryUrlForIdentity } from "./cloudCollaborationPolicy.ts";
+
 const AgentIdRequest = Schema.Struct({ agentId: Schema.String });
 const PrincipalRequest = Schema.Struct({ principalId: Schema.String });
 const RecordRow = Schema.Struct({
   agentId: Schema.String,
   principalId: Schema.String,
+  teamId: Schema.String,
   allocationId: Schema.String,
   recordJson: Schema.String,
 });
@@ -121,6 +126,7 @@ const AgentRecordPayload = Schema.Struct({
   ),
   workOnCurrentBranch: Schema.optionalKey(Schema.Boolean),
   autoCreatePR: Schema.optionalKey(Schema.Boolean),
+  skipReviewerRequest: Schema.optionalKey(Schema.Boolean),
   mcpServers: Schema.optionalKey(Schema.Unknown),
   customSubagents: Schema.optionalKey(Schema.Unknown),
 });
@@ -292,6 +298,8 @@ export const make = Effect.fn("CloudAgentsApi.make")(function* () {
   const publication = Option.getOrUndefined(publicationOption);
   const providers = Option.getOrUndefined(providersOption);
   const projection = Option.getOrUndefined(projectionOption);
+  const collaborationOption = yield* Effect.serviceOption(CloudCollaboration.CloudCollaboration);
+  const collaboration = Option.getOrUndefined(collaborationOption);
   const workerClient = Option.getOrUndefined(
     yield* Effect.serviceOption(CloudWorkerRunClient.CloudWorkerRunClient),
   );
@@ -311,7 +319,7 @@ export const make = Effect.fn("CloudAgentsApi.make")(function* () {
     Result: RecordRow,
     execute: ({ agentId }) => sql`
       SELECT agent_id AS "agentId", principal_id AS "principalId",
-             allocation_id AS "allocationId", record_json AS "recordJson"
+             team_id AS "teamId", allocation_id AS "allocationId", record_json AS "recordJson"
       FROM cloud_agents_api_records
       WHERE agent_id = ${agentId}
     `,
@@ -321,7 +329,7 @@ export const make = Effect.fn("CloudAgentsApi.make")(function* () {
     Result: RecordRow,
     execute: ({ principalId }) => sql`
       SELECT agent_id AS "agentId", principal_id AS "principalId",
-             allocation_id AS "allocationId", record_json AS "recordJson"
+             team_id AS "teamId", allocation_id AS "allocationId", record_json AS "recordJson"
       FROM cloud_agents_api_records
       WHERE principal_id = ${principalId}
     `,
@@ -346,12 +354,47 @@ export const make = Effect.fn("CloudAgentsApi.make")(function* () {
   const locate = Effect.fn("CloudAgentsApi.locate")(function* (
     principal: CloudAgentsApiPrincipal,
     agentId: string,
+    access: "read" | "follow-up" | "owner" = "read",
   ) {
     const owned = (yield* readRecord({ agentId }).pipe(
       Effect.mapError(() => apiError("internal_error", "The API catalog is unavailable.")),
     ))[0];
-    if (owned === undefined || owned.principalId !== principal.principalId) {
+    if (owned === undefined) {
       return yield* Effect.fail(apiError("agent_not_found", `Agent '${agentId}' was not found.`));
+    }
+    const isOwner = owned.principalId === principal.principalId;
+    if (!isOwner) {
+      if (collaboration === undefined) {
+        return yield* Effect.fail(apiError("agent_not_found", `Agent '${agentId}' was not found.`));
+      }
+      const payloadPreview = decodeRecord(owned.recordJson);
+      const agentRepositories = (payloadPreview.repos ?? []).flatMap((repo) => {
+        const parsed = parseRepositoryUrl(repo.url);
+        return parsed === undefined ? [] : [parsed.ownerName];
+      });
+      const viewed = yield* collaboration
+        .viewSharedAgent({
+          principal,
+          ownerPrincipalId: owned.principalId,
+          ownerTeamId: owned.teamId,
+          agentRepositories,
+        })
+        .pipe(Effect.mapError(mapCollaborationFailure));
+      if (access === "owner" || (access === "follow-up" && viewed.mode === "read-only")) {
+        if (access === "follow-up") {
+          yield* collaboration
+            .authorizeFollowUp({
+              principal,
+              ownerPrincipalId: owned.principalId,
+              ownerTeamId: owned.teamId,
+            })
+            .pipe(Effect.mapError(mapCollaborationFailure));
+        } else {
+          return yield* Effect.fail(
+            apiError("scm_access_denied", `Agent '${agentId}' is read-only for this viewer.`),
+          );
+        }
+      }
     }
     const current = yield* snapshot;
     const agent = current.agents?.find((candidate) => candidate.id === agentId);
@@ -377,6 +420,9 @@ export const make = Effect.fn("CloudAgentsApi.make")(function* () {
         ? {}
         : { workOnCurrentBranch: payload.workOnCurrentBranch }),
       ...(payload.autoCreatePR === undefined ? {} : { autoCreatePR: payload.autoCreatePR }),
+      ...(payload.skipReviewerRequest === undefined
+        ? {}
+        : { skipReviewerRequest: payload.skipReviewerRequest }),
       urlOrigin: "",
     };
     return { current, agent, allocation, runs, record, payload };
@@ -439,10 +485,25 @@ export const make = Effect.fn("CloudAgentsApi.make")(function* () {
     const seen = new Set<string>();
     const items: CloudAgentsApiRepository[] = [];
     for (const shell of shells) {
-      if (shell.repositoryIdentity?.provider !== "github") continue;
+      const provider = shell.repositoryIdentity?.provider;
+      if (
+        provider !== "github" &&
+        provider !== "gitlab" &&
+        provider !== "bitbucket" &&
+        provider !== "azure-devops"
+      ) {
+        continue;
+      }
       const selector = sourceControlRepositorySelector(shell.repositoryIdentity);
       if (selector === null) continue;
-      const url = `https://github.com/${selector}`;
+      const url = repositoryUrlForIdentity({
+        provider,
+        selector,
+        ...(shell.repositoryIdentity?.canonicalKey === undefined
+          ? {}
+          : { canonicalKey: shell.repositoryIdentity.canonicalKey }),
+      });
+      if (url === undefined) continue;
       if (seen.has(url)) continue;
       seen.add(url);
       items.push({ url });
@@ -473,12 +534,52 @@ export const make = Effect.fn("CloudAgentsApi.make")(function* () {
       const messageId = MessageId.make(`msg-${NodeCrypto.randomUUID()}`);
       const threadId = ThreadId.make(`thread-${agentId}`);
       const title = titleFromPrompt(input.body.prompt.text, input.body.name);
-      const repo = input.body.repos?.[0];
-      const parsedRepo = repo === undefined ? undefined : parseRepositoryUrl(repo.url);
-      const repository = parsedRepo?.ownerName ?? defaults.repository ?? "local/none";
-      const selectedRef = repo?.startingRef ?? defaults.ref ?? "main";
-      const workOnCurrentBranch = input.body.workOnCurrentBranch === true;
-      const branch = workOnCurrentBranch ? selectedRef : `cloud/${agentId.slice(-12)}`;
+      const repos = input.body.repos ?? [];
+      const parsedRepos = repos.flatMap((candidate) => {
+        const parsed = parseRepositoryUrl(candidate.url);
+        return parsed === undefined ? [] : [{ input: candidate, parsed }];
+      });
+      if (repos.length > 0 && parsedRepos.length !== repos.length) {
+        const bad = repos.find((candidate) => parseRepositoryUrl(candidate.url) === undefined);
+        return yield* Effect.fail(
+          apiError("invalid_request", `Unsupported repository URL '${bad?.url ?? ""}'.`),
+        );
+      }
+      if (collaboration !== undefined) {
+        const configured = parsedRepos.map((candidate) => candidate.parsed.ownerName);
+        for (const candidate of parsedRepos) {
+          yield* collaboration
+            .authorizeRepository({
+              repository: candidate.parsed.ownerName,
+              actorRepositories: [],
+              configuredRepositories: configured,
+            })
+            .pipe(Effect.mapError(mapCollaborationFailure));
+        }
+      }
+      const scratchRequested =
+        input.body.scratch !== undefined ||
+        (repos.length === 0 &&
+          (defaults.repository === undefined || defaults.repository.length === 0));
+      const primaryRepo = parsedRepos[0];
+      const repository = scratchRequested
+        ? "scratch/workspace"
+        : (primaryRepo?.parsed.ownerName ?? defaults.repository ?? "scratch/workspace");
+      const selectedRef = primaryRepo?.input.startingRef ?? defaults.ref ?? "main";
+      const plan = resolveCloudBranchPlan({
+        agentId,
+        startingRef: selectedRef,
+        currentBranch: selectedRef,
+        ...(primaryRepo?.input.prUrl === undefined ? {} : { prUrl: primaryRepo.input.prUrl }),
+        ...(input.body.workOnCurrentBranch === undefined
+          ? {}
+          : { workOnCurrentBranch: input.body.workOnCurrentBranch }),
+        ...(input.body.autoCreatePR === undefined ? {} : { autoCreatePR: input.body.autoCreatePR }),
+        ...(input.body.skipReviewerRequest === undefined
+          ? {}
+          : { skipReviewerRequest: input.body.skipReviewerRequest }),
+      });
+      const branch = plan.branch;
       const env = defaultEnv(input.body);
       const policy =
         defaults.selfHostedMode ?? (selfHosted === undefined ? "off" : yield* selfHosted.policy);
@@ -496,7 +597,6 @@ export const make = Effect.fn("CloudAgentsApi.make")(function* () {
         current.limits.maxRunSeconds,
         input.limits?.runSeconds ?? 3 * 24 * 60 * 60,
       );
-      const autoCreatePR = input.body.autoCreatePR === true;
       yield* allocations
         .dispatch({
           type: "allocation.launch",
@@ -504,15 +604,42 @@ export const make = Effect.fn("CloudAgentsApi.make")(function* () {
           allocationId,
           attempt: RunAllocationAttempt.make(1),
           occurredAt,
-          target: { repository, baseCommit: selectedRef, branch },
-          publication: autoCreatePR
-            ? {
-                mode: "automatic-draft-pr",
-                baseBranch: selectedRef,
-                title,
-                body: "Started from the Cloud Agents API.",
-              }
-            : { mode: "review-only" },
+          target: {
+            repository,
+            baseCommit: selectedRef,
+            branch,
+            ...(scratchRequested ? { workspaceKind: "scratch" as const } : {}),
+            ...(input.body.scratch?.name === undefined
+              ? {}
+              : {
+                  scratchDraft: {
+                    name: input.body.scratch.name,
+                    visibility: input.body.scratch.visibility ?? "private",
+                  },
+                }),
+            ...(parsedRepos.length > 1
+              ? {
+                  additionalRepositories: parsedRepos.slice(1).map((candidate) => ({
+                    repository: candidate.parsed.ownerName,
+                    baseCommit: candidate.input.startingRef ?? selectedRef,
+                    branch:
+                      plan.branch === selectedRef
+                        ? (candidate.input.startingRef ?? selectedRef)
+                        : plan.branch,
+                  })),
+                }
+              : {}),
+          },
+          publication:
+            plan.autoCreatePR && !scratchRequested
+              ? {
+                  mode: "automatic-draft-pr",
+                  baseBranch: selectedRef,
+                  title,
+                  body: "Started from the Cloud Agents API.",
+                  ...(plan.skipReviewerRequest ? { skipReviewerRequest: true } : {}),
+                }
+              : { mode: "review-only" },
           control: { agentId, runId },
           execution: {
             threadId,
@@ -563,10 +690,11 @@ export const make = Effect.fn("CloudAgentsApi.make")(function* () {
         })
         .pipe(Effect.mapError(mapControllerError));
       yield* sql`
-        INSERT INTO cloud_agents_api_records (agent_id, principal_id, allocation_id, record_json, created_at)
+        INSERT INTO cloud_agents_api_records (agent_id, principal_id, team_id, allocation_id, record_json, created_at)
         VALUES (
           ${agentId},
           ${input.principal.principalId},
+          ${teamIdOf(input.principal)},
           ${allocationId},
           ${encodeRecord({
             env: defaultEnv(input.body),
@@ -577,6 +705,9 @@ export const make = Effect.fn("CloudAgentsApi.make")(function* () {
             ...(input.body.autoCreatePR === undefined
               ? {}
               : { autoCreatePR: input.body.autoCreatePR }),
+            ...(input.body.skipReviewerRequest === undefined
+              ? {}
+              : { skipReviewerRequest: input.body.skipReviewerRequest }),
             ...(input.body.mcpServers === undefined ? {} : { mcpServers: input.body.mcpServers }),
             ...(input.body.customSubagents === undefined
               ? {}
@@ -595,7 +726,7 @@ export const make = Effect.fn("CloudAgentsApi.make")(function* () {
       const nowMs = Date.parse(occurredAt);
       yield* seedStatus(run, Number.isFinite(nowMs) ? nowMs : epochNowMs());
       if (selfHosted !== undefined && env.type !== "cloud") {
-        const [repoOwner, repoName] = (parsedRepo?.ownerName ?? "").split("/");
+        const [repoOwner, repoName] = (primaryRepo?.parsed.ownerName ?? "").split("/");
         yield* selfHosted
           .enqueue({
             id: agentId,
@@ -604,7 +735,7 @@ export const make = Effect.fn("CloudAgentsApi.make")(function* () {
             ...(env.name === undefined ? {} : { poolName: env.name }),
             ...(repoOwner === undefined || repoOwner.length === 0 ? {} : { repoOwner }),
             ...(repoName === undefined || repoName.length === 0 ? {} : { repoName }),
-            ...(repo?.url === undefined ? {} : { repoUrl: repo.url }),
+            ...(primaryRepo?.input.url === undefined ? {} : { repoUrl: primaryRepo.input.url }),
           })
           .pipe(
             Effect.mapError((error) =>
@@ -711,7 +842,7 @@ export const make = Effect.fn("CloudAgentsApi.make")(function* () {
     Effect.gen(function* () {
       const invalid = validateCreateRunRequest(input.body);
       if (invalid !== undefined) return yield* Effect.fail(invalid);
-      const located = yield* locate(input.principal, input.agentId);
+      const located = yield* locate(input.principal, input.agentId, "follow-up");
       if (located.agent.status === "ARCHIVED") {
         return yield* Effect.fail(
           apiError("agent_archived", `Agent '${input.agentId}' is archived.`),
@@ -851,7 +982,7 @@ export const make = Effect.fn("CloudAgentsApi.make")(function* () {
 
   const cancelRun: CloudAgentsApi["Service"]["cancelRun"] = (input) =>
     Effect.gen(function* () {
-      const located = yield* locate(input.principal, input.agentId);
+      const located = yield* locate(input.principal, input.agentId, "owner");
       const run = located.runs.find((candidate) => candidate.id === input.runId);
       if (run === undefined) {
         return yield* Effect.fail(apiError("run_not_found", `Run '${input.runId}' was not found.`));
@@ -910,7 +1041,7 @@ export const make = Effect.fn("CloudAgentsApi.make")(function* () {
       readonly principal: CloudAgentsApiPrincipal;
       readonly agentId: string;
     }) {
-      const located = yield* locate(input.principal, input.agentId);
+      const located = yield* locate(input.principal, input.agentId, "owner");
       if (
         type === "allocation.agent-delete" &&
         located.runs.some((run) => isActiveRunStatus(run.status))

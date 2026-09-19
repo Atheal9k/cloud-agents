@@ -2,6 +2,7 @@ import { useAtomValue } from "@effect/atom-react";
 import { cloudWorkerConnectionRegistration } from "@t3tools/client-runtime/connection";
 import { squashAtomCommandFailure } from "@t3tools/client-runtime/state/runtime";
 import {
+  CLOUD_ENV_SETUP_USER_REQUEST,
   CommandId,
   type CloudAllocationSnapshot,
   cloudEnvironmentBase,
@@ -10,6 +11,7 @@ import {
   type CloudEnvironmentBuild,
   CloudEnvironmentBuildId,
   CloudAgentId,
+  CLOUD_SCRATCH_WORKSPACE_REPOSITORY,
   type CloudEnvironmentVersion,
   isAppleSiliconMacInstanceType,
   isAndroidAcceleratedInstanceType,
@@ -25,6 +27,7 @@ import { type FormEvent, useEffect, useMemo, useState } from "react";
 import { environmentCatalog } from "../../connection/catalog";
 import {
   buildCloudRunLaunchCommand,
+  cloudEnvSetupLaunchDraft,
   cloudRunDisplayState,
   cloudRunProjectOptions,
   controllerSummary,
@@ -473,8 +476,15 @@ function CloudRunDialogForEnvironment(props: {
 
   useEffect(
     () =>
-      onOpenCloudLaunchDialog(() => {
-        setDraft(createInitialCloudRunDraft(snapshot, providers, projectOptions[0]?.repository));
+      onOpenCloudLaunchDialog((intent) => {
+        const next = createInitialCloudRunDraft(
+          snapshot,
+          providers,
+          intent.kind === "env-setup" && intent.repository !== undefined
+            ? intent.repository
+            : projectOptions[0]?.repository,
+        );
+        setDraft(intent.kind === "env-setup" ? cloudEnvSetupLaunchDraft(next) : next);
         setRequestId(randomUUID());
         setLaunchedId(null);
         setError(null);
@@ -664,7 +674,11 @@ function CloudRunDialogForEnvironment(props: {
           <DialogHeader>
             <div className="flex items-center gap-2">
               <CloudIcon className="size-5" />
-              <DialogTitle>New cloud thread</DialogTitle>
+              <DialogTitle>
+                {draft.task === CLOUD_ENV_SETUP_USER_REQUEST
+                  ? "Set up cloud environment"
+                  : "New cloud thread"}
+              </DialogTitle>
             </div>
             <DialogDescription>{controllerSummary(snapshot)}</DialogDescription>
           </DialogHeader>
@@ -696,18 +710,42 @@ function CloudRunDialogForEnvironment(props: {
                       aria-label="Project"
                       className={selectClassName}
                       value={draft.repository}
-                      onChange={(event) =>
-                        setDraft((current) => ({ ...current, repository: event.target.value }))
-                      }
+                      onChange={(event) => {
+                        const repository = event.target.value;
+                        const environment = snapshot?.environments?.find((candidate) =>
+                          candidate.current.repositories.some(
+                            (entry) => entry.repository === repository,
+                          ),
+                        );
+                        const additionalRepositories = (environment?.current.repositories ?? [])
+                          .map((entry) => entry.repository)
+                          .filter((entry) => entry !== repository);
+                        setDraft((current) => ({
+                          ...current,
+                          repository,
+                          additionalRepositories,
+                          ...(repository === CLOUD_SCRATCH_WORKSPACE_REPOSITORY
+                            ? { publication: "review-only" as const }
+                            : {}),
+                        }));
+                      }}
                     >
                       <option value="">Select a linked GitHub project</option>
+                      <option value={CLOUD_SCRATCH_WORKSPACE_REPOSITORY}>Start from scratch</option>
                       {projectOptions.map((project) => (
                         <option key={project.repository} value={project.repository}>
                           {project.title} · {project.repository}
                         </option>
                       ))}
                     </select>
-                    {projectOptions.length === 0 ? (
+                    {draft.repository === CLOUD_SCRATCH_WORKSPACE_REPOSITORY ? (
+                      <span className="text-xs text-muted-foreground">
+                        Starts in an isolated workspace. Create a draft repository through GitHub,
+                        GitLab, Bitbucket, or Azure DevOps when the work is ready. Port forwarding
+                        and Design Mode use the same preview lease as other runs; deploy waits for
+                        that draft repository.
+                      </span>
+                    ) : projectOptions.length === 0 ? (
                       <span className="text-xs text-muted-foreground">
                         Add a project from a GitHub repository or Git URL first.
                       </span>
@@ -892,6 +930,41 @@ function CloudRunDialogForEnvironment(props: {
                         setDraft((current) => ({ ...current, baseBranch: event.target.value }))
                       }
                     />
+                  </label>
+                </div>
+                <div className="grid gap-3 sm:grid-cols-2">
+                  <label className={fieldClassName}>
+                    <span className={labelClassName}>Branch</span>
+                    <select
+                      className={selectClassName}
+                      value={draft.branchBehavior}
+                      onChange={(event) =>
+                        setDraft((current) => ({
+                          ...current,
+                          branchBehavior: event.target
+                            .value as CloudRunLaunchDraft["branchBehavior"],
+                        }))
+                      }
+                    >
+                      <option value="new-cursor-branch">New cursor/ branch</option>
+                      <option value="current-branch">Current branch</option>
+                      <option value="starting-ref">Starting ref</option>
+                      <option value="continue-pr">Continue existing PR</option>
+                    </select>
+                  </label>
+                  <label className="flex items-center gap-2 pt-6 text-sm">
+                    <input
+                      type="checkbox"
+                      checked={draft.skipReviewerRequest}
+                      disabled={draft.publication === "review-only"}
+                      onChange={(event) =>
+                        setDraft((current) => ({
+                          ...current,
+                          skipReviewerRequest: event.target.checked,
+                        }))
+                      }
+                    />
+                    <span>Skip reviewer requests</span>
                   </label>
                 </div>
                 <p className="text-xs text-muted-foreground">

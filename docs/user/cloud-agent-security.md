@@ -99,7 +99,13 @@ environment.
 
 ## Repository access
 
-A run never gets access wider than the person who triggered it. On top of that:
+A run never gets access wider than the person who triggered it, the connected
+source-control installation, and the agent's configured repository list. Every
+repository in a multi-repo environment is checked on its own. Submodules and
+named private dependencies cannot add a repository that intersection does not
+already allow.
+
+On top of that:
 
 - `T3CODE_CLOUD_SCM_BLOCKED_REPOSITORIES` — never reachable from a runtime.
 - `T3CODE_CLOUD_SCM_PROTECTED_REPOSITORIES` — reachable only when the

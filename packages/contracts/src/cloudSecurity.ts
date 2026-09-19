@@ -286,6 +286,10 @@ export const CloudScmAccessRequest = Schema.Struct({
   /** What the person who triggered the run can actually do, from the SCM. */
   userRepositories: Schema.Array(TrimmedNonEmptyString),
   userScope: CloudScmScope,
+  /** Repositories the app installation can reach. Absent means not yet constrained. */
+  installRepositories: Schema.optionalKey(Schema.Array(TrimmedNonEmptyString)),
+  /** Agent/environment repository scope. Empty means unrestricted by agent config. */
+  configuredRepositories: Schema.optionalKey(Schema.Array(TrimmedNonEmptyString)),
 });
 export type CloudScmAccessRequest = typeof CloudScmAccessRequest.Type;
 
@@ -293,6 +297,8 @@ export const CloudScmAccessDenialReason = Schema.Literals([
   "blocked",
   "not-granted",
   "outside-user-access",
+  "outside-install-access",
+  "outside-configured-scope",
   "scope-exceeds-user",
   "scope-exceeds-policy",
 ]);

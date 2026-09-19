@@ -146,6 +146,8 @@ import {
   cloudAgentsApiRateLimitsLayer,
   cloudAgentsApiRouteLayer,
 } from "./cloud/CloudAgentsApiHttp.ts";
+import * as CloudCollaboration from "./cloud/CloudCollaboration.ts";
+import { cloudCollaborationRouteLayer } from "./cloud/CloudCollaborationHttp.ts";
 import * as CloudSelfHosted from "./cloud/CloudSelfHosted.ts";
 import { cloudSelfHostedRouteLayer } from "./cloud/CloudSelfHostedHttp.ts";
 import * as CloudAllocationReconciler from "./cloud/CloudAllocationReconciler.ts";
@@ -650,6 +652,7 @@ const RuntimeCoreDependenciesWithoutSchedulesLive = Layer.mergeAll(
   CloudWorkerSessionLayerLive,
   CloudAgentsApi.layer,
   CloudAgentsApiKeys.layer,
+  CloudCollaboration.layer,
   CloudSelfHosted.layer,
   cloudAgentsApiRateLimitsLayer,
   CloudReadiness.layer.pipe(Layer.provide(CloudWorkerProviderLayerLive)),
@@ -716,6 +719,7 @@ export const makeRoutesLayer = Layer.mergeAll(
     cloudAgentReviewRouteLayer,
     cloudWorkerSessionRouteLayer,
     cloudAgentsApiRouteLayer,
+    cloudCollaborationRouteLayer,
     cloudSelfHostedRouteLayer,
     deviceHubProxyRouteLayer,
     previewGatewayBootstrapRouteLayer,

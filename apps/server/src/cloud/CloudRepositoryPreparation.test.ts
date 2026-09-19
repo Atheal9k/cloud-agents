@@ -119,6 +119,8 @@ it.layer(NodeServices.layer)("CloudRepositoryPreparation", (it) => {
       readBranch: () => Effect.die("branch inspection should not run during preparation"),
       findPullRequest: () => Effect.die("PR inspection should not run during preparation"),
       createDraftPullRequest: () => Effect.die("PR creation should not run during preparation"),
+      createDraftRepository: () =>
+        Effect.die("draft repositories should not run during preparation"),
       closePullRequest: () => Effect.die("PR deletion should not run during preparation"),
       syncPrivateGitDependencies: () => Effect.void,
     });
@@ -457,6 +459,60 @@ it.layer(NodeServices.layer)("CloudRepositoryPreparation", (it) => {
 
       expect(failure).toMatchObject({ reason: "invalid-recipe", stage: "setup" });
       expect(failure.message).toContain("reserved prefix");
+    }),
+  );
+
+  it.effect("initializes an isolated scratch workspace without cloning", () =>
+    Effect.gen(function* () {
+      const { fs, git, path, preparation } = yield* fixture();
+      const record = yield* preparation.prepare(
+        decodeInput({
+          allocationId: "allocation-scratch",
+          attempt: 1,
+          selectedRef: "main",
+          deadline: deadlineAfter(2),
+          workspaceKind: "scratch",
+          recipe: {
+            ...recipe,
+            repository: "scratch/workspace",
+          },
+        }),
+      );
+
+      expect(record.repository).toBe("scratch/workspace");
+      expect(record.outputBranch).toBe("main");
+      expect(record.resolvedCommit).toMatch(/^[0-9a-f]{40}$/);
+      expect(record.setupResults).toEqual([]);
+      expect(record.additionalWorkspaces).toBeUndefined();
+      expect(yield* git(["rev-list", "--count", "HEAD"], record.workspacePath)).toBe("1");
+      expect(yield* fs.exists(path.join(record.workspacePath, "tracked.txt"))).toBe(false);
+    }),
+  );
+
+  it.effect("clones additional repositories as siblings with the same output branch", () =>
+    Effect.gen(function* () {
+      const { fs, git, path, preparation } = yield* fixture();
+      const record = yield* preparation.prepare(
+        decodeInput({
+          allocationId: "allocation-multi",
+          attempt: 1,
+          selectedRef: "main",
+          deadline: deadlineAfter(2),
+          additionalRepositories: [{ repository: "acme/api", selectedRef: "main" }],
+          recipe,
+        }),
+      );
+
+      expect(record.additionalWorkspaces).toHaveLength(1);
+      const extra = record.additionalWorkspaces?.[0];
+      expect(extra?.repository).toBe("acme/api");
+      expect(extra?.outputBranch).toBe(record.outputBranch);
+      expect(extra?.resolvedCommit).toBe(record.resolvedCommit);
+      expect(yield* git(["branch", "--show-current"], extra!.workspacePath)).toBe(
+        record.outputBranch,
+      );
+      expect(path.dirname(extra!.workspacePath)).toBe(path.dirname(record.workspacePath));
+      expect(yield* fs.exists(path.join(extra!.workspacePath, "tracked.txt"))).toBe(true);
     }),
   );
 });

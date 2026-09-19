@@ -112,7 +112,16 @@ export class CloudGitCredentials extends Context.Service<
       readonly head: string;
       readonly title: string;
       readonly body: string;
+      readonly skipReviewerRequest?: boolean;
     }) => Effect.Effect<CloudGitPullRequest, CloudGitCredentialError>;
+    readonly createDraftRepository: (input: {
+      readonly runId: string;
+      readonly name: string;
+      readonly visibility: "private" | "internal";
+    }) => Effect.Effect<
+      { readonly repository: string; readonly url: string },
+      CloudGitCredentialError
+    >;
     readonly closePullRequest: (input: {
       readonly runId: string;
       readonly repository: string;
@@ -749,7 +758,7 @@ export const make = Effect.fn("CloudGitCredentials.make")(function* (input: {
         );
       }
 
-      return yield* withRunDirectory(request.runId, (directory) =>
+      const created = yield* withRunDirectory(request.runId, (directory) =>
         runner
           .run({
             command: "gh",
@@ -802,6 +811,46 @@ export const make = Effect.fn("CloudGitCredentials.make")(function* (input: {
             ),
           ),
       );
+      if (request.skipReviewerRequest === true) {
+        yield* withRunDirectory(request.runId, (directory) =>
+          runner
+            .run({
+              command: "gh",
+              args: [
+                "api",
+                "--hostname",
+                "github.com",
+                "--method",
+                "DELETE",
+                `repos/${repository}/pulls/${created.number}/requested_reviewers`,
+                "--input",
+                "-",
+              ],
+              env: {
+                GH_HOST: "github.com",
+                GH_TOKEN: token,
+                GITHUB_TOKEN: token,
+                GH_CONFIG_DIR: directory,
+                GH_DEBUG: "",
+              },
+              stdin: JSON.stringify({ reviewers: [], team_reviewers: [] }),
+              timeout: "30 seconds",
+              maxOutputBytes: 1024 * 1024,
+            })
+            .pipe(
+              Effect.mapError(() =>
+                error("github-failed", "The controller could not suppress pull request reviewers."),
+              ),
+              Effect.flatMap((result) =>
+                result.code === ChildProcessSpawner.ExitCode(0) ||
+                result.stderr.toLowerCase().includes("422")
+                  ? Effect.void
+                  : Effect.fail(classifyGitHubFailure(result.stderr, "create")),
+              ),
+            ),
+        );
+      }
+      return created;
     });
 
   const closePullRequest: CloudGitCredentials["Service"]["closePullRequest"] = (request) =>
@@ -860,6 +909,58 @@ export const make = Effect.fn("CloudGitCredentials.make")(function* (input: {
       );
     });
 
+  const createDraftRepository: CloudGitCredentials["Service"]["createDraftRepository"] = (
+    request,
+  ) =>
+    Effect.gen(function* () {
+      const raw = yield* readSecret(input.githubTokenSecretRef, "GitHub API");
+      const token = decodeTokenSecret(raw);
+      if (token === null) {
+        return yield* error(
+          "invalid-secret",
+          "The configured GitHub API secret must contain one token without whitespace.",
+        );
+      }
+      const flag = request.visibility === "internal" ? "--internal" : "--private";
+      const created = yield* withRunDirectory(request.runId, (directory) =>
+        runner
+          .run({
+            command: "gh",
+            args: ["repo", "create", request.name, flag, "--disable-issues", "--disable-wiki"],
+            env: {
+              GH_HOST: "github.com",
+              GH_TOKEN: token,
+              GITHUB_TOKEN: token,
+              GH_CONFIG_DIR: directory,
+              GH_DEBUG: "",
+            },
+            timeout: "30 seconds",
+            maxOutputBytes: 1024 * 1024,
+          })
+          .pipe(
+            Effect.mapError(() =>
+              error("github-failed", "The controller could not create the draft repository."),
+            ),
+            Effect.flatMap((result) =>
+              result.code === ChildProcessSpawner.ExitCode(0)
+                ? Effect.succeed(result.stdout)
+                : Effect.fail(classifyGitHubFailure(result.stderr, "create")),
+            ),
+          ),
+      );
+      const match = created.match(/https?:\/\/[^\s]+/);
+      const url = match?.[0]?.replace(/\.git$/, "") ?? `https://github.com/${request.name}`;
+      let repository = request.name;
+      try {
+        const parsed = new URL(url);
+        const parts = parsed.pathname.replace(/^\/+|\/+$/g, "").split("/");
+        if (parts.length >= 2) repository = `${parts[parts.length - 2]}/${parts[parts.length - 1]}`;
+      } catch {
+        repository = request.name.includes("/") ? request.name : request.name;
+      }
+      return { repository, url };
+    });
+
   const syncPrivateGitDependencies: CloudGitCredentials["Service"]["syncPrivateGitDependencies"] = (
     request,
   ) =>
@@ -890,6 +991,7 @@ export const make = Effect.fn("CloudGitCredentials.make")(function* (input: {
     readBranch,
     findPullRequest,
     createDraftPullRequest,
+    createDraftRepository,
     closePullRequest,
     syncPrivateGitDependencies,
   });

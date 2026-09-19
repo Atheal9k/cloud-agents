@@ -75,9 +75,13 @@ import { isCloudEnvironmentBuildStale } from "./cloudEnvironmentBuildPolicy.ts";
 import * as CloudEnvironmentCatalog from "./CloudEnvironmentCatalog.ts";
 import * as CloudMacHostCatalog from "./CloudMacHostCatalog.ts";
 import * as CloudWarmPoolCatalog from "./CloudWarmPoolCatalog.ts";
-import { evaluateCloudScmAccess } from "./cloudSecurityPolicy.ts";
+import {
+  admitCloudWorkspaceLaunch,
+  cloudWorkspaceLaunchRepositories,
+} from "./cloudWorkspacePolicy.ts";
 import { planWarmPoolCapacity, warmPoolInventories } from "./cloudWarmPoolPolicy.ts";
 import * as ControllerSettings from "./controllerSettings.ts";
+import { attachCloudEnvSetupTurn } from "./cloudEnvSetupSkill.ts";
 import {
   decideRunAllocationCommand,
   projectRunAllocationEvent,
@@ -607,6 +611,7 @@ export const make = Effect.fn("CloudAllocationController.make")(function* (input
 
   const validateAdmission = (
     command: RunAllocationCommand,
+    longRunning?: boolean,
   ): CloudAllocationControllerError | undefined => {
     const instanceType =
       command.type === "allocation.launch" ? command.profile.instanceType : undefined;
@@ -645,23 +650,37 @@ export const make = Effect.fn("CloudAllocationController.make")(function* (input
       }
     }
     /**
-     * The repository ceiling is checked before a worker is ever launched, so a
-     * blocked or ungranted repository cannot be cloned by a running guest. The
-     * triggering user's own reach narrows it further when the client sends it.
+     * Every configured repository is checked before a worker is ever launched,
+     * so a blocked submodule or extra checkout cannot widen the triggering
+     * user's reach. Start-from-scratch skips the ceiling until a draft repo exists.
      */
-    if (command.type === "allocation.launch" && scmPolicy !== undefined) {
-      const repository = command.target.repository;
+    if (command.type === "allocation.launch") {
       const access = command.target.access;
-      const decision = evaluateCloudScmAccess({
-        policy: scmPolicy,
-        request: {
-          repository,
-          scope: access?.scope ?? "write",
-          userRepositories: access?.userRepositories ?? [repository],
-          userScope: access?.userScope ?? "write",
-        },
+      const repositories = cloudWorkspaceLaunchRepositories({
+        primary: command.target.repository,
+        additional: command.target.additionalRepositories,
       });
-      if (!decision.allowed) return controllerError("invalid-request", decision.message);
+      const admitted = admitCloudWorkspaceLaunch({
+        repositories,
+        ...(longRunning === undefined ? {} : { longRunning }),
+        ...(scmPolicy === undefined
+          ? {}
+          : {
+              scm: {
+                policy: scmPolicy,
+                request: {
+                  scope: access?.scope ?? "write",
+                  userRepositories:
+                    access?.userRepositories ?? repositories.map((entry) => entry.repository),
+                  userScope: access?.userScope ?? "write",
+                  configuredRepositories: repositories.map((entry) => entry.repository),
+                },
+              },
+            }),
+      });
+      if (admitted.status === "rejected") {
+        return controllerError("invalid-request", admitted.message);
+      }
     }
     if (
       command.type !== "allocation.launch" &&
@@ -770,7 +789,7 @@ export const make = Effect.fn("CloudAllocationController.make")(function* (input
           if (launchSpend.status === "rejected") {
             return yield* controllerError("spend-limit-exceeded", launchSpend.message);
           }
-          const invalid = validateAdmission(command);
+          const invalid = validateAdmission(command, snapshot.controller.defaults?.longRunning);
           if (invalid !== undefined) return yield* invalid;
           const pending = snapshot.allocations.filter(waitingForAWorker).length;
           if (pending >= limits.maxConcurrentWorkers + limits.maxQueueDepth) {
@@ -817,7 +836,7 @@ export const make = Effect.fn("CloudAllocationController.make")(function* (input
           if (followUpSpend.status === "rejected") {
             return yield* controllerError("spend-limit-exceeded", followUpSpend.message);
           }
-          const invalid = validateAdmission(command);
+          const invalid = validateAdmission(command, snapshot.controller.defaults?.longRunning);
           if (invalid !== undefined) return yield* invalid;
         }
         if (
@@ -846,7 +865,7 @@ export const make = Effect.fn("CloudAllocationController.make")(function* (input
           if (retrySpend.status === "rejected") {
             return yield* controllerError("spend-limit-exceeded", retrySpend.message);
           }
-          const invalid = validateAdmission(command);
+          const invalid = validateAdmission(command, snapshot.controller.defaults?.longRunning);
           if (invalid !== undefined) return yield* invalid;
           const pending = snapshot.allocations.filter(waitingForAWorker).length;
           if (pending >= limits.maxConcurrentWorkers + limits.maxQueueDepth) {
@@ -888,9 +907,34 @@ export const make = Effect.fn("CloudAllocationController.make")(function* (input
                 }
                 return cloudEnvironmentBuildReference(activeBuild);
               });
+        const launchCommand =
+          command.type === "allocation.launch"
+            ? {
+                ...command,
+                execution: {
+                  ...command.execution,
+                  turn: {
+                    ...command.execution.turn,
+                    prompt: attachCloudEnvSetupTurn({
+                      prompt: command.execution.turn.prompt,
+                      environmentInfo:
+                        resolved === null
+                          ? {}
+                          : {
+                              environmentId: resolved.version.environmentId,
+                              environmentJsonPath:
+                                resolved.version.source.type === "repository"
+                                  ? resolved.version.source.path
+                                  : null,
+                            },
+                    }).prompt,
+                  },
+                },
+              }
+            : command;
         const events = decideRunAllocationCommand(
           current,
-          command,
+          launchCommand,
           resolved === null ? undefined : resolved.reference,
           pinnedBuild,
         );

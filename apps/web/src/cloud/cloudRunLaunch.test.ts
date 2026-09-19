@@ -7,6 +7,7 @@ import {
 import { describe, expect, it } from "vite-plus/test";
 import {
   buildCloudRunLaunchCommand,
+  cloudEnvSetupLaunchDraft,
   cloudRunDisplayState,
   cloudRunProjectOptions,
   controllerSummary,
@@ -29,6 +30,7 @@ const limits: CloudAllocationLimits = {
 
 const draft: CloudRunLaunchDraft = {
   repository: "Atheal9k/cloud-agents",
+  additionalRepositories: [],
   selectedRef: "main",
   task: "Fix the flaky test",
   providerInstanceId: "codex",
@@ -40,6 +42,8 @@ const draft: CloudRunLaunchDraft = {
   workerProfile: "linux-web",
   publication: "automatic-draft-pr",
   baseBranch: "main",
+  branchBehavior: "new-cursor-branch",
+  skipReviewerRequest: false,
 };
 
 describe("cloud run launch", () => {
@@ -83,9 +87,45 @@ describe("cloud run launch", () => {
   it("starts new cloud threads with the requested defaults", () => {
     expect(createInitialCloudRunDraft(null, [], "pingdotgg/t3code")).toMatchObject({
       repository: "pingdotgg/t3code",
+      additionalRepositories: [],
       runtimeMode: "full-access",
       runMinutes: "4320",
       publication: "automatic-draft-pr",
+    });
+  });
+
+  it("launches start-from-scratch without a source-control checkout", () => {
+    const command = buildCloudRunLaunchCommand({
+      draft: {
+        ...draft,
+        repository: "scratch/workspace",
+        publication: "review-only",
+      },
+      limits,
+      now: new Date("2026-09-19T12:00:00.000Z"),
+      requestId: "scratch-1",
+    });
+    expect(command.status).toBe("valid");
+    if (command.status !== "valid") return;
+    expect(command.command).toMatchObject({
+      type: "allocation.launch",
+      target: { repository: "scratch/workspace", workspaceKind: "scratch" },
+      publication: { mode: "review-only" },
+    });
+  });
+
+  it("attaches additional repositories so one launch can open coordinated PRs", () => {
+    const command = buildCloudRunLaunchCommand({
+      draft: { ...draft, additionalRepositories: ["acme/api"] },
+      limits,
+      now: new Date("2026-09-19T12:00:00.000Z"),
+      requestId: "multi-1",
+    });
+    expect(command.status).toBe("valid");
+    if (command.status !== "valid") return;
+    expect(command.command.type === "allocation.launch" && command.command.target).toMatchObject({
+      repository: "Atheal9k/cloud-agents",
+      additionalRepositories: [{ repository: "acme/api" }],
     });
   });
 
@@ -156,7 +196,7 @@ describe("cloud run launch", () => {
       }),
     ).toEqual({
       status: "invalid",
-      message: "Choose a project linked to a GitHub repository.",
+      message: "Choose a project linked to a source-control repository.",
     });
   });
 
@@ -178,6 +218,27 @@ describe("cloud run launch", () => {
         [],
       ).runMinutes,
     ).toBe("120");
+  });
+
+  it("starts the env-setup skill from every launcher with the same user request", () => {
+    const setup = cloudEnvSetupLaunchDraft(draft);
+    const result = buildCloudRunLaunchCommand({
+      draft: setup,
+      limits,
+      now: new Date("2026-09-17T10:00:00.000Z"),
+      requestId: "request-setup",
+    });
+
+    expect(setup.task).toContain("env-setup");
+    expect(result.status).toBe("valid");
+    if (
+      result.status !== "valid" ||
+      result.command.type !== "allocation.launch" ||
+      result.command.execution === undefined
+    ) {
+      return;
+    }
+    expect(result.command.execution.turn.prompt).toBe(setup.task);
   });
 
   it("promises a permanent controller outlives this computer, and a local one does not", () => {
@@ -222,7 +283,11 @@ describe("cloud run launch", () => {
       commandId: "cloud-launch:request-19",
       allocationId: "request-19",
       control: { agentId: "agent:request-19", runId: "run:request-19:1" },
-      target: { repository: "Atheal9k/cloud-agents", baseCommit: "main" },
+      target: {
+        repository: "Atheal9k/cloud-agents",
+        baseCommit: "main",
+        branch: "cursor/request-19",
+      },
       publication: { mode: "automatic-draft-pr", baseBranch: "main" },
       profile: { id: "linux-web", os: "linux", arch: "x64", instanceType: "t3.medium" },
       execution: {
@@ -235,6 +300,28 @@ describe("cloud run launch", () => {
           modelSelection: { instanceId: "codex", model: "gpt-5.6-sol" },
         },
       },
+    });
+  });
+
+  it("continues an existing PR on the selected head without requesting reviewers", () => {
+    const result = buildCloudRunLaunchCommand({
+      draft: {
+        ...draft,
+        selectedRef: "cursor/existing",
+        branchBehavior: "continue-pr",
+        skipReviewerRequest: true,
+      },
+      limits,
+      now: new Date("2026-09-17T10:00:00.000Z"),
+      requestId: "request-19",
+    });
+
+    expect(result.status).toBe("valid");
+    if (result.status !== "valid" || result.command.type !== "allocation.launch") return;
+    expect(result.command.target.branch).toBe("cursor/existing");
+    expect(result.command.publication).toMatchObject({
+      mode: "automatic-draft-pr",
+      skipReviewerRequest: true,
     });
   });
 

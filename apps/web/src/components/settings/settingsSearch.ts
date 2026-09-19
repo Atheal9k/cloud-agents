@@ -717,7 +717,7 @@ export const SETTINGS_SEARCH_ITEMS = [
     title: "Cloud environments and Builds",
     to: "/settings/cloud-agents",
     searchTerms: [
-      "environment build snapshot stale threshold egress secrets guided setup activate",
+      "environment build snapshot stale threshold egress secrets env-setup agent setup activate multi-repo additional repositories start from scratch",
     ],
   },
   {
@@ -725,7 +725,15 @@ export const SETTINGS_SEARCH_ITEMS = [
     title: "Cloud run defaults",
     to: "/settings/cloud-agents",
     searchTerms: [
-      "default model context repository ref long-running computer use summaries artifacts spend limit audit export policy self-hosted pool machine",
+      "default model context repository ref long-running computer use summaries artifacts spend limit audit export policy team follow-up github gitlab bitbucket azure self-hosted pool machine",
+    ],
+  },
+  {
+    id: "cloud-scm",
+    title: "Source-control connections",
+    to: "/settings/cloud-agents",
+    searchTerms: [
+      "github ghes gitlab bitbucket azure devops install repository scope team follow-up",
     ],
   },
   {

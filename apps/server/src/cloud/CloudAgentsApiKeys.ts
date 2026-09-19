@@ -25,6 +25,7 @@ const KeyRow = Schema.Struct({
   userEmail: Schema.NullOr(Schema.String),
   userFirstName: Schema.NullOr(Schema.String),
   userLastName: Schema.NullOr(Schema.String),
+  teamId: Schema.String,
 });
 
 function hashToken(token: string): string {
@@ -66,7 +67,8 @@ export const make = Effect.fn("CloudAgentsApiKeys.make")(function* () {
         created_at AS "createdAt",
         user_email AS "userEmail",
         user_first_name AS "userFirstName",
-        user_last_name AS "userLastName"
+        user_last_name AS "userLastName",
+        team_id AS "teamId"
       FROM cloud_agents_api_keys
       WHERE token_hash = ${tokenHash}
     `,
@@ -121,6 +123,7 @@ export const make = Effect.fn("CloudAgentsApiKeys.make")(function* () {
           ...(row.userEmail === null ? {} : { userEmail: row.userEmail }),
           ...(row.userFirstName === null ? {} : { userFirstName: row.userFirstName }),
           ...(row.userLastName === null ? {} : { userLastName: row.userLastName }),
+          teamId: row.teamId,
         } satisfies CloudAgentsApiPrincipal;
       }),
     );

@@ -37,6 +37,7 @@ import {
   CloudSessionLeases,
 } from "./cloudPreview.ts";
 import { CloudScmScope } from "./cloudSecurity.ts";
+import { CloudScratchDraftRepository, CloudWorkspaceKind } from "./cloudWorkspace.ts";
 import { CloudSelfHostedPolicyMode } from "./cloudSelfHosted.ts";
 import {
   CloudRuntimePlacement,
@@ -69,11 +70,23 @@ export const RunRepositoryAccess = Schema.Struct({
 });
 export type RunRepositoryAccess = typeof RunRepositoryAccess.Type;
 
+export const RunWorkspaceRepositoryTarget = Schema.Struct({
+  repository: TrimmedNonEmptyString,
+  baseCommit: TrimmedNonEmptyString,
+  branch: TrimmedNonEmptyString,
+  access: Schema.optionalKey(RunRepositoryAccess),
+});
+export type RunWorkspaceRepositoryTarget = typeof RunWorkspaceRepositoryTarget.Type;
+
 export const RunRepositoryTarget = Schema.Struct({
   repository: TrimmedNonEmptyString,
   baseCommit: TrimmedNonEmptyString,
   branch: TrimmedNonEmptyString,
   access: Schema.optionalKey(RunRepositoryAccess),
+  /** Absent on launches written before CA-56. */
+  workspaceKind: Schema.optionalKey(CloudWorkspaceKind),
+  additionalRepositories: Schema.optionalKey(Schema.Array(RunWorkspaceRepositoryTarget)),
+  scratchDraft: Schema.optionalKey(CloudScratchDraftRepository),
 });
 export type RunRepositoryTarget = typeof RunRepositoryTarget.Type;
 
@@ -283,6 +296,7 @@ export const RunPublicationIntent = Schema.Union([
     baseBranch: TrimmedNonEmptyString,
     title: TrimmedNonEmptyString,
     body: Schema.String,
+    skipReviewerRequest: Schema.optionalKey(Schema.Boolean),
   }),
 ]);
 export type RunPublicationIntent = typeof RunPublicationIntent.Type;
