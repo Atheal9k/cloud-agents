@@ -181,7 +181,7 @@ stay last until you choose to pick them up.
 | 11   | ~~CA-12~~, ~~CA-13~~, ~~CA-26~~  | Environment recipes; event-stream performance; local/cloud handoff.                        |
 | 12   | ~~CA-36~~, ~~CA-51~~, ~~CA-55~~  | Preview leases; provider extensibility; usage and audit accounting.                        |
 | 13   | ~~CA-32~~, ~~CA-50~~             | Private dependency networking; source-control and collaboration entry points.              |
-| 14   | CA-56, CA-58                     | Multi-repository environments; self-hosted pools.                                          |
+| 14   | CA-56, ~~CA-58~~                 | Multi-repository environments; self-hosted pools.                                          |
 | 15   | CA-28, CA-39, CA-57, CA-59       | Scheduling; simulator display; commit signing; repository-owned environment setup.         |
 | 16   | CA-29, CA-30, CA-33              | GitHub triggers; persistent assistants; remote administration UI.                          |
 | 17   | CA-52                            | Subscription wake and CI autofix.                                                          |
@@ -1252,6 +1252,8 @@ Acceptance criteria:
   results.
 
 ### CA-58: Offer self-hosted machines and team pools
+
+Status: Done on 19 September 2026 in [PR #51](https://github.com/Atheal9k/cloud-agents/pull/51).
 
 Dependencies: CA-40, CA-47, CA-49, CA-55.
 

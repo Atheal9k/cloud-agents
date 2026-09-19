@@ -207,6 +207,7 @@ export function cloudControllerDefaultsFromDraft(draft: {
   readonly summaries: boolean;
   readonly artifactsToGit: boolean;
   readonly collaboration: "disabled" | "service-accounts" | "all";
+  readonly selfHostedMode: "off" | "allow" | "require";
 }): CloudControllerDefaults {
   const model = draft.model.trim();
   const context = draft.context.trim();
@@ -222,5 +223,6 @@ export function cloudControllerDefaultsFromDraft(draft: {
     summaries: draft.summaries,
     artifactsToGit: draft.artifactsToGit,
     collaboration: draft.collaboration,
+    selfHostedMode: draft.selfHostedMode,
   };
 }

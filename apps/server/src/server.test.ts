@@ -152,6 +152,7 @@ import * as SharedBrowserGateway from "./cloud/SharedBrowserGateway.ts";
 import * as CloudAgentsApi from "./cloud/CloudAgentsApi.ts";
 import * as CloudAgentsApiKeys from "./cloud/CloudAgentsApiKeys.ts";
 import { cloudAgentsApiRateLimitsLayer } from "./cloud/CloudAgentsApiHttp.ts";
+import * as CloudSelfHosted from "./cloud/CloudSelfHosted.ts";
 import * as CloudAgentReview from "./cloud/CloudAgentReview.ts";
 import * as CloudArtifactAccess from "./cloud/CloudArtifactAccess.ts";
 import * as CloudEnvironmentBuildRunner from "./cloud/CloudEnvironmentBuildRunner.ts";
@@ -1229,6 +1230,7 @@ const buildAppUnderTest = (options?: {
           // the behavior, so unimplemented methods here defect if a router test ever reaches them.
           Layer.mock(CloudAgentsApi.CloudAgentsApi)({}),
           Layer.mock(CloudAgentsApiKeys.CloudAgentsApiKeys)({}),
+          Layer.mock(CloudSelfHosted.CloudSelfHosted)({}),
           cloudAgentsApiRateLimitsLayer,
           Layer.mock(CloudReadiness.CloudReadiness)({}),
           Layer.mock(CloudArtifactAccess.CloudArtifactAccess)({}),

@@ -13,6 +13,7 @@ import {
   admitMacIosWorker,
   isLinuxAndroidWorkerProfile,
   isMacIosWorkerProfile,
+  isSelfHostedWorkerProfile,
   placeMacIosJob,
   simulatorWakeResumption,
 } from "@t3tools/contracts";
@@ -506,6 +507,7 @@ export const make = Effect.fn("CloudAllocationReconciler.make")(function* (input
 
     switch (allocation.allocationState.status) {
       case "queued": {
+        if (isSelfHostedWorkerProfile(allocation.profile)) return;
         if (hasPassed(now, allocation.deadlines.launchBy)) {
           yield* failLaunch(
             allocation,
@@ -539,6 +541,7 @@ export const make = Effect.fn("CloudAllocationReconciler.make")(function* (input
         return;
       }
       case "launching": {
+        if (isSelfHostedWorkerProfile(allocation.profile)) return;
         const findResult = yield* workers
           .findAttemptResources({
             allocationId: allocation.id,

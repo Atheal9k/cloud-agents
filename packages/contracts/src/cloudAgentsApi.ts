@@ -57,6 +57,8 @@ export const CloudAgentsApiErrorCode = Schema.Literals([
   "spend_limit_exceeded",
   "follow_up_forbidden",
   "scm_access_denied",
+  "self_hosted_disabled",
+  "self_hosted_required",
   "internal_error",
 ]);
 export type CloudAgentsApiErrorCode = typeof CloudAgentsApiErrorCode.Type;

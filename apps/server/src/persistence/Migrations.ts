@@ -75,7 +75,8 @@ import Migration0060 from "./Migrations/060_CloudMacHosts.ts";
 import Migration0061 from "./Migrations/061_CloudControllerDefaults.ts";
 import Migration0062 from "./Migrations/062_CloudAgentsApi.ts";
 import Migration0063 from "./Migrations/063_CloudAccounting.ts";
-import Migration0064 from "./Migrations/064_CloudCollaboration.ts";
+import Migration0064 from "./Migrations/064_CloudSelfHosted.ts";
+import Migration0065 from "./Migrations/065_CloudCollaboration.ts";
 
 /**
  * Migration loader with all migrations defined inline.
@@ -151,7 +152,8 @@ const migrationEntries = [
   [61, "CloudControllerDefaults", Migration0061],
   [62, "CloudAgentsApi", Migration0062],
   [63, "CloudAccounting", Migration0063],
-  [64, "CloudCollaboration", Migration0064],
+  [64, "CloudSelfHosted", Migration0064],
+  [65, "CloudCollaboration", Migration0065],
 ] as const;
 
 export const migrationManifest = migrationEntries.map(([id, name]) => [id, name] as const);

@@ -2,6 +2,7 @@ import { useAtomValue } from "@effect/atom-react";
 import { squashAtomCommandFailure } from "@t3tools/client-runtime/state/runtime";
 import {
   CLOUD_READINESS_CHECK_IDS,
+  selfHostedLaunchPreview,
   type CloudReadinessCheckId,
   type CloudReadinessReport,
   type CloudScmConnection,
@@ -94,6 +95,7 @@ function CloudAgentsSettingsForEnvironment({
     summaries: false,
     artifactsToGit: false,
     collaboration: "disabled" as "disabled" | "service-accounts" | "all",
+    selfHostedMode: "off" as "off" | "allow" | "require",
   });
   const [spendDraft, setSpendDraft] = useState({
     kind: "user" as "user" | "team" | "service-account",
@@ -170,6 +172,7 @@ function CloudAgentsSettingsForEnvironment({
       summaries: defaults.summaries === true,
       artifactsToGit: defaults.artifactsToGit === true,
       collaboration: defaults.collaboration ?? "disabled",
+      selfHostedMode: defaults.selfHostedMode ?? "off",
     });
   }, [report?.settings.defaults]);
 
@@ -878,6 +881,23 @@ function CloudAgentsSettingsForEnvironment({
               <option value="all">All teammates</option>
             </select>
           </label>
+          <label className={fieldClassName}>
+            <span className={labelClassName}>Self-hosted machines</span>
+            <select
+              className={selectClassName}
+              value={defaultsDraft.selfHostedMode}
+              onChange={(event) =>
+                setDefaultsDraft({
+                  ...defaultsDraft,
+                  selfHostedMode: event.currentTarget.value as "off" | "allow" | "require",
+                })
+              }
+            >
+              <option value="off">Off</option>
+              <option value="allow">Allow</option>
+              <option value="require">Require</option>
+            </select>
+          </label>
         </div>
         {defaultsDraft.collaboration === "disabled" ? null : (
           <ul className="list-disc pl-5 text-xs text-muted-foreground">
@@ -917,6 +937,14 @@ function CloudAgentsSettingsForEnvironment({
             {busy === "defaults" ? "Saving…" : "Save defaults"}
           </Button>
         </div>
+        <Facts
+          rows={selfHostedLaunchPreview({
+            policy: defaultsDraft.selfHostedMode,
+            target: defaultsDraft.selfHostedMode === "off" ? "cloud" : "pool",
+          }).differences.map(
+            (row) => [row.area, `Managed: ${row.managed} Self-hosted: ${row.selfHosted}`] as const,
+          )}
+        />
         <div className="grid gap-3 sm:grid-cols-4">
           <label className={fieldClassName}>
             <span className={labelClassName}>Spend principal</span>
