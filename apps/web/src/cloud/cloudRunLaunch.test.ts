@@ -386,6 +386,18 @@ describe("cloud run launch", () => {
     ).toEqual({ status: "invalid", message: "Run time must be between 1 and 120 minutes." });
   });
 
+  it("rejects unqualified providers before building a launch command", () => {
+    const result = buildCloudRunLaunchCommand({
+      draft: { ...draft, providerInstanceId: "cursor" },
+      limits,
+      now: new Date("2026-09-17T10:00:00.000Z"),
+      requestId: "request-cursor",
+    });
+    expect(result.status).toBe("invalid");
+    if (result.status !== "invalid") return;
+    expect(result.message).toMatch(/unsupported/);
+  });
+
   const displayCases: ReadonlyArray<
     readonly [
       "queued" | "registering" | "ready",

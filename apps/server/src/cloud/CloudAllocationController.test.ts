@@ -146,6 +146,32 @@ it.effect("rejects macOS iOS admission in us-west-1 instead of placing elsewhere
   }).pipe(Effect.provide(SqlitePersistenceMemory)),
 );
 
+it.effect("rejects unqualified providers before a worker is launched", () =>
+  Effect.gen(function* () {
+    const controller = yield* make({ enabled: true });
+    const error = yield* controller
+      .dispatch(
+        decodeCommand({
+          ...launchInput,
+          commandId: "command-launch-cursor",
+          allocationId: "allocation-cursor",
+          execution: {
+            ...launchInput.execution,
+            turn: {
+              ...launchInput.execution.turn,
+              modelSelection: { instanceId: "cursor", model: "gpt-5.6-sol" },
+            },
+          },
+        }),
+      )
+      .pipe(Effect.flip);
+
+    expect(error.reason).toBe("invalid-request");
+    expect(error.message).toMatch(/unsupported|not qualified/i);
+  }).pipe(Effect.provide(SqlitePersistenceMemory)),
+);
+
+
 it.effect("rejects Android emulator admission on t3.medium before a costly build", () =>
   Effect.gen(function* () {
     const controller = yield* make({

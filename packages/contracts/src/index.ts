@@ -43,6 +43,7 @@ export * from "./cloudEnvironmentRecipe.ts";
 export * from "./cloudWarmPool.ts";
 export * from "./cloudWorkspace.ts";
 export * from "./cloudExecution.ts";
+export * from "./cloudProviderQualification.ts";
 export * from "./cloudPreview.ts";
 export * from "./cloudPublication.ts";
 export * from "./cloudCommitProvenance.ts";

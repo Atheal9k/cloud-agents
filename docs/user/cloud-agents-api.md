@@ -56,6 +56,11 @@ profile fields only for user keys. Each principal sees only the agents it create
 - `DELETE /v1/agents/{id}` — permanent delete
 - `GET /v1/me`, `GET /v1/models`, `GET /v1/repositories`
 
+`GET /v1/models` lists models from providers enabled for cloud execution
+(currently Codex and Claude). Cursor, Grok, OpenCode, and Antigravity are
+omitted until they are qualified. A follow-up keeps the original provider;
+switching does not transfer native history.
+
 ## Scheduled runs
 
 `POST /v1/schedules` creates a recurring schedule. The body records a five-field

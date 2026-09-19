@@ -12,7 +12,7 @@ import {
   type OrchestrationCommand,
   type OrchestrationEvent,
   ProjectId,
-  ProviderDriverKind,
+  isCloudProviderEnabled,
   type ProjectScript,
   type ServerProvider,
   SharedBrowserError,
@@ -37,11 +37,6 @@ import {
   installCloudEnvSetupSkillPackage,
   loadCloudEnvSetupSkillPackage,
 } from "./cloudEnvSetupSkill.ts";
-
-const QUALIFIED_DRIVERS = new Set([
-  ProviderDriverKind.make("codex"),
-  ProviderDriverKind.make("claudeAgent"),
-]);
 
 export class CloudProviderExecution extends Context.Service<
   CloudProviderExecution,
@@ -170,7 +165,7 @@ const build = Effect.fn("CloudProviderExecution.build")(function* (input?: {
     const provider = snapshots.find(
       (candidate) => candidate.instanceId === turn.modelSelection.instanceId,
     );
-    if (provider === undefined || !QUALIFIED_DRIVERS.has(provider.driver)) {
+    if (provider === undefined || !isCloudProviderEnabled(provider.driver)) {
       return yield* executionError(
         "provider-not-qualified",
         `Provider instance '${turn.modelSelection.instanceId}' is not qualified for cloud execution.`,

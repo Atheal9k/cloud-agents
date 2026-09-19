@@ -11,6 +11,7 @@ import {
   type CloudAssistantLifecycleEffects,
   type CloudAssistantMemorySource,
   type CloudAssistantPersistenceKind,
+  admitCloudProviderExecution,
 } from "@t3tools/contracts";
 
 const TOOLS = new Set<string>(CLOUD_ASSISTANT_TOOLS);
@@ -44,6 +45,11 @@ export function validateCloudAssistantDefinition(
   if (definition.secretAccess.mode === "named" && definition.secretAccess.secretIds.length === 0) {
     return "Named secret access needs at least one secret id.";
   }
+  const admitted = admitCloudProviderExecution({
+    instanceId: definition.provider.instanceId,
+    computerUse: definition.tools.includes("computerUse"),
+  });
+  if (admitted.status === "rejected") return admitted.message;
   return undefined;
 }
 

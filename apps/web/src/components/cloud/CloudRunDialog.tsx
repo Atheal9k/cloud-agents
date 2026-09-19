@@ -15,7 +15,7 @@ import {
   type CloudEnvironmentVersion,
   isAppleSiliconMacInstanceType,
   isAndroidAcceleratedInstanceType,
-  ProviderDriverKind,
+  isCloudProviderEnabled,
   type RunAllocation,
 } from "@t3tools/contracts";
 import { useNavigate } from "@tanstack/react-router";
@@ -65,10 +65,6 @@ const fieldClassName = "flex flex-col gap-1.5";
 const labelClassName = "text-xs font-medium text-foreground";
 const selectClassName =
   "h-8.5 rounded-lg border border-input bg-background px-3 text-sm text-foreground shadow-xs/5 outline-none focus:border-ring focus:ring-3 focus:ring-ring/24 sm:h-7.5";
-const CLOUD_PROVIDER_DRIVERS = new Set([
-  ProviderDriverKind.make("codex"),
-  ProviderDriverKind.make("claudeAgent"),
-]);
 
 function runtimeMode(value: string): CloudRunLaunchDraft["runtimeMode"] {
   switch (value) {
@@ -437,7 +433,7 @@ function CloudRunDialogForEnvironment(props: {
     () =>
       deriveProviderInstanceEntries(serverProviders).filter(
         (provider) =>
-          CLOUD_PROVIDER_DRIVERS.has(provider.driverKind) &&
+          isCloudProviderEnabled(provider.driverKind) &&
           provider.isDefault &&
           isProviderInstancePickerReady(provider) &&
           provider.models.length > 0,
