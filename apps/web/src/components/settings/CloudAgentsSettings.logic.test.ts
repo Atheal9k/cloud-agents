@@ -302,7 +302,24 @@ describe("createCloudGuidedSetupDraft", () => {
 describe("cloudControllerDefaultsFromDraft", () => {
   it("clears a blank field instead of storing an empty default", () => {
     expect(
-      cloudControllerDefaultsFromDraft({ model: " ", repository: "t3tools/t3code", ref: "" }),
-    ).toEqual({ repository: "t3tools/t3code" });
+      cloudControllerDefaultsFromDraft({
+        model: " ",
+        context: "",
+        repository: "t3tools/t3code",
+        ref: "",
+        longRunning: false,
+        computerUse: false,
+        summaries: false,
+        artifactsToGit: false,
+        collaboration: "disabled",
+      }),
+    ).toEqual({
+      repository: "t3tools/t3code",
+      longRunning: false,
+      computerUse: false,
+      summaries: false,
+      artifactsToGit: false,
+      collaboration: "disabled",
+    });
   });
 });

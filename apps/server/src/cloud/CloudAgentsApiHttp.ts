@@ -199,6 +199,11 @@ const dispatchV1 = (input: {
     if (method === "GET" && path === "/v1/repositories") {
       return jsonResponse(200, { items: yield* api.listRepositories }, meta);
     }
+    if (method === "GET" && path === "/v1/usage-report") {
+      const periodStart = url.searchParams.get("periodStart") ?? "1970-01-01T00:00:00.000Z";
+      const periodEnd = url.searchParams.get("periodEnd") ?? new Date().toISOString();
+      return jsonResponse(200, yield* api.usageReport({ periodStart, periodEnd }), meta);
+    }
     if (method === "POST" && path === "/v1/agents") {
       const body = yield* decodeCreateAgent(yield* jsonBody).pipe(
         Effect.mapError(

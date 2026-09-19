@@ -2782,6 +2782,30 @@ const makeWsRpcLayer = (
             cloudAllocations.setDefaults(input),
             { "rpc.aggregate": "cloud-allocation" },
           ),
+        [WS_METHODS.cloudAccountingSetSpendLimit]: (input) =>
+          observeRpcEffect(
+            WS_METHODS.cloudAccountingSetSpendLimit,
+            cloudAllocations.setSpendLimit(input),
+            { "rpc.aggregate": "cloud-accounting" },
+          ),
+        [WS_METHODS.cloudAccountingRecordInvoice]: (input) =>
+          observeRpcEffect(
+            WS_METHODS.cloudAccountingRecordInvoice,
+            cloudAllocations.recordInvoice(input),
+            { "rpc.aggregate": "cloud-accounting" },
+          ),
+        [WS_METHODS.cloudAccountingExport]: (input) =>
+          observeRpcEffect(
+            WS_METHODS.cloudAccountingExport,
+            cloudAllocations.exportUsage(input),
+            { "rpc.aggregate": "cloud-accounting" },
+          ),
+        [WS_METHODS.cloudAccountingListAudit]: (input) =>
+          observeRpcEffect(
+            WS_METHODS.cloudAccountingListAudit,
+            cloudAllocations.listAudit(input),
+            { "rpc.aggregate": "cloud-accounting" },
+          ),
         [WS_METHODS.cloudReadinessGet]: (_input) =>
           observeRpcEffect(WS_METHODS.cloudReadinessGet, cloudReadiness.report, {
             "rpc.aggregate": "cloud-readiness",

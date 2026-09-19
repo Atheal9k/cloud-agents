@@ -72,12 +72,31 @@ function CloudAgentsSettingsForEnvironment({
   const runChecks = useAtomCommand(cloudAllocations.runReadinessChecks, { reportFailure: false });
   const setAdmission = useAtomCommand(cloudAllocations.setAdmission, { reportFailure: false });
   const setDefaults = useAtomCommand(cloudAllocations.setDefaults, { reportFailure: false });
+  const setSpendLimit = useAtomCommand(cloudAllocations.setSpendLimit, { reportFailure: false });
+  const exportUsage = useAtomCommand(cloudAllocations.exportUsage, { reportFailure: false });
   const runGuidedSetup = useAtomCommand(cloudAllocations.runGuidedSetup, { reportFailure: false });
 
   const [report, setReport] = useState<CloudReadinessReport | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState<string | null>(null);
-  const [defaultsDraft, setDefaultsDraft] = useState({ model: "", repository: "", ref: "" });
+  const [defaultsDraft, setDefaultsDraft] = useState({
+    model: "",
+    context: "",
+    repository: "",
+    ref: "",
+    longRunning: false,
+    computerUse: false,
+    summaries: false,
+    artifactsToGit: false,
+    collaboration: "disabled" as "disabled" | "service-accounts" | "all",
+  });
+  const [spendDraft, setSpendDraft] = useState({
+    kind: "user" as "user" | "team" | "service-account",
+    id: "local-operator",
+    period: "monthly" as "daily" | "monthly",
+    capUsd: "",
+  });
+  const [exportText, setExportText] = useState<string | null>(null);
   const [setupOpen, setSetupOpen] = useState(false);
   const [setupDraft, setSetupDraft] = useState<CloudGuidedSetupDraft | null>(null);
   const [setupNotice, setSetupNotice] = useState<string | null>(null);
@@ -125,8 +144,14 @@ function CloudAgentsSettingsForEnvironment({
     if (defaults === undefined) return;
     setDefaultsDraft({
       model: defaults.model ?? "",
+      context: defaults.context ?? "",
       repository: defaults.repository ?? "",
       ref: defaults.ref ?? "",
+      longRunning: defaults.longRunning === true,
+      computerUse: defaults.computerUse === true,
+      summaries: defaults.summaries === true,
+      artifactsToGit: defaults.artifactsToGit === true,
+      collaboration: defaults.collaboration ?? "disabled",
     });
   }, [report?.settings.defaults]);
 
@@ -183,6 +208,49 @@ function CloudAgentsSettingsForEnvironment({
     ).then((result) => {
       if (result !== null) void refresh();
     });
+
+  const saveSpendLimit = () => {
+    const cap = spendDraft.capUsd.trim();
+    const capUsd = cap.length === 0 ? null : Number(cap);
+    if (capUsd !== null && !Number.isFinite(capUsd)) {
+      setError("Spend cap must be a number, or empty to remove it.");
+      return;
+    }
+    void run(
+      "spend",
+      () =>
+        setSpendLimit({
+          environmentId,
+          input: {
+            principal: { kind: spendDraft.kind, id: spendDraft.id.trim() || "local-operator" },
+            period: spendDraft.period,
+            capUsd,
+            occurredAt: new Date().toISOString(),
+          },
+        }),
+      "The controller could not save that spend limit.",
+    ).then((result) => {
+      if (result !== null) void refresh();
+    });
+  };
+
+  const downloadUsage = () => {
+    const now = new Date();
+    const start = new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), 1)).toISOString();
+    const end = new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth() + 1, 1)).toISOString();
+    void run(
+      "export",
+      () =>
+        exportUsage({
+          environmentId,
+          input: { periodStart: start, periodEnd: end },
+        }),
+      "The controller could not export usage.",
+    ).then((result) => {
+      if (result === null) return;
+      setExportText(JSON.stringify(result.value, null, 2));
+    });
+  };
 
   const openSetup = (targetEnvironmentId: string | null) => {
     const environment = snapshot?.environments?.find(
@@ -623,6 +691,15 @@ function CloudAgentsSettingsForEnvironment({
             />
           </label>
           <label className={fieldClassName}>
+            <span className={labelClassName}>Context</span>
+            <Input
+              value={defaultsDraft.context}
+              onChange={(event) =>
+                setDefaultsDraft({ ...defaultsDraft, context: event.currentTarget.value })
+              }
+            />
+          </label>
+          <label className={fieldClassName}>
             <span className={labelClassName}>Default repository</span>
             <Input
               value={defaultsDraft.repository}
@@ -640,12 +717,126 @@ function CloudAgentsSettingsForEnvironment({
               }
             />
           </label>
+          <label className={fieldClassName}>
+            <span className={labelClassName}>Team follow-ups</span>
+            <select
+              className={selectClassName}
+              value={defaultsDraft.collaboration}
+              onChange={(event) =>
+                setDefaultsDraft({
+                  ...defaultsDraft,
+                  collaboration: event.currentTarget.value as
+                    | "disabled"
+                    | "service-accounts"
+                    | "all",
+                })
+              }
+            >
+              <option value="disabled">Disabled</option>
+              <option value="service-accounts">Service accounts only</option>
+              <option value="all">All teammates</option>
+            </select>
+          </label>
+        </div>
+        <div className="flex flex-wrap gap-4 text-sm">
+          {(
+            [
+              ["longRunning", "Long-running"],
+              ["computerUse", "Computer use"],
+              ["summaries", "Summaries"],
+              ["artifactsToGit", "Artifacts to Git"],
+            ] as const
+          ).map(([key, label]) => (
+            <label key={key} className="flex items-center gap-2">
+              <input
+                type="checkbox"
+                checked={defaultsDraft[key]}
+                onChange={(event) =>
+                  setDefaultsDraft({ ...defaultsDraft, [key]: event.currentTarget.checked })
+                }
+              />
+              <span>{label}</span>
+            </label>
+          ))}
         </div>
         <div>
           <Button size="xs" disabled={busy !== null} onClick={saveDefaults}>
             {busy === "defaults" ? "Saving…" : "Save defaults"}
           </Button>
         </div>
+        <div className="grid gap-3 sm:grid-cols-4">
+          <label className={fieldClassName}>
+            <span className={labelClassName}>Spend principal</span>
+            <select
+              className={selectClassName}
+              value={spendDraft.kind}
+              onChange={(event) =>
+                setSpendDraft({
+                  ...spendDraft,
+                  kind: event.currentTarget.value as "user" | "team" | "service-account",
+                })
+              }
+            >
+              <option value="user">User</option>
+              <option value="team">Team</option>
+              <option value="service-account">Service account</option>
+            </select>
+          </label>
+          <label className={fieldClassName}>
+            <span className={labelClassName}>Principal id</span>
+            <Input
+              value={spendDraft.id}
+              onChange={(event) => setSpendDraft({ ...spendDraft, id: event.currentTarget.value })}
+            />
+          </label>
+          <label className={fieldClassName}>
+            <span className={labelClassName}>Period</span>
+            <select
+              className={selectClassName}
+              value={spendDraft.period}
+              onChange={(event) =>
+                setSpendDraft({
+                  ...spendDraft,
+                  period: event.currentTarget.value as "daily" | "monthly",
+                })
+              }
+            >
+              <option value="daily">Daily</option>
+              <option value="monthly">Monthly</option>
+            </select>
+          </label>
+          <label className={fieldClassName}>
+            <span className={labelClassName}>Cap USD</span>
+            <Input
+              value={spendDraft.capUsd}
+              placeholder="empty removes"
+              onChange={(event) =>
+                setSpendDraft({ ...spendDraft, capUsd: event.currentTarget.value })
+              }
+            />
+          </label>
+        </div>
+        <div className="flex flex-wrap gap-2">
+          <Button size="xs" disabled={busy !== null} onClick={saveSpendLimit}>
+            {busy === "spend" ? "Saving…" : "Save spend limit"}
+          </Button>
+          <Button size="xs" variant="ghost" disabled={busy !== null} onClick={downloadUsage}>
+            {busy === "export" ? "Exporting…" : "Export usage"}
+          </Button>
+        </div>
+        {snapshot?.spendLimits !== undefined && snapshot.spendLimits.length > 0 ? (
+          <Facts
+            rows={snapshot.spendLimits.map((limit) => [
+              `${limit.principal.kind} ${limit.principal.id} ${limit.period}`,
+              `$${limit.usedUsd} of $${limit.capUsd} · ${snapshot.spendingControl}`,
+            ])}
+          />
+        ) : null}
+        {exportText !== null ? (
+          <pre className="max-h-48 overflow-auto rounded-lg border border-border p-2 text-xs">
+            {exportText}
+          </pre>
+        ) : null}
         <Facts
           rows={[
             [
