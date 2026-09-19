@@ -821,6 +821,8 @@ Acceptance criteria:
 
 ### CA-42: Build and activate prepared environment snapshots
 
+Status: Done on 19 September 2026 in [PR #31](https://github.com/Atheal9k/cloud-agents/pull/31).
+
 Dependencies: CA-07, CA-27, CA-41.
 
 Description: Add Cursor-like Builds so clone and dependency installation leave
