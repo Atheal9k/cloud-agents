@@ -5,8 +5,9 @@ for a permanent AWS controller or `local` when a T3 process on the operator's ma
 the workers:
 
 - an optional permanent Linux controller with a stable Elastic IP and retained encrypted data volume;
-- disposable Linux worker launch templates with encrypted root volumes;
-- separate worker and cleanup identities, plus a controller identity in `ec2` mode;
+- disposable Linux worker launch templates with encrypted root volumes, kept as the EC2 migration fallback;
+- optional Firecracker hypervisor launch templates in a dedicated execution account;
+- separate worker, hypervisor, and cleanup identities, plus a controller identity in `ec2` mode;
 - controller-only worker ingress in `ec2` mode and outbound worker registration in either mode;
 - an encrypted, versioned artifact bucket;
 - fixed SSM recovery diagnostics that cannot launch agent jobs; and
@@ -19,6 +20,21 @@ Docker, mounts the retained volume at `/var/lib/t3`, joins the tailnet, and enab
 boot. Local-controller mode omits the instance, Elastic IP, data volume, subnet, security group,
 and IAM role. Workers require the versioned image built from `image/worker.pkr.hcl`; there is no
 generic Amazon Linux fallback. Normal startup does not call SSM.
+
+## Firecracker fleet
+
+Linux agents pack as Firecracker guests on long-lived hypervisor hosts. Apply those host templates
+from a dedicated execution AWS account: set `execution_account_id` to that account, `controller_account_id`
+to the controller's account, and populate `hypervisor_profiles` with a metal or nested-virtualization
+instance type, encrypted disk, slot capacity, and a CPU oversubscribe ratio. The OpenTofu plan fails
+if those two accounts are the same. Guests get tap networking and a per-VM disk key; they do not
+receive the hypervisor instance profile, and host cloud-init drops forwarded traffic to the instance
+metadata address.
+
+The disposable `worker_profiles` launch templates remain. They are the stop/snapshot-per-thread
+migration fallback used when `T3CODE_CLOUD_RUNTIME=ec2-fallback`. They are not Cursor parity.
+On a hypervisor, `/opt/t3/bin/prove-firecracker` checks KVM, credential isolation, and IMDS
+forwarding after the host boots.
 
 ## Worker image
 

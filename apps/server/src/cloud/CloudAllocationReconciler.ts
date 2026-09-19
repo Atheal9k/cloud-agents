@@ -840,20 +840,34 @@ export const make = Effect.fn("CloudAllocationReconciler.make")(function* (input
     // A hibernated guest holds no compute, so it does not hold the worker
     // slot either. Waking one makes it active again and puts it back in line.
     const active = pending.filter((allocation) => allocation.idleState.status !== "hibernated");
-    const leased = active.find(
+    const occupying = active.filter(
       (allocation) =>
         allocation.allocationState.status !== "queued" ||
         allocation.cleanupState.status !== "not-requested",
     );
-    const next = leased ?? active[0];
-    if (next !== undefined) {
-      const reviewGraceMillis =
-        input?.reviewGraceMillis ?? snapshot.limits.previewGraceSeconds * 1_000;
+    const queued = active.filter(
+      (allocation) =>
+        allocation.allocationState.status === "queued" &&
+        allocation.cleanupState.status === "not-requested",
+    );
+    const reviewGraceMillis =
+      input?.reviewGraceMillis ?? snapshot.limits.previewGraceSeconds * 1_000;
+    const idleReleaseSeconds = input?.idleReleaseSeconds ?? snapshot.limits.idleReleaseSeconds;
+    for (const next of occupying) {
       yield* reconcileAllocation(
         next,
         reviewGraceMillis,
         snapshot.limits.maxInputWaitSeconds,
-        input?.idleReleaseSeconds ?? snapshot.limits.idleReleaseSeconds,
+        idleReleaseSeconds,
+      );
+    }
+    const remainingSlots = snapshot.limits.maxConcurrentWorkers - occupying.length;
+    for (const next of queued.slice(0, Math.max(0, remainingSlots))) {
+      yield* reconcileAllocation(
+        next,
+        reviewGraceMillis,
+        snapshot.limits.maxInputWaitSeconds,
+        idleReleaseSeconds,
       );
     }
     yield* reconcileMacHosts(DateTime.formatIso(yield* DateTime.now));

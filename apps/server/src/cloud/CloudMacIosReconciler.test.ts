@@ -42,6 +42,7 @@ it.effect("reuses a Mac Dedicated Host after job cleanup without terminating it"
         maxInputWaitSeconds: 900,
         previewGraceSeconds: 900,
         idleReleaseSeconds: 3_600,
+        conversationRetentionDays: 30,
         allowedInstanceTypes: ["mac2-m2.metal"],
       },
       workerPriceAssumptions: [
@@ -54,6 +55,7 @@ it.effect("reuses a Mac Dedicated Host after job cleanup without terminating it"
       ],
     });
     const provider = CloudWorkerProvider.of({
+      runtimeKind: "ec2-fallback",
       resolveLaunchTemplate: () => Effect.succeed({ id: "lt-mac", version: 1 }),
       findAttemptResources: () =>
         Effect.sync(() => (state.instance === undefined ? [] : [state.instance])),

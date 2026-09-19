@@ -10,6 +10,7 @@ import { make } from "./CloudWorkerProvider.ts";
 const allocationId = Schema.decodeSync(RunAllocationId)("allocation-1");
 const attempt = Schema.decodeSync(RunAllocationAttempt)(1);
 const secondAttempt = Schema.decodeSync(RunAllocationAttempt)(2);
+const secondAllocationId = Schema.decodeSync(RunAllocationId)("allocation-2");
 
 function output(input: {
   readonly stdout?: string;
@@ -94,6 +95,9 @@ it.effect("pins the discovered template and reuses one AWS client token", () =>
     expect(launches[0]?.args.join(" ")).toContain("CloudAgentOutputBranch");
     expect(launches[0]?.args).toContain("--instance-type");
     expect(launches[0]?.args).toContain("t3.medium");
+    expect(launches[0]?.args.join(" ")).toContain("ec2-fallback");
+    expect(launches[0]?.args.join(" ")).toContain("ec2-migration-fallback");
+    expect(launches[0]?.args.join(" ")).not.toContain("cursor-firecracker");
   }),
 );
 
@@ -283,6 +287,18 @@ it.effect("lists attempt identities and revokes only the registration credential
   }),
 );
 
+const hypervisor = {
+  id: "hv-1",
+  accountId: "999999999999",
+  cpuMillis: 16_000,
+  memoryMib: 65_536,
+  diskGib: 1_024,
+  cpuOversubscribeRatio: 2,
+  profiles: ["linux-web"],
+  credentialsPath: "/var/lib/t3-hypervisor/hv-1/credentials",
+  kvm: true,
+} as const;
+
 it.effect("places a Mac guest on a Dedicated Host and inspects Apple Silicon capacity", () =>
   Effect.gen(function* () {
     const invocations: ProcessRunner.ProcessRunInput[] = [];
@@ -328,6 +344,8 @@ it.effect("places a Mac guest on a Dedicated Host and inspects Apple Silicon cap
       project: "t3-cloud-agents",
       controllerUrl: "https://controller.example.test/",
       workerRouteUrl: "https://worker.example.test/",
+      runtimeKind: "firecracker",
+      hypervisors: [hypervisor],
     }).pipe(Effect.provideService(ProcessRunner.ProcessRunner, runner));
 
     const capacity = yield* provider.inspectMacCapacity({ instanceType: "mac2-m2.metal" });
@@ -359,5 +377,71 @@ it.effect("places a Mac guest on a Dedicated Host and inspects Apple Silicon cap
     const launch = invocations.find((invocation) => invocation.args[1] === "run-instances");
     expect(launch?.args.join(" ")).toContain("Tenancy=host,HostId=h-mac");
     expect(launch?.args.join(" ")).toContain("CloudAgentDedicatedHost");
+    expect(launch?.args.join(" ")).toContain("CloudAgentRuntimeKind");
+  }),
+);
+
+it.effect("places Firecracker guests without calling RunInstances", () =>
+  Effect.gen(function* () {
+    const runner = ProcessRunner.ProcessRunner.of({
+      run: () => Effect.die("AWS must not launch per-thread instances on the Firecracker path"),
+    });
+    const provider = yield* make({
+      region: "us-west-1",
+      project: "t3-cloud-agents",
+      controllerUrl: "https://controller.example.test/",
+      workerRouteUrl: "https://worker.example.test/",
+      runtimeKind: "firecracker",
+      hypervisors: [hypervisor],
+    }).pipe(Effect.provideService(ProcessRunner.ProcessRunner, runner));
+    const launchTemplate = yield* provider.resolveLaunchTemplate("linux-web");
+    const first = yield* provider.launch({
+      allocationId,
+      attempt,
+      repository: "t3tools/t3code",
+      selectedRef: "main",
+      outputBranch: "cloud/allocation-1",
+      expiresAt: "2026-09-17T05:00:00.000Z",
+      instanceType: "t3.medium",
+      maxInputWaitSeconds: 900,
+      launchTemplate,
+      registrationCredential: "registration-credential",
+    });
+    const second = yield* provider.launch({
+      allocationId: secondAllocationId,
+      attempt,
+      repository: "t3tools/t3code",
+      selectedRef: "main",
+      outputBranch: "cloud/allocation-2",
+      expiresAt: "2026-09-17T05:00:00.000Z",
+      instanceType: "t3.medium",
+      maxInputWaitSeconds: 900,
+      launchTemplate,
+      registrationCredential: "registration-credential",
+    });
+
+    expect(provider.runtimeKind).toBe("firecracker");
+    expect(launchTemplate.id).toBe("fc-linux-web");
+    expect(first.runtimeKind).toBe("firecracker");
+    expect(first.instanceId).toMatch(/^fc:/);
+    expect(second.instanceId).not.toBe(first.instanceId);
+    const found = yield* provider.findAttemptResources({ allocationId, attempt });
+    expect(found).toHaveLength(1);
+    expect(found[0]?.instanceId).toBe(first.instanceId);
+    yield* provider.hibernate(first.instanceId);
+    const hibernated = yield* provider.findAttemptResources({ allocationId, attempt });
+    expect(hibernated[0]?.state).toBe("stopped");
+    const restored = yield* provider.restore({
+      instanceId: first.instanceId,
+      allocationId,
+      attempt: secondAttempt,
+      selectedRef: "main",
+      outputBranch: "cloud/allocation-1",
+      expiresAt: "2026-09-18T05:00:00.000Z",
+      maxInputWaitSeconds: 900,
+      registrationCredential: "next-credential",
+    });
+    expect(restored.instanceId).toBe(first.instanceId);
+    expect(restored.runtimeKind).toBe("firecracker");
   }),
 );

@@ -44,6 +44,12 @@ variable "worker_subnet_cidr" {
   default     = "10.42.2.0/24"
 }
 
+variable "hypervisor_subnet_cidr" {
+  description = "CIDR for Firecracker hypervisor hosts in the execution account."
+  type        = string
+  default     = "10.42.3.0/24"
+}
+
 variable "controller_ingress_cidrs" {
   description = "CIDRs allowed to reach the controller HTTPS endpoint. Use a trusted network, not 0.0.0.0/0, until CA-04 configures application authentication."
   type        = list(string)
@@ -469,4 +475,68 @@ variable "allow_controller_data_destroy" {
   description = "Allow OpenTofu to delete only the retained controller volume when switching an existing stack to local-controller mode."
   type        = bool
   default     = false
+}
+
+variable "controller_account_id" {
+  description = "AWS account that owns the controller. Required when hypervisor_profiles is non-empty so packing cannot share the controller account."
+  type        = string
+  default     = null
+  nullable    = true
+
+  validation {
+    condition     = var.controller_account_id == null || can(regex("^[0-9]{12}$", var.controller_account_id))
+    error_message = "controller_account_id must be a 12-digit AWS account ID."
+  }
+}
+
+variable "execution_account_id" {
+  description = "AWS account that owns Firecracker hypervisors. Must differ from the controller account."
+  type        = string
+  default     = null
+  nullable    = true
+
+  validation {
+    condition     = var.execution_account_id == null || can(regex("^[0-9]{12}$", var.execution_account_id))
+    error_message = "execution_account_id must be a 12-digit AWS account ID."
+  }
+}
+
+variable "hypervisor_profiles" {
+  description = "Long-lived Firecracker hosts. Empty keeps the per-thread EC2 worker templates as a migration fallback, which is not Cursor parity."
+  type = map(object({
+    ami_id                    = string
+    image_version             = string
+    instance_type             = string
+    virtualization            = optional(string, "metal")
+    root_volume_size_gib      = number
+    cpu_millis                = number
+    memory_mib                = number
+    disk_gib                  = number
+    cpu_oversubscribe_ratio   = optional(number, 2)
+    guest_profiles            = optional(set(string), ["linux-web"])
+  }))
+  default = {}
+
+  validation {
+    condition = alltrue([
+      for name in keys(var.hypervisor_profiles) :
+      can(regex("^[a-z0-9][a-z0-9-]{0,31}$", name))
+    ])
+    error_message = "Hypervisor profile names must contain at most 32 lowercase letters, numbers, or hyphens."
+  }
+
+  validation {
+    condition = alltrue([
+      for profile in values(var.hypervisor_profiles) :
+      contains(["metal", "nested"], profile.virtualization) &&
+      can(regex("^ami-[0-9a-f]{8,17}$", profile.ami_id)) &&
+      profile.cpu_millis >= 2000 &&
+      profile.memory_mib >= 8192 &&
+      profile.disk_gib >= 40 &&
+      profile.cpu_oversubscribe_ratio >= 1 &&
+      profile.cpu_oversubscribe_ratio <= 4 &&
+      (profile.virtualization != "metal" || can(regex("\\.metal$", profile.instance_type)))
+    ])
+    error_message = "Each hypervisor must declare KVM-capable metal or nested virtualization, encrypted-disk sized capacity, and a measured CPU oversubscribe ratio between 1 and 4."
+  }
 }

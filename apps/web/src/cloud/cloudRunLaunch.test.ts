@@ -17,6 +17,7 @@ const limits: CloudAllocationLimits = {
   maxInputWaitSeconds: 900,
   previewGraceSeconds: 900,
   idleReleaseSeconds: 3_600,
+  conversationRetentionDays: 0,
   allowedInstanceTypes: ["t3.medium"],
 };
 

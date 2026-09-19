@@ -63,6 +63,26 @@ worker_profiles = {
 # Hosts are allocated on demand; this map only declares the launch template.
 mac_worker_profiles = {}
 
+# Pack Firecracker guests in a dedicated execution account. Leave empty to keep
+# the per-thread EC2 worker templates as a migration fallback (not Cursor parity).
+# Apply this map from the execution account.
+# controller_account_id = "111111111111"
+# execution_account_id  = "222222222222"
+# hypervisor_profiles = {
+#   linux-pack = {
+#     ami_id                  = "ami-0123456789abcdef0"
+#     image_version           = "0.0.42-ca44.1"
+#     instance_type           = "c6i.metal"
+#     virtualization          = "metal"
+#     root_volume_size_gib    = 80
+#     cpu_millis              = 16000
+#     memory_mib              = 65536
+#     disk_gib                = 1024
+#     cpu_oversubscribe_ratio = 2
+#     guest_profiles          = ["linux-web"]
+#   }
+# }
+
 artifact_retention_days = 30
 
 # Grant only the controller access to the existing SSH key and the GitHub API token.

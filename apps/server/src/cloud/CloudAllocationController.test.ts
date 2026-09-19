@@ -15,6 +15,7 @@ import { make as makeBuilds } from "./CloudEnvironmentBuildCatalog.ts";
 import * as ControllerSettings from "./controllerSettings.ts";
 
 const decodeCommand = Schema.decodeSync(RunAllocationCommand);
+const decodeUnknownCommand = Schema.decodeUnknownSync(RunAllocationCommand);
 const decodeEnvironmentSave = Schema.decodeSync(CloudEnvironmentSaveInput);
 
 const launchInput = {
@@ -75,6 +76,7 @@ it.effect("rejects admission beyond the durable queue bound", () =>
         maxInputWaitSeconds: 900,
         previewGraceSeconds: 900,
         idleReleaseSeconds: 3_600,
+        conversationRetentionDays: 0,
         allowedInstanceTypes: ["t3.medium"],
       },
     });
@@ -105,6 +107,7 @@ it.effect("rejects macOS iOS admission in us-west-1 instead of placing elsewhere
         maxInputWaitSeconds: 900,
         previewGraceSeconds: 900,
         idleReleaseSeconds: 3_600,
+        conversationRetentionDays: 30,
         allowedInstanceTypes: ["mac2-m2.metal"],
       },
     });
@@ -140,6 +143,7 @@ it.effect("admits an Apple Silicon iOS worker in a supported Mac region", () =>
         maxInputWaitSeconds: 900,
         previewGraceSeconds: 900,
         idleReleaseSeconds: 3_600,
+        conversationRetentionDays: 30,
         allowedInstanceTypes: ["mac2-m2.metal"],
       },
     });
@@ -703,5 +707,104 @@ it.effect("pins the active Build for a launch and skips one that went stale", ()
     );
     expect(stale.build).toBeUndefined();
     expect((yield* controller.snapshot).builds).toHaveLength(1);
+  }).pipe(Effect.provide(SqlitePersistenceMemory)),
+);
+
+it.effect("erases a permanently deleted agent and keeps only its tombstone", () =>
+  Effect.gen(function* () {
+    const controller = yield* make({ enabled: true });
+    const dispatch = (input: typeof RunAllocationCommand.Encoded) =>
+      controller.dispatch(decodeCommand(input));
+    let allocation = yield* dispatch({
+      ...launchInput,
+      control: { agentId: "agent-1", runId: "run-1" },
+    });
+    const steps: ReadonlyArray<Record<string, unknown>> = [
+      { type: "allocation.launch-started", launchTemplate: { id: "lt-worker", version: 1 } },
+      { type: "allocation.instance-launched", instanceId: "i-worker" },
+      { type: "allocation.worker-booted" },
+      {
+        type: "allocation.worker-registered",
+        references: {
+          workerId: "worker-1",
+          environmentId: "environment-1",
+          threadId: "thread-allocation-1-1",
+        },
+        route: {
+          httpBaseUrl: "https://worker.example.test",
+          wsBaseUrl: "wss://worker.example.test",
+          accessToken: "worker-token",
+        },
+      },
+      { type: "allocation.agent-started" },
+      {
+        type: "allocation.agent-succeeded",
+        resultLocation: { uri: "s3://results/run-1" },
+      },
+      { type: "allocation.agent-delete" },
+      { type: "allocation.cleanup-started" },
+      { type: "allocation.cleanup-succeeded" },
+    ];
+    for (const step of steps) {
+      allocation = yield* controller.dispatch(
+        decodeUnknownCommand({
+          commandId: `command-${String(step["type"])}`,
+          allocationId: allocation.id,
+          attempt: allocation.attempt,
+          occurredAt: "2026-09-17T03:00:06.000Z",
+          ...step,
+        }),
+      );
+    }
+
+    expect(allocation.deletion).toEqual({
+      status: "requested",
+      requestedAt: "2026-09-17T03:00:06.000Z",
+    });
+
+    const deletion = yield* controller.purgeAllocation({
+      allocationId: allocation.id,
+      deletedAt: "2026-09-17T03:10:00.000Z",
+      purgedResultIds: [],
+    });
+    expect(deletion).toEqual({
+      agentId: "agent-1",
+      allocationId: "allocation-1",
+      deletedAt: "2026-09-17T03:10:00.000Z",
+      purgedResultIds: [],
+      snapshots: "policy-expiry",
+    });
+
+    const sql = yield* SqlClient.SqlClient;
+    const remaining = yield* sql<{ readonly count: number }>`
+      SELECT COUNT(*) AS count FROM cloud_allocation_events
+    `;
+    expect(remaining[0]?.count).toBe(0);
+
+    const purged = yield* controller.snapshot;
+    expect(purged.allocations).toEqual([]);
+    expect(purged.agents).toEqual([]);
+    expect(purged.runs).toEqual([]);
+    expect(purged.deletions).toEqual([deletion]);
+
+    // A repeat returns the same tombstone rather than failing or erasing twice.
+    expect(
+      yield* controller.purgeAllocation({
+        allocationId: allocation.id,
+        deletedAt: "2026-09-18T03:10:00.000Z",
+        purgedResultIds: [],
+      }),
+    ).toEqual(deletion);
+
+    const relaunch = yield* controller
+      .dispatch(
+        decodeCommand({
+          ...launchInput,
+          commandId: "command-relaunch",
+          control: { agentId: "agent-1", runId: "run-2" },
+        }),
+      )
+      .pipe(Effect.flip);
+    expect(relaunch.reason).toBe("agent-deleted");
   }).pipe(Effect.provide(SqlitePersistenceMemory)),
 );
