@@ -130,6 +130,19 @@ The personal controller admits one active worker. Configure its waiting queue an
 unanswered input request, a 15-minute preview grace period, and a 1-hour idle release. Requests
 with a longer run or an unapproved instance type fail before AWS launches anything.
 
+An idle agent keeps its stopped disk for 90 days, and every start or resume gives it a fresh 90
+days. After that the disk is released, and the next follow-up starts the agent on a new worker
+instead of restoring it. Conversations and their runs are kept forever unless you set
+`T3CODE_CLOUD_CONVERSATION_RETENTION_DAYS`, which permanently deletes an agent that has been
+inactive for that many days; the default `0` keeps them indefinitely. Retained results keep their
+own 7-day expiry.
+
+Archiving an agent hides it, releases its worker, and stops it accepting new runs. Unarchiving
+makes it available again without starting any compute. Deleting an agent is permanent: its
+transcript, retained diffs, and artifacts are erased, and its conversation cannot be recovered.
+A delete does not remove published branches or pull requests, and a stopped disk still leaves on
+its own retention schedule rather than immediately.
+
 `T3CODE_CLOUD_WORKER_PRICES` is a comma-separated allowlist in `instance-type=hourly-usd` form.
 For example, `t3.medium=0.0496` allows only `t3.medium` and estimates one worker hour at $0.0496.
 Update the value when the region, instance type, operating system, or AWS price changes. The

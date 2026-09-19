@@ -136,6 +136,7 @@ import * as CloudManagedEndpointRuntime from "./cloud/ManagedEndpointRuntime.ts"
 import * as CloudCliTokenManager from "./cloud/CliTokenManager.ts";
 import * as CloudCliState from "./cloud/CliState.ts";
 import * as CloudAllocationController from "./cloud/CloudAllocationController.ts";
+import * as CloudAgentRetention from "./cloud/CloudAgentRetention.ts";
 import * as CloudAllocationReconciler from "./cloud/CloudAllocationReconciler.ts";
 import * as CloudWorkerRegistration from "./cloud/CloudWorkerRegistration.ts";
 import * as CloudWorkerRunClient from "./cloud/CloudWorkerRunClient.ts";
@@ -679,6 +680,7 @@ export const makeRoutesLayer = Layer.mergeAll(
   McpHttpServer.layer.pipe(Layer.provide(McpSessionRegistry.layer)),
 ).pipe(
   Layer.provide(CloudAllocationRuntimeLayerLive),
+  Layer.provide(CloudAgentRetention.layer),
   // Both transports consume the same service instance, so caches single-flight across clients
   // and mutations observed on WebSocket invalidate patches subsequently read over HTTP.
   Layer.provide(PullRequestServiceLive),

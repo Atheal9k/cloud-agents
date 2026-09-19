@@ -93,6 +93,12 @@ export type RunWorkerRegistrationInput = typeof RunWorkerRegistrationInput.Type;
 /** 1 hour. A settled agent keeps its guest this long before it hibernates. */
 export const DEFAULT_IDLE_RELEASE_SECONDS = 60 * 60;
 
+/** 90 days. How long a hibernated agent's disk survives without being used. */
+export const DEFAULT_SNAPSHOT_RETENTION_DAYS = 90;
+
+/** `0` keeps every conversation and run forever, which is the default. */
+export const DEFAULT_CONVERSATION_RETENTION_DAYS = 0;
+
 /**
  * One part of a guest's durable state. `unavailable` is a real answer: a
  * provider home on tmpfs cannot be flushed, and saying so is what keeps the
@@ -182,6 +188,44 @@ export const RunIdleState = Schema.Union([
   }),
 ]);
 export type RunIdleState = typeof RunIdleState.Type;
+
+/**
+ * Rolling inactivity retention for the disk an idle agent left behind. The
+ * clock restarts on every successful start or resume, so a conversation that
+ * is still being used never loses the disk underneath it, and one nobody has
+ * touched for the window stops paying for storage.
+ */
+export const RunSnapshotRetention = Schema.Struct({
+  lastActiveAt: IsoDateTime,
+  expiresAt: IsoDateTime,
+});
+export type RunSnapshotRetention = typeof RunSnapshotRetention.Type;
+
+/**
+ * A permanent delete in progress. The compute claim is released first, so the
+ * request is recorded before anything is erased and a controller that crashes
+ * mid-delete finishes it instead of leaving half a conversation behind.
+ */
+export const RunDeletionState = Schema.Struct({
+  status: Schema.Literal("requested"),
+  requestedAt: IsoDateTime,
+});
+export type RunDeletionState = typeof RunDeletionState.Type;
+
+/**
+ * What a completed permanent delete removed. The agent's events are gone, so
+ * this tombstone is all that remains: it keeps delete idempotent, keeps the
+ * erasure visible, and is honest that an immutable disk snapshot leaves on
+ * policy expiry rather than on demand.
+ */
+export const CloudAgentDeletion = Schema.Struct({
+  agentId: CloudAgentId,
+  allocationId: RunAllocationId,
+  deletedAt: IsoDateTime,
+  purgedResultIds: Schema.Array(CloudRunResultId),
+  snapshots: Schema.Literal("policy-expiry"),
+});
+export type CloudAgentDeletion = typeof CloudAgentDeletion.Type;
 
 export const RunResultLocation = Schema.Struct({
   uri: TrimmedNonEmptyString,
@@ -494,8 +538,12 @@ export const RunAllocation = Schema.Struct({
   previewState: RunPreviewState,
   idleState: RunIdleState,
   cleanupState: RunCleanupState,
+  /** Absent until the agent has started or resumed at least once. */
+  snapshotRetention: Schema.optionalKey(RunSnapshotRetention),
   retry: Schema.optionalKey(RunRetryRecord),
   archivedAt: Schema.optionalKey(IsoDateTime),
+  /** Present only while a permanent delete is in flight. */
+  deletion: Schema.optionalKey(RunDeletionState),
   handledCommandIds: Schema.Array(CommandId),
   sequence: NonNegativeInt,
   createdAt: IsoDateTime,
@@ -602,8 +650,10 @@ export const RunAllocationCommand = Schema.Union([
     execution: RunExecutionIntent,
     deadlines: RunDeadlines,
   }),
+  Schema.Struct({ ...AttemptCommandBase, type: Schema.Literal("allocation.snapshot-expire") }),
   Schema.Struct({ ...AttemptCommandBase, type: Schema.Literal("allocation.agent-archive") }),
   Schema.Struct({ ...AttemptCommandBase, type: Schema.Literal("allocation.agent-unarchive") }),
+  Schema.Struct({ ...AttemptCommandBase, type: Schema.Literal("allocation.agent-delete") }),
   Schema.Struct({ ...AttemptCommandBase, type: Schema.Literal("allocation.cleanup-started") }),
   Schema.Struct({ ...AttemptCommandBase, type: Schema.Literal("allocation.cleanup-succeeded") }),
   Schema.Struct({
@@ -727,8 +777,10 @@ export const RunAllocationEvent = Schema.Union([
     /** Present when the follow-up woke a hibernated guest instead of placing a new one. */
     restoreFrom: Schema.optionalKey(RunRuntimeSnapshot),
   }),
+  Schema.Struct({ ...EventBase, type: Schema.Literal("allocation.snapshot-expired") }),
   Schema.Struct({ ...EventBase, type: Schema.Literal("allocation.agent-archived") }),
   Schema.Struct({ ...EventBase, type: Schema.Literal("allocation.agent-unarchived") }),
+  Schema.Struct({ ...EventBase, type: Schema.Literal("allocation.agent-deletion-requested") }),
   Schema.Struct({ ...EventBase, type: Schema.Literal("allocation.cleanup-started") }),
   Schema.Struct({ ...EventBase, type: Schema.Literal("allocation.cleanup-succeeded") }),
   Schema.Struct({
@@ -785,6 +837,11 @@ export const CloudAllocationLimits = Schema.Struct({
   previewGraceSeconds: NonNegativeInt,
   /** How long a settled agent keeps its guest before hibernating it. */
   idleReleaseSeconds: NonNegativeInt,
+  /**
+   * Administrative cap on how long a conversation and its runs are kept.
+   * `0`, the default, keeps them indefinitely.
+   */
+  conversationRetentionDays: NonNegativeInt,
   allowedInstanceTypes: Schema.Array(TrimmedNonEmptyString).pipe(
     Schema.check(Schema.isMinLength(1)),
   ),
@@ -855,6 +912,8 @@ export const CloudAllocationSnapshot = Schema.Struct({
   environments: Schema.optionalKey(Schema.Array(CloudEnvironment)),
   /** Absent when decoding snapshots from controllers older than CA-42. */
   builds: Schema.optionalKey(Schema.Array(CloudEnvironmentBuild)),
+  /** Absent when decoding snapshots from controllers older than CA-46. */
+  deletions: Schema.optionalKey(Schema.Array(CloudAgentDeletion)),
   usage: Schema.Array(CloudRunUsage),
 });
 export type CloudAllocationSnapshot = typeof CloudAllocationSnapshot.Type;
@@ -869,6 +928,7 @@ export class CloudAllocationControllerError extends Schema.TaggedError<CloudAllo
       "allocation-not-found",
       "agent_busy",
       "agent-archived",
+      "agent-deleted",
       "run-already-exists",
       "invalid-request",
       "queue-full",
