@@ -1,0 +1,3 @@
+interface:
+  display_name: "Do Ticket"
+  short_description: "Complete a cloud-agents ticket and open its PR"
