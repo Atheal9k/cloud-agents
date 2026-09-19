@@ -1,5 +1,9 @@
 import {
   type CloudArtifactAccessInput,
+  type CloudEnvironmentBuildCancelInput,
+  type CloudEnvironmentBuildSaveInput,
+  type CloudEnvironmentBuildStaleThresholdInput,
+  type CloudEnvironmentBuildStartInput,
   type CloudEnvironmentResolutionInput,
   type CloudEnvironmentRestoreInput,
   type CloudEnvironmentSaveInput,
@@ -65,6 +69,50 @@ export function createCloudAllocationAtoms<R, E>(
     execute: (input: CloudEnvironmentResolutionInput) =>
       request(WS_METHODS.cloudEnvironmentResolve, input),
   });
+  const startBuild = createEnvironmentRpcCommand(runtime, {
+    label: "environment-data:cloud-environment-builds:start",
+    tag: WS_METHODS.cloudEnvironmentBuildStart,
+    scheduler,
+    concurrency: {
+      mode: "singleFlight",
+      key: ({ environmentId, input }) => `${environmentId}:${input.buildId}`,
+    },
+    execute: (input: CloudEnvironmentBuildStartInput) =>
+      request(WS_METHODS.cloudEnvironmentBuildStart, input),
+  });
+  const cancelBuild = createEnvironmentRpcCommand(runtime, {
+    label: "environment-data:cloud-environment-builds:cancel",
+    tag: WS_METHODS.cloudEnvironmentBuildCancel,
+    scheduler,
+    concurrency: {
+      mode: "singleFlight",
+      key: ({ environmentId, input }) => `${environmentId}:${input.buildId}`,
+    },
+    execute: (input: CloudEnvironmentBuildCancelInput) =>
+      request(WS_METHODS.cloudEnvironmentBuildCancel, input),
+  });
+  const saveBuild = createEnvironmentRpcCommand(runtime, {
+    label: "environment-data:cloud-environment-builds:save",
+    tag: WS_METHODS.cloudEnvironmentBuildSave,
+    scheduler,
+    concurrency: {
+      mode: "singleFlight",
+      key: ({ environmentId, input }) => `${environmentId}:${input.buildId}`,
+    },
+    execute: (input: CloudEnvironmentBuildSaveInput) =>
+      request(WS_METHODS.cloudEnvironmentBuildSave, input),
+  });
+  const setBuildStaleThreshold = createEnvironmentRpcCommand(runtime, {
+    label: "environment-data:cloud-environment-builds:stale-threshold",
+    tag: WS_METHODS.cloudEnvironmentBuildStaleThreshold,
+    scheduler,
+    concurrency: {
+      mode: "singleFlight",
+      key: ({ environmentId, input }) => `${environmentId}:${input.environmentId}`,
+    },
+    execute: (input: CloudEnvironmentBuildStaleThresholdInput) =>
+      request(WS_METHODS.cloudEnvironmentBuildStaleThreshold, input),
+  });
   const grantArtifactAccess = createEnvironmentRpcCommand(runtime, {
     label: "environment-data:cloud-allocations:grant-artifact-access",
     tag: WS_METHODS.cloudArtifactsGrant,
@@ -82,6 +130,10 @@ export function createCloudAllocationAtoms<R, E>(
     saveEnvironment,
     restoreEnvironment,
     resolveEnvironment,
+    startBuild,
+    cancelBuild,
+    saveBuild,
+    setBuildStaleThreshold,
     grantArtifactAccess,
   };
 }

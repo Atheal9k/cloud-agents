@@ -5,6 +5,12 @@ import {
   CloudAllocationLimits,
   type CloudAllocationSnapshot,
   type CloudEnvironment,
+  type CloudEnvironmentBuild,
+  cloudEnvironmentBuildReference,
+  type CloudEnvironmentBuildCancelInput,
+  type CloudEnvironmentBuildError,
+  type CloudEnvironmentBuildSaveInput,
+  type CloudEnvironmentBuildStaleThresholdInput,
   type CloudEnvironmentError,
   type CloudEnvironmentResolution,
   type CloudEnvironmentResolutionInput,
@@ -32,6 +38,8 @@ import * as SqlSchema from "effect/unstable/sql/SqlSchema";
 import * as ServerConfig from "../config.ts";
 import { subscribeBeforeSnapshot } from "../utils/subscribeBeforeSnapshot.ts";
 import { projectCloudControlPlane } from "./cloudControlPlane.ts";
+import * as CloudEnvironmentBuildCatalog from "./CloudEnvironmentBuildCatalog.ts";
+import { isCloudEnvironmentBuildStale } from "./cloudEnvironmentBuildPolicy.ts";
 import * as CloudEnvironmentCatalog from "./CloudEnvironmentCatalog.ts";
 import * as ControllerSettings from "./controllerSettings.ts";
 import {
@@ -90,6 +98,26 @@ export class CloudAllocationController extends Context.Service<
       CloudEnvironmentResolution | null,
       CloudAllocationControllerError | CloudEnvironmentError
     >;
+    /** Republishes the snapshot after a Build settled outside the controller. */
+    readonly refresh: Effect.Effect<CloudAllocationSnapshot, CloudAllocationControllerError>;
+    readonly saveBuild: (
+      input: CloudEnvironmentBuildSaveInput,
+    ) => Effect.Effect<
+      CloudEnvironmentBuild,
+      CloudAllocationControllerError | CloudEnvironmentBuildError
+    >;
+    readonly cancelBuild: (
+      input: CloudEnvironmentBuildCancelInput,
+    ) => Effect.Effect<
+      CloudEnvironmentBuild,
+      CloudAllocationControllerError | CloudEnvironmentBuildError
+    >;
+    readonly setBuildStaleThreshold: (
+      input: CloudEnvironmentBuildStaleThresholdInput,
+    ) => Effect.Effect<
+      CloudAllocationSnapshot,
+      CloudAllocationControllerError | CloudEnvironmentBuildError
+    >;
   }
 >()("t3/cloud/CloudAllocationController") {}
 
@@ -144,6 +172,7 @@ export const make = Effect.fn("CloudAllocationController.make")(function* (input
 }) {
   const sql = yield* SqlClient.SqlClient;
   const environments = yield* CloudEnvironmentCatalog.make();
+  const builds = yield* CloudEnvironmentBuildCatalog.make();
   const settings = yield* ControllerSettings.make();
   const mode = input.mode ?? "local";
   const changes = yield* PubSub.unbounded<CloudAllocationSnapshot>();
@@ -297,11 +326,12 @@ export const make = Effect.fn("CloudAllocationController.make")(function* (input
 
   const readSnapshot = Effect.gen(function* () {
     yield* requireEnabled;
-    const [rows, controllerSettings, now, environmentCatalog] = yield* Effect.all([
+    const [rows, controllerSettings, now, environmentCatalog, buildCatalog] = yield* Effect.all([
       readAllEventRows({}),
       settings.read({}),
       DateTime.now,
       environments.list,
+      builds.list,
     ]).pipe(Effect.mapError(persistenceError));
     const grouped = new Map<RunAllocationId, Array<RunAllocationEvent>>();
     for (const row of rows) {
@@ -341,6 +371,7 @@ export const make = Effect.fn("CloudAllocationController.make")(function* (input
       runs: controlPlane.runs,
       runtimeAttempts: controlPlane.runtimeAttempts,
       environments: environmentCatalog,
+      builds: buildCatalog,
       usage: allocations.map((allocation) =>
         usageForAllocation(allocation, grouped.get(allocation.id) ?? [], now),
       ),
@@ -541,10 +572,37 @@ export const make = Effect.fn("CloudAllocationController.make")(function* (input
                 .resolve({ repository: command.target.repository })
                 .pipe(Effect.mapError(persistenceError))
             : null;
+        /**
+         * A stale Build is deliberately not pinned. The run then clones and
+         * installs for itself rather than booting a snapshot whose refs, config,
+         * or secrets may have moved on.
+         */
+        const pinnedBuild =
+          resolved === null
+            ? undefined
+            : yield* Effect.gen(function* () {
+                const environmentId = resolved.version.environmentId;
+                const [activeBuild, staleThresholdSeconds] = yield* Effect.all([
+                  builds.activeBuild(environmentId),
+                  builds.staleThresholdSeconds(environmentId),
+                ]).pipe(Effect.mapError(persistenceError));
+                if (
+                  activeBuild === undefined ||
+                  isCloudEnvironmentBuildStale({
+                    build: activeBuild,
+                    staleThresholdSeconds,
+                    now: command.occurredAt,
+                  })
+                ) {
+                  return undefined;
+                }
+                return cloudEnvironmentBuildReference(activeBuild);
+              });
         const events = decideRunAllocationCommand(
           current,
           command,
           resolved === null ? undefined : resolved.reference,
+          pinnedBuild,
         );
         if (events.length === 0) {
           if (current === undefined) {
@@ -617,6 +675,32 @@ export const make = Effect.fn("CloudAllocationController.make")(function* (input
       }),
     );
 
+  const publishBuildChange = <A>(effect: Effect.Effect<A, CloudEnvironmentBuildError>) =>
+    mutex.withPermits(1)(
+      Effect.gen(function* () {
+        yield* requireWritable;
+        const result = yield* effect;
+        yield* PubSub.publish(changes, yield* readSnapshot);
+        return result;
+      }),
+    );
+
+  const refresh: CloudAllocationController["Service"]["refresh"] = mutex.withPermits(1)(
+    Effect.gen(function* () {
+      const snapshot = yield* readSnapshot;
+      yield* PubSub.publish(changes, snapshot);
+      return snapshot;
+    }),
+  );
+
+  const saveBuild: CloudAllocationController["Service"]["saveBuild"] = (input) =>
+    publishBuildChange(builds.save(input));
+  const cancelBuild: CloudAllocationController["Service"]["cancelBuild"] = (input) =>
+    publishBuildChange(builds.cancel(input));
+  const setBuildStaleThreshold: CloudAllocationController["Service"]["setBuildStaleThreshold"] = (
+    input,
+  ) => publishBuildChange(builds.setStaleThreshold(input)).pipe(Effect.flatMap(() => refresh));
+
   const saveEnvironment: CloudAllocationController["Service"]["saveEnvironment"] = (input) =>
     publishEnvironmentChange(environments.save(input));
   const restoreEnvironment: CloudAllocationController["Service"]["restoreEnvironment"] = (input) =>
@@ -636,6 +720,10 @@ export const make = Effect.fn("CloudAllocationController.make")(function* (input
     snapshot,
     stream,
     setAdmission,
+    refresh,
+    saveBuild,
+    cancelBuild,
+    setBuildStaleThreshold,
     saveEnvironment,
     restoreEnvironment,
     resolveEnvironment,

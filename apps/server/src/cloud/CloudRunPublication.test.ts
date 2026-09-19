@@ -162,6 +162,7 @@ it.layer(NodeServices.layer)("CloudRunPublication", (it) => {
     const credentials = CloudGitCredentials.CloudGitCredentials.of({
       clone: () => Effect.die("clone should not run during publication"),
       fetch: () => Effect.die("fetch should not run during publication"),
+      resolveRef: () => Effect.die("ref resolution should not run during publication"),
       readBranch: () =>
         Effect.sync(() => {
           calls.push("read-branch");

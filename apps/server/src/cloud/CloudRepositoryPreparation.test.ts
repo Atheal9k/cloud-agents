@@ -114,6 +114,7 @@ it.layer(NodeServices.layer)("CloudRepositoryPreparation", (it) => {
     const credentials = CloudGitCredentials.CloudGitCredentials.of({
       clone,
       fetch,
+      resolveRef: () => Effect.die("ref resolution should not run during preparation"),
       push: () => Effect.die("push should not run during preparation"),
       readBranch: () => Effect.die("branch inspection should not run during preparation"),
       findPullRequest: () => Effect.die("PR inspection should not run during preparation"),

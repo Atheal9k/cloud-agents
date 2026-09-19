@@ -20,6 +20,7 @@ import {
 import { ExecutionEnvironmentPlatformArch, ExecutionEnvironmentPlatformOs } from "./environment.ts";
 import { CloudProviderTurnInput, CloudProviderUnansweredRequestSeconds } from "./cloudExecution.ts";
 import { CloudEnvironment, CloudEnvironmentVersionReference } from "./cloudEnvironment.ts";
+import { CloudEnvironmentBuild, CloudEnvironmentBuildReference } from "./cloudEnvironmentBuild.ts";
 
 export const RunWorkerDevice = Schema.Literals(["android", "ios"]);
 export type RunWorkerDevice = typeof RunWorkerDevice.Type;
@@ -385,6 +386,8 @@ export const RunAllocation = Schema.Struct({
   profile: RunWorkerProfile,
   /** Missing on allocations created before versioned cloud environments. */
   environment: Schema.optionalKey(CloudEnvironmentVersionReference),
+  /** The prepared snapshot this run boots. Absent when no Build was active. */
+  build: Schema.optionalKey(CloudEnvironmentBuildReference),
   deadlines: RunDeadlines,
   allocationState: RunAllocationState,
   agentOutcome: RunAgentOutcome,
@@ -524,6 +527,8 @@ export const RunAllocationEvent = Schema.Union([
     profile: RunWorkerProfile,
     /** Missing on allocation events written before CA-41. */
     environment: Schema.optionalKey(CloudEnvironmentVersionReference),
+    /** Missing on allocation events written before CA-42. */
+    build: Schema.optionalKey(CloudEnvironmentBuildReference),
     deadlines: RunDeadlines,
   }),
   Schema.Struct({
@@ -711,6 +716,8 @@ export const CloudAllocationSnapshot = Schema.Struct({
   runtimeAttempts: Schema.optionalKey(Schema.Array(CloudRuntimeAttempt)),
   /** Absent when decoding snapshots from controllers older than CA-41. */
   environments: Schema.optionalKey(Schema.Array(CloudEnvironment)),
+  /** Absent when decoding snapshots from controllers older than CA-42. */
+  builds: Schema.optionalKey(Schema.Array(CloudEnvironmentBuild)),
   usage: Schema.Array(CloudRunUsage),
 });
 export type CloudAllocationSnapshot = typeof CloudAllocationSnapshot.Type;

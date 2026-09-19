@@ -141,6 +141,10 @@ it.layer(TestLayer)("cloud release qualification", (it) => {
             ),
           fetch: ({ ref, cwd }) =>
             git(cwd, ["fetch", "--no-tags", "--force", "--", remote, ref]).pipe(Effect.asVoid),
+          resolveRef: ({ ref }) =>
+            git(root, ["ls-remote", "--", remote, ref]).pipe(
+              Effect.map((output) => output.split(/\s+/)[0] ?? ""),
+            ),
           readBranch: () => Effect.succeed(remoteCommit),
           findPullRequest: () => Effect.succeed(pullRequest),
           push: ({ branch, cwd }) =>

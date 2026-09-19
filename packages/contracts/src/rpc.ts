@@ -292,6 +292,14 @@ import {
   CloudEnvironmentSaveInput,
 } from "./cloudEnvironment.ts";
 import {
+  CloudEnvironmentBuild,
+  CloudEnvironmentBuildCancelInput,
+  CloudEnvironmentBuildError,
+  CloudEnvironmentBuildSaveInput,
+  CloudEnvironmentBuildStaleThresholdInput,
+  CloudEnvironmentBuildStartInput,
+} from "./cloudEnvironmentBuild.ts";
+import {
   SharedBrowserError,
   SharedBrowserGrant,
   SharedBrowserIssueInput,
@@ -420,6 +428,10 @@ export const WS_METHODS = {
   cloudEnvironmentSave: "cloud.environments.save",
   cloudEnvironmentRestore: "cloud.environments.restore",
   cloudEnvironmentResolve: "cloud.environments.resolve",
+  cloudEnvironmentBuildStart: "cloud.environments.builds.start",
+  cloudEnvironmentBuildCancel: "cloud.environments.builds.cancel",
+  cloudEnvironmentBuildSave: "cloud.environments.builds.save",
+  cloudEnvironmentBuildStaleThreshold: "cloud.environments.builds.staleThreshold",
   cloudArtifactsGrant: "cloud.artifacts.grant",
   sharedBrowserIssue: "sharedBrowser.issue",
   sharedBrowserKeepAlive: "sharedBrowser.keepAlive",
@@ -739,6 +751,39 @@ const WsCloudEnvironmentRestoreRpc = Rpc.make(WS_METHODS.cloudEnvironmentRestore
     EnvironmentAuthorizationError,
   ]),
 });
+
+const buildRpcError = Schema.Union([
+  CloudAllocationControllerError,
+  CloudEnvironmentBuildError,
+  EnvironmentAuthorizationError,
+]);
+
+const WsCloudEnvironmentBuildStartRpc = Rpc.make(WS_METHODS.cloudEnvironmentBuildStart, {
+  payload: CloudEnvironmentBuildStartInput,
+  success: CloudEnvironmentBuild,
+  error: buildRpcError,
+});
+
+const WsCloudEnvironmentBuildCancelRpc = Rpc.make(WS_METHODS.cloudEnvironmentBuildCancel, {
+  payload: CloudEnvironmentBuildCancelInput,
+  success: CloudEnvironmentBuild,
+  error: buildRpcError,
+});
+
+const WsCloudEnvironmentBuildSaveRpc = Rpc.make(WS_METHODS.cloudEnvironmentBuildSave, {
+  payload: CloudEnvironmentBuildSaveInput,
+  success: CloudEnvironmentBuild,
+  error: buildRpcError,
+});
+
+const WsCloudEnvironmentBuildStaleThresholdRpc = Rpc.make(
+  WS_METHODS.cloudEnvironmentBuildStaleThreshold,
+  {
+    payload: CloudEnvironmentBuildStaleThresholdInput,
+    success: CloudAllocationSnapshot,
+    error: buildRpcError,
+  },
+);
 
 const WsCloudEnvironmentResolveRpc = Rpc.make(WS_METHODS.cloudEnvironmentResolve, {
   payload: CloudEnvironmentResolutionInput,
@@ -1541,6 +1586,10 @@ export const WsRpcGroup = RpcGroup.make(
   WsCloudEnvironmentSaveRpc,
   WsCloudEnvironmentRestoreRpc,
   WsCloudEnvironmentResolveRpc,
+  WsCloudEnvironmentBuildStartRpc,
+  WsCloudEnvironmentBuildCancelRpc,
+  WsCloudEnvironmentBuildSaveRpc,
+  WsCloudEnvironmentBuildStaleThresholdRpc,
   WsCloudArtifactsGrantRpc,
   WsSharedBrowserIssueRpc,
   WsSharedBrowserKeepAliveRpc,

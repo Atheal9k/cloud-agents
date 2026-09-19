@@ -1,4 +1,8 @@
-import { CloudEnvironmentSaveInput, RunAllocationCommand } from "@t3tools/contracts";
+import {
+  CloudEnvironmentBuildId,
+  CloudEnvironmentSaveInput,
+  RunAllocationCommand,
+} from "@t3tools/contracts";
 import { expect, it } from "@effect/vitest";
 import * as Effect from "effect/Effect";
 import * as Schema from "effect/Schema";
@@ -7,6 +11,7 @@ import * as TestClock from "effect/testing/TestClock";
 
 import { SqlitePersistenceMemory } from "../persistence/Layers/Sqlite.ts";
 import { make } from "./CloudAllocationController.ts";
+import { make as makeBuilds } from "./CloudEnvironmentBuildCatalog.ts";
 import * as ControllerSettings from "./controllerSettings.ts";
 
 const decodeCommand = Schema.decodeSync(RunAllocationCommand);
@@ -555,5 +560,75 @@ it.effect("refuses every write once its state directory is fenced", () =>
     });
     const adopted = yield* controller.dispatch(launch);
     expect(adopted.allocationState.status).toBe("queued");
+  }).pipe(Effect.provide(SqlitePersistenceMemory)),
+);
+
+it.effect("pins the active Build for a launch and skips one that went stale", () =>
+  Effect.gen(function* () {
+    const controller = yield* make({ enabled: true });
+    const builds = yield* makeBuilds();
+    const environment = yield* controller.saveEnvironment(
+      decodeEnvironmentSave({
+        environmentId: "web-environment",
+        name: "Web",
+        source: { type: "saved", scope: "personal", owner: "victor" },
+        repositories: [{ repository: "t3tools/t3code", defaultRef: "main" }],
+        config: { image: "node:24", install: "pnpm install" },
+        secretReferences: [],
+        occurredAt: "2026-09-17T02:55:00.000Z",
+      }),
+    );
+    yield* builds.start({
+      buildId: CloudEnvironmentBuildId.make("build-1"),
+      version: environment.current,
+      trigger: "manual",
+      draft: false,
+      base: { kind: "image", image: "node:24" },
+      inputsFingerprint: "f".repeat(64),
+      startedAt: "2026-09-17T02:56:00.000Z",
+    });
+    yield* builds.complete({
+      buildId: CloudEnvironmentBuildId.make("build-1"),
+      gitSetup: [{ repository: "t3tools/t3code", defaultRef: "main", commit: "a".repeat(40) }],
+      logs: [],
+      timings: {},
+      outcome: {
+        status: "succeeded",
+        snapshot: {
+          id: "build-1",
+          digest: "b".repeat(64),
+          sizeBytes: 1024,
+          createdAt: "2026-09-17T02:58:00.000Z",
+        },
+        completedAt: "2026-09-17T02:58:00.000Z",
+      },
+    });
+
+    // A feature-branch run boots the Build, then checks out the ref it asked for.
+    const fresh = yield* controller.dispatch(launch);
+    expect(fresh.build).toMatchObject({
+      buildId: "build-1",
+      snapshot: { id: "build-1" },
+      gitSetup: [{ repository: "t3tools/t3code", commit: "a".repeat(40) }],
+    });
+    expect(fresh.execution?.selectedRef).toBe("main");
+
+    const stale = yield* controller.dispatch(
+      decodeCommand({
+        ...launchInput,
+        commandId: "command-launch-stale",
+        allocationId: "allocation-stale",
+        occurredAt: "2026-09-19T03:00:00.000Z",
+        deadlines: {
+          launchBy: "2026-09-19T03:05:00.000Z",
+          bootBy: "2026-09-19T03:10:00.000Z",
+          registerBy: "2026-09-19T03:15:00.000Z",
+          expiresAt: "2026-09-19T05:00:00.000Z",
+          cleanupBy: "2026-09-19T05:05:00.000Z",
+        },
+      }),
+    );
+    expect(stale.build).toBeUndefined();
+    expect((yield* controller.snapshot).builds).toHaveLength(1);
   }).pipe(Effect.provide(SqlitePersistenceMemory)),
 );
