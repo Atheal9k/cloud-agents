@@ -61,6 +61,7 @@ export const CloudAgentsApiErrorCode = Schema.Literals([
   "self_hosted_disabled",
   "self_hosted_required",
   "schedule_not_found",
+  "assistant_not_found",
   "internal_error",
 ]);
 export type CloudAgentsApiErrorCode = typeof CloudAgentsApiErrorCode.Type;

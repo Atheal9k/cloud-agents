@@ -83,6 +83,34 @@ Schedules run inside the controller process. With a local controller, the host
 and Docker engine must be online. `run_once` can admit one missed occurrence when
 the controller returns; it does not make a local controller an always-on service.
 
+## Persistent assistants
+
+`POST /v1/assistants` defines a reusable assistant role on top of the durable
+agent catalog. The body records instructions, provider, tools, repositories,
+named secret access, ordinary run limits, and an opt-in persistence policy for
+files and browser state. Memory is always inspectable; files and browser state
+default to off, are encrypted per assistant, and are never shared with another
+assistant.
+
+The first `POST /v1/assistants/{id}/runs` creates the bound durable agent and
+admits a run through the ordinary Cloud Agents path. Later runs follow up that
+same agent, keep its history, and use the assistant's recorded limits.
+
+Manage assistants with `GET /v1/assistants`, `GET|PUT|DELETE /v1/assistants/{id}`,
+and `POST /v1/assistants/{id}/archive|unarchive|reset`. Inspect, edit, or delete
+memory at `/v1/assistants/{id}/memory`. Opted-in files or browser blobs use
+`PUT /v1/assistants/{id}/persistence` and `GET /v1/assistants/{id}/persistence/{files|browser}`.
+
+Lifecycle effects:
+
+- `IDLE` keeps subscriptions enabled and retains credentials, snapshots, and memory. No compute is implied.
+- Archive rejects new runs, pauses subscriptions, and retains credentials and snapshots.
+- Unarchive restores eligibility without waking a runtime.
+- Reset clears memory and opted-in files/browser state while keeping run history.
+- Delete removes the assistant and bound agent, disables subscriptions, revokes credentials, and leaves snapshots to ordinary policy expiry.
+
+Each writable workspace has one owner: the principal that created the assistant.
+
 ## GitHub triggers
 
 `POST /v1/integrations/github/triggers` opts one durable agent into GitHub work.
@@ -172,7 +200,8 @@ Error bodies are `{ "code", "message" }` with stable codes including `unauthoriz
 `invalid_request`, `agent_id_conflict`, `agent_busy`, `agent_archived`,
 `agent_not_found`, `run_not_found`, `run_not_cancellable`, `invalid_last_event_id`,
 `stream_expired`, `rate_limited`, `spend_limit_exceeded`, `follow_up_forbidden`,
-`scm_access_denied`, `self_hosted_disabled`, and `self_hosted_required`.
+`scm_access_denied`, `self_hosted_disabled`, `self_hosted_required`, `schedule_not_found`,
+and `assistant_not_found`.
 
 Every response includes `X-Request-Id` and `X-RateLimit-*` headers. Repositories
 are limited to 1 request per minute and 30 per hour per principal. Other routes
