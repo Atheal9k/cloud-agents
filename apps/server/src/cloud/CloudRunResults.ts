@@ -14,6 +14,7 @@ import {
   CloudResultManifest,
   CloudResultRetentionStatus,
   CloudRunResultId,
+  type CloudCommitProvenance,
   type OrchestrationThreadDetailSnapshot,
   type RunAllocation,
   type RunAllocationId,
@@ -113,6 +114,10 @@ export class CloudRunResults extends Context.Service<
     }) => Effect.Effect<ReadonlyArray<CloudRunResultId>, CloudResultError>;
     /** Drops every retained result past its declared expiry. */
     readonly purgeExpired: Effect.Effect<ReadonlyArray<CloudRunResultId>, CloudResultError>;
+    readonly attachProvenance: (
+      resultId: CloudRunResultId,
+      provenance: CloudCommitProvenance,
+    ) => Effect.Effect<CloudResultManifest, CloudResultError>;
   }
 >()("t3/cloud/CloudRunResults") {}
 
@@ -1116,6 +1121,45 @@ export const make = Effect.fn("CloudRunResults.make")(function* (input: CloudRun
     return record;
   });
 
+  const attachProvenance: CloudRunResults["Service"]["attachProvenance"] = (resultId, provenance) =>
+    mutex.withPermits(1)(
+      Effect.gen(function* () {
+        const status = yield* readStatus(resultId);
+        if (status.status !== "retained") {
+          return yield* resultError({
+            reason: "result-not-found",
+            message: "Provenance can only attach to a retained result.",
+            retryable: false,
+          });
+        }
+        const manifest = { ...status.manifest, provenance };
+        yield* atomicWrite(
+          path.join(resultDirectory(path, input.resultsRoot, resultId), MANIFEST_FILE),
+          json(manifest),
+        ).pipe(
+          Effect.mapError(() =>
+            resultError({
+              reason: "capture-failed",
+              message: "The retained provenance record could not be saved.",
+              retryable: true,
+            }),
+          ),
+        );
+        yield* writeStatus({ status: "retained", manifest });
+        return manifest;
+      }).pipe(
+        Effect.mapError((error) =>
+          isCloudResultError(error)
+            ? error
+            : resultError({
+                reason: "capture-failed",
+                message: "The retained provenance record could not be saved.",
+                retryable: true,
+              }),
+        ),
+      ),
+    );
+
   yield* fs.makeDirectory(input.resultsRoot, { recursive: true });
   yield* purgeExpired().pipe(
     Effect.catch((cause) => Effect.logWarning("Could not purge expired cloud results.", { cause })),
@@ -1127,6 +1171,7 @@ export const make = Effect.fn("CloudRunResults.make")(function* (input: CloudRun
     readTextPrefix,
     resolveDownload,
     startContinuation,
+    attachProvenance,
     purgeAllocation,
     purgeExpired: mutex.withPermits(1)(
       purgeExpired().pipe(

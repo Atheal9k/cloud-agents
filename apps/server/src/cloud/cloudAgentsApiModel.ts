@@ -28,6 +28,7 @@ import {
   type CloudAgentsApiErrorCode,
   type CloudAgentsApiGit,
   type CloudAgentsApiMe,
+  type CloudCommitProvenance,
   type CloudAgentsApiMcpServer,
   type CloudAgentsApiModel,
   type CloudAgentsApiPrincipal,
@@ -510,7 +511,11 @@ export function isActiveRunStatus(status: CloudRunStatus): boolean {
 
 export function publicRun(
   run: CloudRun,
-  options: { readonly result?: string; readonly git?: CloudAgentsApiGit } = {},
+  options: {
+    readonly result?: string;
+    readonly git?: CloudAgentsApiGit;
+    readonly provenance?: CloudCommitProvenance;
+  } = {},
 ): CloudAgentsApiRun {
   const completedAt =
     run.status === "FINISHED" ||
@@ -532,6 +537,7 @@ export function publicRun(
     ...(durationMs === undefined || !Number.isFinite(durationMs) ? {} : { durationMs }),
     ...(options.result === undefined ? {} : { result: options.result }),
     ...(options.git === undefined ? {} : { git: options.git }),
+    ...(options.provenance === undefined ? {} : { provenance: options.provenance }),
   };
 }
 

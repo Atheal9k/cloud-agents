@@ -32,7 +32,9 @@ profile fields only for user keys. Each principal sees only the agents it create
   `cursor` paginate. `nextCursor` is omitted when there is no further page.
 - `GET /v1/agents/{id}` — load the durable agent record.
 - `POST /v1/agents/{id}/runs` — follow-up run. A live run returns `409 agent_busy`.
-- `GET /v1/agents/{id}/runs` and `GET /v1/agents/{id}/runs/{runId}`
+- `GET /v1/agents/{id}/runs` and `GET /v1/agents/{id}/runs/{runId}` — run payloads
+  include optional `provenance` (agent, run, environment version, Build, base,
+  provider/model, principal, and signature) without prompts or secrets.
 - `POST /v1/agents/{id}/runs/{runId}/cancel` — terminal cancel. Already-finished runs
   return `409 run_not_cancellable`.
 - `GET /v1/agents/{id}/runs/{runId}/stream` — SSE. Events: `status`, `assistant`,

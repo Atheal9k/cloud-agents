@@ -445,7 +445,10 @@ export const make = Effect.fn("CloudAgentsApi.make")(function* () {
       published?.outcome.status === "published"
         ? published.outcome.pullRequestUrl
         : repos?.[0]?.prUrl;
-    return publicGit(agent, repos, prUrl);
+    return {
+      git: publicGit(agent, repos, prUrl),
+      provenance: published?.provenance,
+    };
   });
 
   const seedStatus = (run: CloudRun, nowMs: number) =>
@@ -945,10 +948,15 @@ export const make = Effect.fn("CloudAgentsApi.make")(function* () {
   const listRuns: CloudAgentsApi["Service"]["listRuns"] = (input) =>
     Effect.gen(function* () {
       const located = yield* locate(input.principal, input.agentId);
-      const git = yield* gitFor(located.agent, located.allocation, located.record.repos);
+      const published = yield* gitFor(located.agent, located.allocation, located.record.repos);
       const items = [...located.runs]
         .sort((left, right) => right.createdAt.localeCompare(left.createdAt))
-        .map((run) => publicRun(run, git === undefined ? {} : { git }));
+        .map((run) =>
+          publicRun(run, {
+            ...(published.git === undefined ? {} : { git: published.git }),
+            ...(published.provenance === undefined ? {} : { provenance: published.provenance }),
+          }),
+        );
       return paginateNewestFirst(items, {
         ...(input.limit === undefined ? {} : { limit: input.limit }),
         ...(input.cursor === undefined ? {} : { cursor: input.cursor }),
@@ -962,7 +970,7 @@ export const make = Effect.fn("CloudAgentsApi.make")(function* () {
       if (run === undefined) {
         return yield* Effect.fail(apiError("run_not_found", `Run '${input.runId}' was not found.`));
       }
-      const git = yield* gitFor(located.agent, located.allocation, located.record.repos);
+      const published = yield* gitFor(located.agent, located.allocation, located.record.repos);
       let result: string | undefined;
       if (results !== undefined && isTerminalRunStatus(run.status)) {
         const resultId = CloudRunResults.cloudResultIdFor(
@@ -977,7 +985,8 @@ export const make = Effect.fn("CloudAgentsApi.make")(function* () {
         result = text?.text;
       }
       return publicRun(run, {
-        ...(git === undefined ? {} : { git }),
+        ...(published.git === undefined ? {} : { git: published.git }),
+        ...(published.provenance === undefined ? {} : { provenance: published.provenance }),
         ...(result === undefined ? {} : { result }),
       });
     });
@@ -1032,9 +1041,17 @@ export const make = Effect.fn("CloudAgentsApi.make")(function* () {
     });
 
   const usageReport: CloudAgentsApi["Service"]["usageReport"] = (input) =>
-    allocations
-      .exportUsage({ periodStart: input.periodStart, periodEnd: input.periodEnd })
-      .pipe(Effect.mapError(mapControllerError));
+    Effect.gen(function* () {
+      const report = yield* allocations
+        .exportUsage({ periodStart: input.periodStart, periodEnd: input.periodEnd })
+        .pipe(Effect.mapError(mapControllerError));
+      if (publication === undefined) return report;
+      const records = yield* publication.list().pipe(Effect.orElseSucceed(() => []));
+      const provenance = records.flatMap((record) =>
+        record.provenance === undefined ? [] : [record.provenance],
+      );
+      return provenance.length === 0 ? report : { ...report, provenance };
+    });
 
   const mutateLifecycle = (
     type: "allocation.agent-archive" | "allocation.agent-unarchive" | "allocation.agent-delete",
