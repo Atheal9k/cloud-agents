@@ -55,6 +55,8 @@ export const CloudAgentsApiErrorCode = Schema.Literals([
   "rate_limited",
   "admission_stopped",
   "spend_limit_exceeded",
+  "self_hosted_disabled",
+  "self_hosted_required",
   "internal_error",
 ]);
 export type CloudAgentsApiErrorCode = typeof CloudAgentsApiErrorCode.Type;

@@ -30,6 +30,7 @@ export const ControllerSettingsRow = Schema.Struct({
   defaultSummaries: Schema.NullOr(Schema.Int),
   defaultArtifactsToGit: Schema.NullOr(Schema.Int),
   defaultCollaboration: Schema.NullOr(Schema.String),
+  defaultSelfHostedMode: Schema.NullOr(Schema.String),
 });
 export type ControllerSettingsRow = typeof ControllerSettingsRow.Type;
 
@@ -53,6 +54,7 @@ const DefaultsUpdate = Schema.Struct({
   defaultSummaries: Schema.NullOr(Schema.Int),
   defaultArtifactsToGit: Schema.NullOr(Schema.Int),
   defaultCollaboration: Schema.NullOr(Schema.String),
+  defaultSelfHostedMode: Schema.NullOr(Schema.String),
 });
 
 /**
@@ -64,31 +66,35 @@ export const defaultsFromRow = (row: ControllerSettingsRow): CloudControllerDefa
     const trimmed = raw?.trim() ?? "";
     return trimmed.length === 0 ? undefined : trimmed;
   };
-  const flag = (raw: number | null) => (raw === null ? undefined : raw === 1);
+  const flag = (raw: number | null): boolean | undefined =>
+    raw === null ? undefined : raw === 1;
   const model = value(row.defaultModel);
   const context = value(row.defaultContext);
   const repository = value(row.defaultRepository);
   const ref = value(row.defaultRef);
   const collaboration = value(row.defaultCollaboration);
+  const longRunning = flag(row.defaultLongRunning);
+  const computerUse = flag(row.defaultComputerUse);
+  const summaries = flag(row.defaultSummaries);
+  const artifactsToGit = flag(row.defaultArtifactsToGit);
   return {
     ...(model === undefined ? {} : { model }),
     ...(context === undefined ? {} : { context }),
     ...(repository === undefined ? {} : { repository }),
     ...(ref === undefined ? {} : { ref }),
-    ...(flag(row.defaultLongRunning) === undefined
-      ? {}
-      : { longRunning: flag(row.defaultLongRunning) }),
-    ...(flag(row.defaultComputerUse) === undefined
-      ? {}
-      : { computerUse: flag(row.defaultComputerUse) }),
-    ...(flag(row.defaultSummaries) === undefined ? {} : { summaries: flag(row.defaultSummaries) }),
-    ...(flag(row.defaultArtifactsToGit) === undefined
-      ? {}
-      : { artifactsToGit: flag(row.defaultArtifactsToGit) }),
+    ...(longRunning === undefined ? {} : { longRunning }),
+    ...(computerUse === undefined ? {} : { computerUse }),
+    ...(summaries === undefined ? {} : { summaries }),
+    ...(artifactsToGit === undefined ? {} : { artifactsToGit }),
     ...(collaboration === "disabled" ||
     collaboration === "service-accounts" ||
     collaboration === "all"
       ? { collaboration }
+      : {}),
+    ...(row.defaultSelfHostedMode === "off" ||
+    row.defaultSelfHostedMode === "allow" ||
+    row.defaultSelfHostedMode === "require"
+      ? { selfHostedMode: row.defaultSelfHostedMode }
       : {}),
   };
 };
@@ -131,7 +137,8 @@ export const make = Effect.fn("cloud.controllerSettings.make")(function* () {
         default_computer_use AS "defaultComputerUse",
         default_summaries AS "defaultSummaries",
         default_artifacts_to_git AS "defaultArtifactsToGit",
-        default_collaboration AS "defaultCollaboration"
+        default_collaboration AS "defaultCollaboration",
+        default_self_hosted_mode AS "defaultSelfHostedMode"
       FROM cloud_controller_settings
       WHERE singleton_id = 1
     `,
@@ -175,6 +182,7 @@ export const make = Effect.fn("cloud.controllerSettings.make")(function* () {
       defaultSummaries,
       defaultArtifactsToGit,
       defaultCollaboration,
+      defaultSelfHostedMode,
     }) => sql`
       UPDATE cloud_controller_settings
       SET
@@ -186,7 +194,8 @@ export const make = Effect.fn("cloud.controllerSettings.make")(function* () {
         default_computer_use = ${defaultComputerUse},
         default_summaries = ${defaultSummaries},
         default_artifacts_to_git = ${defaultArtifactsToGit},
-        default_collaboration = ${defaultCollaboration}
+        default_collaboration = ${defaultCollaboration},
+        default_self_hosted_mode = ${defaultSelfHostedMode}
       WHERE singleton_id = 1
     `,
   });

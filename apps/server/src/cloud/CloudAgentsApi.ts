@@ -12,6 +12,8 @@ import {
   CommandId,
   MessageId,
   OrchestrationThreadDetailSnapshot,
+  SELF_HOSTED_WORKER_PROFILE_ID,
+  admitSelfHostedTarget,
   ProviderInstanceId,
   RunAllocationAttempt,
   RunAllocationId,
@@ -53,6 +55,7 @@ import * as CloudDiagnosticsCatalog from "./CloudDiagnosticsCatalog.ts";
 import { principalFromApiKey } from "./cloudAccountingPolicy.ts";
 import * as CloudRunPublication from "./CloudRunPublication.ts";
 import * as CloudRunResults from "./CloudRunResults.ts";
+import * as CloudSelfHosted from "./CloudSelfHosted.ts";
 import * as CloudWorkerRunClient from "./CloudWorkerRunClient.ts";
 import {
   appendBoundedStreamEvent,
@@ -285,6 +288,9 @@ export const make = Effect.fn("CloudAgentsApi.make")(function* () {
   const diagnostics = Option.getOrUndefined(
     yield* Effect.serviceOption(CloudDiagnosticsCatalog.CloudDiagnosticsCatalog),
   );
+  const selfHosted = Option.getOrUndefined(
+    yield* Effect.serviceOption(CloudSelfHosted.CloudSelfHosted),
+  );
   const streams = yield* Ref.make<ReadonlyMap<string, CloudStreamBuffer>>(new Map());
   const decodeThreadSnapshot = Schema.decodeUnknownOption(
     Schema.fromJsonString(OrchestrationThreadDetailSnapshot),
@@ -463,6 +469,15 @@ export const make = Effect.fn("CloudAgentsApi.make")(function* () {
       const selectedRef = repo?.startingRef ?? defaults.ref ?? "main";
       const workOnCurrentBranch = input.body.workOnCurrentBranch === true;
       const branch = workOnCurrentBranch ? selectedRef : `cloud/${agentId.slice(-12)}`;
+      const env = defaultEnv(input.body);
+      const policy = defaults.selfHostedMode ?? (selfHosted === undefined ? "off" : yield* selfHosted.policy);
+      if (selfHosted !== undefined && defaults.selfHostedMode !== undefined) {
+        yield* selfHosted.setPolicy(defaults.selfHostedMode);
+      }
+      const denied = admitSelfHostedTarget({ policy, target: env.type });
+      if (denied !== undefined) {
+        return yield* Effect.fail(apiError(denied.code, denied.message));
+      }
       const models = yield* listModels;
       const modelId = input.body.model?.id ?? defaults.model ?? models[0]?.id ?? "default";
       const instanceType = current.limits.allowedInstanceTypes[0] ?? "t3.medium";
@@ -514,7 +529,10 @@ export const make = Effect.fn("CloudAgentsApi.make")(function* () {
               createdAt: occurredAt,
             },
           },
-          profile: { id: "linux-web", os: "linux", arch: "x64", instanceType },
+          profile:
+            env.type === "cloud"
+              ? { id: "linux-web", os: "linux", arch: "x64", instanceType }
+              : { id: SELF_HOSTED_WORKER_PROFILE_ID, os: "linux", arch: "x64", instanceType: "self-hosted" },
           principal: principalFromApiKey(input.principal),
           deadlines: {
             launchBy: deadline(startedAt, Math.min(120, runSeconds)),
@@ -557,6 +575,29 @@ export const make = Effect.fn("CloudAgentsApi.make")(function* () {
       }
       const nowMs = Date.parse(occurredAt);
       yield* seedStatus(run, Number.isFinite(nowMs) ? nowMs : epochNowMs());
+      if (selfHosted !== undefined && env.type !== "cloud") {
+        const [repoOwner, repoName] = (parsedRepo?.ownerName ?? "").split("/");
+        yield* selfHosted
+          .enqueue({
+            id: agentId,
+            target: env.type,
+            principal: input.principal,
+            ...(env.name === undefined ? {} : { poolName: env.name }),
+            ...(repoOwner === undefined || repoOwner.length === 0 ? {} : { repoOwner }),
+            ...(repoName === undefined || repoName.length === 0 ? {} : { repoName }),
+            ...(repo?.url === undefined ? {} : { repoUrl: repo.url }),
+          })
+          .pipe(
+            Effect.mapError((error) =>
+              apiError(
+                error.code === "self_hosted_disabled" || error.code === "self_hosted_required"
+                  ? error.code
+                  : "invalid_request",
+                error.message,
+              ),
+            ),
+          );
+      }
       if (diagnostics !== undefined) {
         const admission = admitCloudExtensibility(
           {
@@ -700,6 +741,25 @@ export const make = Effect.fn("CloudAgentsApi.make")(function* () {
           principal: principalFromApiKey(input.principal),
         })
         .pipe(Effect.mapError(mapControllerError));
+      if (selfHosted !== undefined && located.record.env.type !== "cloud") {
+        yield* selfHosted
+          .enqueue({
+            id: input.agentId,
+            target: located.record.env.type,
+            principal: input.principal,
+            ...(located.record.env.name === undefined ? {} : { poolName: located.record.env.name }),
+          })
+          .pipe(
+            Effect.mapError((error) =>
+              apiError(
+                error.code === "self_hosted_disabled" || error.code === "self_hosted_required"
+                  ? error.code
+                  : "invalid_request",
+                error.message,
+              ),
+            ),
+          );
+      }
       const refreshed = yield* locate(input.principal, input.agentId);
       const run = refreshed.runs.find((candidate) => candidate.id === runId);
       if (run === undefined) {

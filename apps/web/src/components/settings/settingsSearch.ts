@@ -725,7 +725,7 @@ export const SETTINGS_SEARCH_ITEMS = [
     title: "Cloud run defaults",
     to: "/settings/cloud-agents",
     searchTerms: [
-      "default model context repository ref long-running computer use summaries artifacts spend limit audit export policy",
+      "default model context repository ref long-running computer use summaries artifacts spend limit audit export policy self-hosted pool machine",
     ],
   },
   {

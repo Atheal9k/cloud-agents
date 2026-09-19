@@ -52,6 +52,9 @@ profile fields only for user keys. Each principal sees only the agents it create
 - `DELETE /v1/agents/{id}` — permanent delete
 - `GET /v1/me`, `GET /v1/models`, `GET /v1/repositories`
 
+Self-hosted machines and team pools use the older `/v0/private-workers` paths. See
+[Self-hosted machines and team pools](./cloud-agents-self-hosted.md).
+
 Create accepts agent or plan `mode`, `model` (id plus params), named `env` or `repos`,
 ref/PR fields, images (max 5, 15 MB, png/jpeg/gif/webp), `envVars` (max 50; not with
 `agentId`), inline MCP servers (max 50; HTTP or stdio), and custom subagents (max 20;
@@ -70,7 +73,8 @@ mutating hooks do not run during early read-only environment setup.
 Error bodies are `{ "code", "message" }` with stable codes including `unauthorized`,
 `invalid_request`, `agent_id_conflict`, `agent_busy`, `agent_archived`,
 `agent_not_found`, `run_not_found`, `run_not_cancellable`, `invalid_last_event_id`,
-`stream_expired`, `rate_limited`, and `spend_limit_exceeded`.
+`stream_expired`, `rate_limited`, `spend_limit_exceeded`, `self_hosted_disabled`,
+and `self_hosted_required`.
 
 Every response includes `X-Request-Id` and `X-RateLimit-*` headers. Repositories
 are limited to 1 request per minute and 30 per hour per principal. Other routes

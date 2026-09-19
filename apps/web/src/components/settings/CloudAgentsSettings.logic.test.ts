@@ -312,6 +312,7 @@ describe("cloudControllerDefaultsFromDraft", () => {
         summaries: false,
         artifactsToGit: false,
         collaboration: "disabled",
+        selfHostedMode: "off",
       }),
     ).toEqual({
       repository: "t3tools/t3code",
@@ -320,6 +321,7 @@ describe("cloudControllerDefaultsFromDraft", () => {
       summaries: false,
       artifactsToGit: false,
       collaboration: "disabled",
+      selfHostedMode: "off",
     });
   });
 });

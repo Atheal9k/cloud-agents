@@ -81,6 +81,9 @@ export function statusForCode(code: CloudAgentsApiErrorCode): number {
     case "rate_limited":
       return 429;
     case "admission_stopped":
+    case "spend_limit_exceeded":
+    case "self_hosted_disabled":
+    case "self_hosted_required":
       return 409;
     case "internal_error":
       return 500;
