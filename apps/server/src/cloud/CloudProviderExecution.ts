@@ -306,14 +306,17 @@ const build = Effect.fn("CloudProviderExecution.build")(function* (input?: {
     }
     yield* preflightTurn(request.turn);
     if (input?.skillsHome !== undefined && input.skillsHome.length > 0) {
-      try {
+      const skillsHome = input.skillsHome;
+      yield* Effect.try(() => {
         installCloudEnvSetupSkillPackage({
           skill: loadCloudEnvSetupSkillPackage(),
-          home: input.skillsHome,
+          home: skillsHome,
         });
-      } catch {
-        yield* Effect.logWarning("Could not install the env-setup skill into the guest home.");
-      }
+      }).pipe(
+        Effect.catch(() =>
+          Effect.logWarning("Could not install the env-setup skill into the guest home."),
+        ),
+      );
     }
     if (input?.prepareSharedBrowser !== undefined) {
       yield* input.prepareSharedBrowser(request.threadId).pipe(

@@ -1,3 +1,5 @@
+// @effect-diagnostics nodeBuiltinImport:off
+// @effect-diagnostics globalDate:off
 import * as NodeFS from "node:fs";
 import * as NodeOS from "node:os";
 import * as NodePath from "node:path";
@@ -69,7 +71,7 @@ describe("cloud env-setup skill package", () => {
         NodePath.join(home, ".agents/skills/env-setup/references/create-environment.md"),
         "utf8",
       ),
-    ).toContain("verbatim opener");
+    ).toContain("Before the first tool call");
     expect(
       NodeFS.existsSync(
         NodePath.join(home, ".cursor/skills/env-setup/references/migrate-to-builds.md"),

@@ -26,11 +26,10 @@ const CHECKLIST_TITLES = [
 
 export class CloudEnvSetupSkillError extends Error {
   readonly _tag = "CloudEnvSetupSkillError";
-  constructor(
-    readonly reason: "missing-skill" | "missing-reference" | "invalid-skill",
-    message: string,
-  ) {
+  readonly reason: "missing-skill" | "missing-reference" | "invalid-skill";
+  constructor(reason: "missing-skill" | "missing-reference" | "invalid-skill", message: string) {
     super(message);
+    this.reason = reason;
     this.name = "CloudEnvSetupSkillError";
   }
 }

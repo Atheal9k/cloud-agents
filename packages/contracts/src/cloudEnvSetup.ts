@@ -40,6 +40,7 @@ export function cloudEnvSetupPromptIntent(prompt: string): CloudEnvSetupPromptIn
     (/\bmigrat(?:e|ion|ing)\b/.test(text) && /\bbuilds?\b/.test(text)) ||
     /\bbuild migration\b/.test(text) ||
     /work with builds/.test(text) ||
+    /builds will work/.test(text) ||
     /prebuilt baselines/.test(text)
   ) {
     return "migrate";

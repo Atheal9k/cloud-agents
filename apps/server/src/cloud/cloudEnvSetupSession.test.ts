@@ -84,7 +84,7 @@ it.effect("runs create through Save, pauses on required actions, and keeps a fai
     expect(refused.reason).toBe("invalid-request");
     expect(yield* diagnostics.readProposal()).toBeUndefined();
 
-    yield* diagnostics.resolveSetupActions();
+    yield* diagnostics.resolveSetupActions;
     expect(yield* diagnostics.outstandingSetupActions).toEqual([]);
 
     const saved = yield* environments.save(
@@ -180,10 +180,12 @@ it.effect("runs create through Save, pauses on required actions, and keeps a fai
     expect(activated.draft).toBe(false);
     expect((yield* environments.list)[0]?.activeBuildId).toBe(successfulDraft.id);
 
+    const current = (yield* environments.list)[0];
+    expect(current).toBeDefined();
     const afterSave = yield* environments.save(
       decodeSave({
         environmentId: saved.id,
-        expectedVersion: (yield* environments.list)[0]?.current.version,
+        expectedVersion: current?.current.version ?? 1,
         name: "Personal web",
         source: { type: "saved", scope: "personal", owner: "victor" },
         repositories: [{ repository: "acme/web", defaultRef: "main" }],
