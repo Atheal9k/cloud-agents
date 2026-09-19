@@ -6,7 +6,10 @@ import {
   type RunAllocation,
   type RunRuntimeFlush,
   type RunRuntimeSnapshot,
+  emulatorWakeResumption,
+  androidNeedsNestedVirtualizationLaunch,
   admitMacIosWorker,
+  isLinuxAndroidWorkerProfile,
   isMacIosWorkerProfile,
   placeMacIosJob,
   simulatorWakeResumption,
@@ -86,13 +89,17 @@ function orderedAllocations(
  * or a worker the controller cannot reach would hold compute forever. The
  * report says so instead of claiming a flush that did not happen.
  */
-function unflushed(reason: string, flushedAt: string, macosIos = false): RunRuntimeFlush {
+function unflushed(
+  reason: string,
+  flushedAt: string,
+  extras: { readonly macosIos?: boolean; readonly linuxAndroid?: boolean } = {},
+): RunRuntimeFlush {
   const component = { status: "unavailable", reason } as const;
   return {
     userdata: component,
     workspace: component,
     providerHome: component,
-    ...(macosIos
+    ...(extras.macosIos
       ? {
           simulator: {
             status: "unavailable" as const,
@@ -103,6 +110,15 @@ function unflushed(reason: string, flushedAt: string, macosIos = false): RunRunt
             status: "unavailable" as const,
             reason:
               "Xcode caches stay on the Mac image and environment Build, not in the job snapshot.",
+          },
+        }
+      : {}),
+    ...(extras.linuxAndroid
+      ? {
+          emulator: {
+            status: "unavailable" as const,
+            reason:
+              "AVD data was not flushed. Wake created a new AVD and app/login state did not persist.",
           },
         }
       : {}),
@@ -281,12 +297,14 @@ export const make = Effect.fn("CloudAllocationReconciler.make")(function* (input
     const flushed =
       runClient === undefined ? undefined : yield* runClient.flush(allocation).pipe(Effect.result);
     const macosIos = isMacIosWorkerProfile(allocation.profile);
+    const linuxAndroid = isLinuxAndroidWorkerProfile(allocation.profile);
+    const extras = { macosIos, linuxAndroid };
     const flush =
       flushed === undefined
         ? unflushed(
             "This controller has no run client to flush the guest with.",
             occurredAt,
-            macosIos,
+            extras,
           )
         : Result.isSuccess(flushed)
           ? {
@@ -300,8 +318,17 @@ export const make = Effect.fn("CloudAllocationReconciler.make")(function* (input
                     },
                   }
                 : {}),
+              ...(linuxAndroid && flushed.success.emulator === undefined
+                ? {
+                    emulator: {
+                      status: "unavailable" as const,
+                      reason:
+                        "AVD data was not flushed. Wake created a new AVD and app/login state did not persist.",
+                    },
+                  }
+                : {}),
             }
-          : unflushed(flushed.failure.message, occurredAt, macosIos);
+          : unflushed(flushed.failure.message, occurredAt, extras);
     yield* dispatch(allocation, occurredAt, {
       type: "allocation.idle",
       commandId: commandId(allocation, "idle"),
@@ -708,6 +735,10 @@ export const make = Effect.fn("CloudAllocationReconciler.make")(function* (input
             launchTemplate: allocation.allocationState.launchTemplate,
             registrationCredential,
             ...(placementHostId === undefined ? {} : { placementHostId }),
+            ...(isLinuxAndroidWorkerProfile(allocation.profile) &&
+            androidNeedsNestedVirtualizationLaunch(instanceType)
+              ? { nestedVirtualization: true }
+              : {}),
           })
           .pipe(Effect.result);
         if (Result.isSuccess(launched)) {
@@ -875,6 +906,14 @@ export const make = Effect.fn("CloudAllocationReconciler.make")(function* (input
                 ? {
                     simulator: simulatorWakeResumption({
                       simulatorFlush: snapshot.flush.simulator,
+                    }),
+                  }
+                : {}),
+              ...(isLinuxAndroidWorkerProfile(allocation.profile)
+                ? {
+                    emulator: emulatorWakeResumption({
+                      emulatorFlush: snapshot.flush.emulator,
+                      avdDataPresent: snapshot.flush.emulator?.status === "flushed",
                     }),
                   }
                 : {}),

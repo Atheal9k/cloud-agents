@@ -1,0 +1,23 @@
+#!/bin/bash
+set -euo pipefail
+
+# Reject the worker before Gradle if this host cannot accelerate the emulator.
+
+fail() {
+  echo "android acceleration proof failed: $*" >&2
+  exit 1
+}
+
+[[ -e /dev/kvm ]] || fail "Linux KVM is not available at /dev/kvm"
+[[ -r /dev/kvm ]] || fail "the worker cannot access /dev/kvm"
+
+if [[ -r /sys/module/kvm_intel/parameters/nested ]] || [[ -r /sys/module/kvm_amd/parameters/nested ]]; then
+  nested="$(cat /sys/module/kvm_intel/parameters/nested 2>/dev/null || cat /sys/module/kvm_amd/parameters/nested)"
+  [[ "${nested}" == "Y" || "${nested}" == "1" ]] || fail "nested virtualization is not enabled"
+fi
+
+command -v emulator >/dev/null || fail "the Android emulator is not installed"
+accel="$(emulator -accel-check 2>/dev/null || true)"
+printf '%s\n' "${accel}" | grep -qi 'kvm' || fail "emulator -accel-check did not report KVM"
+
+echo "android acceleration: kvm"

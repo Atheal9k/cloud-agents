@@ -123,8 +123,12 @@ run "protected_plan" {
       aws_vpc_security_group_ingress_rule.worker_control[0].from_port != 8443,
       aws_vpc_security_group_ingress_rule.worker_preview[0].from_port != 8443,
       aws_vpc_security_group_ingress_rule.worker_preview[0].to_port != 8443,
+      aws_vpc_security_group_ingress_rule.worker_control[0].from_port != 5554,
+      aws_vpc_security_group_ingress_rule.worker_control[0].from_port != 5037,
+      aws_vpc_security_group_ingress_rule.worker_preview[0].from_port != 5555,
+      aws_vpc_security_group_ingress_rule.worker_preview[0].to_port != 5037,
     ])
-    error_message = "Amazon DCV must not have direct worker security-group ingress."
+    error_message = "Amazon DCV and ADB/emulator ports must not have direct worker security-group ingress."
   }
 
   assert {
@@ -444,6 +448,59 @@ run "sandbox_apply" {
       length(aws_iam_role_policy.worker_tailscale_credentials) == 0,
     ])
     error_message = "Workers must not receive secret access unless the corresponding worker feature is configured."
+  }
+}
+
+run "linux_android_profile" {
+  command = plan
+
+  providers = {
+    archive = archive.mock
+    aws     = aws.mock
+  }
+
+  variables {
+    controller_mode = "local"
+    worker_profiles = {
+      linux-web = {
+        ami_id               = "ami-0123456789abcdef0"
+        image_version        = "0.0.42-ca27.1"
+        instance_type        = "t3.medium"
+        root_volume_size_gib = 30
+      }
+      linux-android = {
+        ami_id                = "ami-0123456789abcdef0"
+        image_version         = "0.0.42-ca37.1"
+        instance_type         = "m7i.xlarge"
+        root_volume_size_gib  = 80
+        capabilities          = ["coding", "android-emulator"]
+        nested_virtualization = true
+        android_sdk           = true
+      }
+    }
+  }
+
+  assert {
+    condition = alltrue([
+      aws_launch_template.worker["linux-android"].instance_type == "m7i.xlarge",
+      aws_launch_template.worker["linux-android"].block_device_mappings[0].ebs[0].volume_size == 80,
+      one([
+        for specification in aws_launch_template.worker["linux-android"].tag_specifications :
+        specification.tags["CloudAgentNestedVirtualization"]
+        if specification.resource_type == "instance"
+      ]) == "true",
+      one([
+        for specification in aws_launch_template.worker["linux-android"].tag_specifications :
+        specification.tags["CloudAgentAndroidSdk"]
+        if specification.resource_type == "instance"
+      ]) == "true",
+      one([
+        for specification in aws_launch_template.worker["linux-android"].tag_specifications :
+        specification.tags["CloudAgentCapabilities"]
+        if specification.resource_type == "instance"
+      ]) == "android-emulator,coding",
+    ])
+    error_message = "The linux-android profile must use nested-virtualization sizing and bake the Android SDK."
   }
 }
 

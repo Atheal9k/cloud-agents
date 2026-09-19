@@ -83,6 +83,7 @@ export class CloudWorkerProvider extends Context.Service<
       readonly launchTemplate: RunLaunchTemplate;
       readonly registrationCredential: string;
       readonly placementHostId?: string | undefined;
+      readonly nestedVirtualization?: boolean | undefined;
     }) => Effect.Effect<CloudWorkerInstance, CloudWorkerProviderError>;
     readonly inspectMacCapacity: (input: { readonly instanceType: string }) => Effect.Effect<
       {
@@ -512,6 +513,9 @@ export const make = Effect.fn("CloudWorkerProvider.make")(function* (input: {
         ...(launchInput.placementHostId === undefined
           ? [{ Key: "CloudAgentRuntimeParity", Value: runtimeParity("ec2-fallback") }]
           : []),
+        ...(launchInput.nestedVirtualization === true
+          ? [{ Key: "CloudAgentNestedVirtualization", Value: "enabled" }]
+          : []),
       ];
       const output = yield* runAws([
         "run-instances",
@@ -526,6 +530,9 @@ export const make = Effect.fn("CloudWorkerProvider.make")(function* (input: {
         ...(launchInput.placementHostId === undefined
           ? []
           : ["--placement", `Tenancy=host,HostId=${launchInput.placementHostId}`]),
+        ...(launchInput.nestedVirtualization === true
+          ? ["--cpu-options", "NestedVirtualization=enabled"]
+          : []),
         "--tag-specifications",
         encodeTagSpecifications([
           { ResourceType: "instance", Tags: tags },

@@ -225,6 +225,12 @@ snapshot. `install` runs from a generated script file rather than an inline
 shell argument, because passing a shell string as one spawn argument is mangled
 by Windows quoting, where a quoted command silently exits 0 without running.
 
+Android emulator jobs do not pack on Firecracker. They need `/dev/kvm` inside
+the worker, which this fleet does not expose to guests. The `linux-android`
+profile launches a nested-virtualization EC2 type on demand, proves KVM before
+Gradle, and keeps AVD data on a job-scoped path separate from the environment
+Build. See [`cloudLinuxAndroid`](../../packages/contracts/src/cloudLinuxAndroid.ts).
+
 ## Idle release
 
 A run ends; the conversation does not. When a turn settles, the controller

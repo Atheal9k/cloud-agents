@@ -22,8 +22,10 @@ import {
   type CloudRunResultId,
   type CloudRunUsage,
   CloudWorkerPriceAssumption,
+  admitLinuxAndroidWorker,
   admitMacIosWorker,
   DEFAULT_CONVERSATION_RETENTION_DAYS,
+  isLinuxAndroidWorkerProfile,
   isMacIosWorkerProfile,
   macDedicatedHostUsageCost,
   RunAllocationEvent,
@@ -511,6 +513,15 @@ export const make = Effect.fn("CloudAllocationController.make")(function* (input
     }
     if (command.type === "allocation.launch" && isMacIosWorkerProfile(command.profile)) {
       const admitted = admitMacIosWorker({
+        profile: command.profile,
+        region,
+      });
+      if (admitted.status === "rejected") {
+        return controllerError("invalid-request", admitted.message);
+      }
+    }
+    if (command.type === "allocation.launch" && isLinuxAndroidWorkerProfile(command.profile)) {
+      const admitted = admitLinuxAndroidWorker({
         profile: command.profile,
         region,
       });

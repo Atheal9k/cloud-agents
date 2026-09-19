@@ -212,4 +212,88 @@ it.layer(TestLayer)("cloud runtime flush", (it) => {
       expect(flush.providerHome.status).toBe("flushed");
     }),
   );
+
+  it.effect("snapshots emulator AVD data separately from the environment Build", () =>
+    Effect.gen(function* () {
+      const previousProfile = process.env.T3_WORKER_PROFILE;
+      const previousAvd = process.env.ANDROID_AVD_HOME;
+      process.env.T3_WORKER_PROFILE = "linux-android";
+      process.env.ANDROID_AVD_HOME = "/opt/t3-worker/android/allocation-flush/1";
+      try {
+        const fs = yield* FileSystem.FileSystem;
+        const path = yield* Path.Path;
+        const root = yield* fs.makeTempDirectoryScoped({ prefix: "t3-cloud-flush-android-" });
+        const workspace = path.join(root, "workspace");
+        yield* fs.makeDirectory(workspace, { recursive: true });
+
+        const flush = yield* flushCloudRuntimeState({
+          allocationId: ALLOCATION_ID,
+          attempt: ATTEMPT,
+          threadId: THREAD_ID,
+        }).pipe(
+          Effect.provide(
+            Layer.mergeAll(
+              projectionLayer(workspace),
+              Layer.succeed(HostProcessEnvironment, {
+                CODEX_HOME: "/opt/t3-worker/credentials/codex",
+              }),
+              makeSqlitePersistenceLive(path.join(root, "userdata", "state.sqlite")),
+            ),
+          ),
+        );
+
+        expect(flush.emulator).toMatchObject({ status: "flushed" });
+        expect(flush.emulator?.status === "flushed" ? flush.emulator.detail : "").toMatch(
+          /separately from the environment Build/,
+        );
+      } finally {
+        if (previousProfile === undefined) delete process.env.T3_WORKER_PROFILE;
+        else process.env.T3_WORKER_PROFILE = previousProfile;
+        if (previousAvd === undefined) delete process.env.ANDROID_AVD_HOME;
+        else process.env.ANDROID_AVD_HOME = previousAvd;
+      }
+    }),
+  );
+
+  it.effect("reports unrestorable AVD data when it lives in a runtime directory", () =>
+    Effect.gen(function* () {
+      const previousAvd = process.env.ANDROID_AVD_HOME;
+      const previousProfile = process.env.T3_WORKER_PROFILE;
+      process.env.ANDROID_AVD_HOME = "/tmp/t3-worker/android";
+      delete process.env.T3_WORKER_PROFILE;
+      try {
+        const fs = yield* FileSystem.FileSystem;
+        const path = yield* Path.Path;
+        const root = yield* fs.makeTempDirectoryScoped({ prefix: "t3-cloud-flush-avd-tmp-" });
+        const workspace = path.join(root, "workspace");
+        yield* fs.makeDirectory(workspace, { recursive: true });
+
+        const flush = yield* flushCloudRuntimeState({
+          allocationId: ALLOCATION_ID,
+          attempt: ATTEMPT,
+          threadId: THREAD_ID,
+        }).pipe(
+          Effect.provide(
+            Layer.mergeAll(
+              projectionLayer(workspace),
+              Layer.succeed(HostProcessEnvironment, {
+                CODEX_HOME: "/opt/t3-worker/credentials/codex",
+              }),
+              makeSqlitePersistenceLive(path.join(root, "userdata", "state.sqlite")),
+            ),
+          ),
+        );
+
+        expect(flush.emulator).toMatchObject({ status: "unavailable" });
+        expect(flush.emulator?.status === "unavailable" ? flush.emulator.reason : "").toMatch(
+          /app\/login state did not persist/,
+        );
+      } finally {
+        if (previousProfile === undefined) delete process.env.T3_WORKER_PROFILE;
+        else process.env.T3_WORKER_PROFILE = previousProfile;
+        if (previousAvd === undefined) delete process.env.ANDROID_AVD_HOME;
+        else process.env.ANDROID_AVD_HOME = previousAvd;
+      }
+    }),
+  );
 });

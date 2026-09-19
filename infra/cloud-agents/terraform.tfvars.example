@@ -57,6 +57,18 @@ worker_profiles = {
     desktop_dependencies = true
     shared_browser       = true
   }
+  linux-android = {
+    # Build this AMI with profile_name=linux-android and install_android_sdk=true.
+    # Nested virtualization is enabled at RunInstances; t3.medium is rejected.
+    ami_id                = "ami-0123456789abcdef0"
+    image_version         = "0.0.42-ca37.1"
+    instance_type         = "m7i.xlarge"
+    root_volume_size_gib  = 80
+    architecture          = "x86_64"
+    capabilities          = ["coding", "android-emulator"]
+    nested_virtualization = true
+    android_sdk           = true
+  }
 }
 
 # Apple Silicon iOS Simulator workers. Leave empty until a Mac AMI exists.

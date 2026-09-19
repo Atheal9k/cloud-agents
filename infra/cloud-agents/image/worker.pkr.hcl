@@ -43,6 +43,38 @@ variable "install_shared_browser" {
   default     = false
 }
 
+variable "install_android_sdk" {
+  description = "Install JDK 17, the Android SDK, emulator, and a pinned AVD system image."
+  type        = bool
+  default     = false
+}
+
+variable "android_api_level" {
+  type    = string
+  default = "36"
+}
+
+variable "android_abi" {
+  type    = string
+  default = "x86_64"
+}
+
+variable "android_build_tools" {
+  type    = string
+  default = "36.0.0"
+}
+
+variable "android_cmdline_tools_version" {
+  type    = string
+  default = "13114758"
+}
+
+variable "android_cmdline_tools_sha256" {
+  description = "SHA-256 of the pinned Android cmdline-tools zip. Required when install_android_sdk is true."
+  type        = string
+  default     = ""
+}
+
 variable "dcv_archive_sha256" {
   type    = string
   default = "d98eb986f3b547af22a7732ca26cb6541c3842b9ed57218f503c9acc3b29e7e2"
@@ -142,6 +174,7 @@ source "amazon-ebs" "worker" {
     CloudAgentImageVersion        = var.image_version
     CloudAgentDesktopDependencies = var.install_desktop_dependencies ? "true" : "false"
     CloudAgentSharedBrowser       = var.install_shared_browser ? "true" : "false"
+    CloudAgentAndroidSdk          = var.install_android_sdk ? "true" : "false"
     NodeVersion                   = var.node_version
     T3Version                     = var.t3_version
     CodexVersion                  = var.codex_version
@@ -261,6 +294,26 @@ build {
     destination = "/tmp/cloud-agent-prepare-repository"
   }
 
+  provisioner "file" {
+    source      = "${path.root}/scripts/install-android-sdk.sh"
+    destination = "/tmp/install-android-sdk.sh"
+  }
+
+  provisioner "file" {
+    source      = "${path.root}/scripts/prove-android-acceleration"
+    destination = "/tmp/prove-android-acceleration"
+  }
+
+  provisioner "file" {
+    source      = "${path.root}/scripts/cloud-agent-android-session"
+    destination = "/tmp/cloud-agent-android-session"
+  }
+
+  provisioner "file" {
+    source      = "${path.root}/scripts/cloud-agent-android-job-cleanup"
+    destination = "/tmp/cloud-agent-android-job-cleanup"
+  }
+
   provisioner "shell" {
     environment_vars = [
       "CLAUDE_CODE_VERSION=${var.claude_code_version}",
@@ -275,6 +328,12 @@ build {
       "GITHUB_CLI_VERSION=${var.github_cli_version}",
       "INSTALL_DESKTOP_DEPENDENCIES=${var.install_desktop_dependencies}",
       "INSTALL_SHARED_BROWSER=${var.install_shared_browser}",
+      "INSTALL_ANDROID_SDK=${var.install_android_sdk}",
+      "ANDROID_API_LEVEL=${var.android_api_level}",
+      "ANDROID_ABI=${var.android_abi}",
+      "ANDROID_BUILD_TOOLS=${var.android_build_tools}",
+      "ANDROID_CMDLINE_TOOLS_VERSION=${var.android_cmdline_tools_version}",
+      "ANDROID_CMDLINE_TOOLS_SHA256=${var.android_cmdline_tools_sha256}",
       "NODE_LINUX_X64_SHA256=${var.node_linux_x64_sha256}",
       "NODE_VERSION=${var.node_version}",
       "PROFILE_NAME=${var.profile_name}",
@@ -295,6 +354,7 @@ build {
       "DCV_VERSION=${var.dcv_version}",
       "INSTALL_DESKTOP_DEPENDENCIES=${var.install_desktop_dependencies}",
       "INSTALL_SHARED_BROWSER=${var.install_shared_browser}",
+      "INSTALL_ANDROID_SDK=${var.install_android_sdk}",
       "NODE_VERSION=${var.node_version}",
       "T3_VERSION=${var.t3_version}",
       "TAILSCALE_VERSION=${var.tailscale_version}",

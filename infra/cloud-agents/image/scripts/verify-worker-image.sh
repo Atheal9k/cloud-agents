@@ -125,10 +125,24 @@ find /var/lib/t3-worker/t3 -mindepth 1 -delete
   || fail "bake-time T3 identity or state remained in the image"
 
 for command in adb emulator xcodebuild; do
+  if [[ "${INSTALL_ANDROID_SDK:-false}" == "true" && ( "${command}" == "adb" || "${command}" == "emulator" ) ]]; then
+    continue
+  fi
   if command -v "${command}" >/dev/null 2>&1; then
     fail "unexpected mobile or desktop-stream command is installed: ${command}"
   fi
 done
+
+if [[ "${INSTALL_ANDROID_SDK:-false}" == "true" ]]; then
+  command -v adb >/dev/null || fail "android profile is missing adb"
+  command -v emulator >/dev/null || fail "android profile is missing the emulator"
+  [[ -x /opt/t3/bin/prove-android-acceleration ]] || fail "android acceleration proof is missing"
+  [[ -x /opt/t3/bin/cloud-agent-android-session ]] || fail "android session helper is missing"
+  [[ -x /opt/t3/bin/cloud-agent-android-job-cleanup ]] || fail "android cleanup helper is missing"
+  [[ -d /opt/android-sdk/avd-template/t3-android-template ]] || fail "template AVD is missing"
+  jq --exit-status '.capabilities.androidEmulator == true' /opt/t3/worker-image-manifest.json >/dev/null \
+    || fail "android image manifest does not declare the emulator"
+fi
 
 if [[ "${INSTALL_DESKTOP_DEPENDENCIES}" == "true" ]]; then
   command -v Xvfb >/dev/null || fail "desktop profile is missing Xvfb"

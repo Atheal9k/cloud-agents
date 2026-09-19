@@ -1,0 +1,30 @@
+#!/bin/bash
+set -euo pipefail
+
+# Stop only this job's emulator/ADB/Gradle processes. Does not terminate the
+# worker host or shared environment Build.
+
+serial=""
+data_dir=""
+
+while [[ $# -gt 0 ]]; do
+  case "$1" in
+    --serial) serial="$2"; shift 2 ;;
+    --data-dir) data_dir="$2"; shift 2 ;;
+    *) echo "unknown argument: $1" >&2; exit 2 ;;
+  esac
+done
+
+: "${serial:?--serial is required}"
+: "${data_dir:?--data-dir is required}"
+
+if [[ -f "${data_dir}/emulator.pid" ]]; then
+  pid="$(cat "${data_dir}/emulator.pid")"
+  kill "${pid}" 2>/dev/null || true
+fi
+if [[ -f "${data_dir}/adb.pid" ]]; then
+  pid="$(cat "${data_dir}/adb.pid")"
+  kill "${pid}" 2>/dev/null || true
+fi
+adb -s "${serial}" emu kill || true
+rm -rf "${data_dir}"

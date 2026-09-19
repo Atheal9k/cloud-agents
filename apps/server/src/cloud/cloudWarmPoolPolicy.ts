@@ -5,6 +5,7 @@
  */
 import {
   DEFAULT_CLOUD_WARM_POOL_BOUNDS,
+  LINUX_ANDROID_WORKER_PROFILE_ID,
   MACOS_IOS_WORKER_PROFILE_ID,
   WARM_GUEST_FORBIDDEN_IDENTITY_KEYS,
   type CloudRuntimePlacement,
@@ -31,7 +32,7 @@ export function warmPoolIsWorthKeeping(timings: CloudWarmPoolTimings): boolean {
 }
 
 export function warmPoolSupportsProfile(profileId: string): boolean {
-  return profileId !== MACOS_IOS_WORKER_PROFILE_ID;
+  return profileId !== MACOS_IOS_WORKER_PROFILE_ID && profileId !== LINUX_ANDROID_WORKER_PROFILE_ID;
 }
 
 export function targetWarmGuests(input: {
