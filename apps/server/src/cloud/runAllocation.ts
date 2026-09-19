@@ -225,6 +225,7 @@ export function decideRunAllocationCommand(
       const replaceRuntime = allocation.cleanupState.status === "succeeded";
       if (
         allocation.archivedAt !== undefined ||
+        allocation.deletedAt !== undefined ||
         !terminal ||
         (!reuseRuntime && !replaceRuntime && wakeSnapshot === undefined)
       ) {
@@ -246,14 +247,22 @@ export function decideRunAllocationCommand(
     }
     case "allocation.agent-archive":
       return allocation.archivedAt === undefined &&
+        allocation.deletedAt === undefined &&
         allocation.agentOutcome.status !== "not-started" &&
         allocation.agentOutcome.status !== "running"
         ? [{ ...base, type: "allocation.agent-archived" }]
         : [];
     case "allocation.agent-unarchive":
-      return allocation.archivedAt === undefined
+      return allocation.archivedAt === undefined || allocation.deletedAt !== undefined
         ? []
         : [{ ...base, type: "allocation.agent-unarchived" }];
+    case "allocation.agent-delete":
+      return allocation.deletedAt === undefined &&
+        allocation.agentOutcome.status !== "not-started" &&
+        allocation.agentOutcome.status !== "running" &&
+        allocation.idleState.status !== "waking"
+        ? [{ ...base, type: "allocation.agent-deleted" }]
+        : [];
     case "allocation.cleanup-started":
       return allocation.cleanupState.status === "requested"
         ? [{ ...base, type: command.type }]
@@ -563,6 +572,11 @@ export function projectRunAllocationEvent(
       void archivedAt;
       return projectUpdate(unarchived, event, {});
     }
+    case "allocation.agent-deleted":
+      return projectUpdate(allocation, event, {
+        deletedAt: event.occurredAt,
+        archivedAt: allocation.archivedAt ?? event.occurredAt,
+      });
     case "allocation.cleanup-started":
       return projectUpdate(allocation, event, {
         cleanupState: { status: "running", startedAt: event.occurredAt },

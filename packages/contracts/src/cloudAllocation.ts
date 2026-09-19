@@ -496,6 +496,7 @@ export const RunAllocation = Schema.Struct({
   cleanupState: RunCleanupState,
   retry: Schema.optionalKey(RunRetryRecord),
   archivedAt: Schema.optionalKey(IsoDateTime),
+  deletedAt: Schema.optionalKey(IsoDateTime),
   handledCommandIds: Schema.Array(CommandId),
   sequence: NonNegativeInt,
   createdAt: IsoDateTime,
@@ -604,6 +605,7 @@ export const RunAllocationCommand = Schema.Union([
   }),
   Schema.Struct({ ...AttemptCommandBase, type: Schema.Literal("allocation.agent-archive") }),
   Schema.Struct({ ...AttemptCommandBase, type: Schema.Literal("allocation.agent-unarchive") }),
+  Schema.Struct({ ...AttemptCommandBase, type: Schema.Literal("allocation.agent-delete") }),
   Schema.Struct({ ...AttemptCommandBase, type: Schema.Literal("allocation.cleanup-started") }),
   Schema.Struct({ ...AttemptCommandBase, type: Schema.Literal("allocation.cleanup-succeeded") }),
   Schema.Struct({
@@ -729,6 +731,7 @@ export const RunAllocationEvent = Schema.Union([
   }),
   Schema.Struct({ ...EventBase, type: Schema.Literal("allocation.agent-archived") }),
   Schema.Struct({ ...EventBase, type: Schema.Literal("allocation.agent-unarchived") }),
+  Schema.Struct({ ...EventBase, type: Schema.Literal("allocation.agent-deleted") }),
   Schema.Struct({ ...EventBase, type: Schema.Literal("allocation.cleanup-started") }),
   Schema.Struct({ ...EventBase, type: Schema.Literal("allocation.cleanup-succeeded") }),
   Schema.Struct({
@@ -869,6 +872,7 @@ export class CloudAllocationControllerError extends Schema.TaggedError<CloudAllo
       "allocation-not-found",
       "agent_busy",
       "agent-archived",
+      "agent-deleted",
       "run-already-exists",
       "invalid-request",
       "queue-full",

@@ -40,6 +40,10 @@ export class CloudRunPublication extends Context.Service<
       allocationId: RunAllocationId,
       attempt: RunAllocationAttempt,
     ) => Effect.Effect<CloudRunPublicationRecord, CloudRunPublicationError>;
+    readonly deletePullRequest: (
+      allocationId: RunAllocationId,
+      attempt: RunAllocationAttempt,
+    ) => Effect.Effect<CloudRunPublicationRecord, CloudRunPublicationError>;
   }
 >()("t3/cloud/CloudRunPublication") {}
 
@@ -544,9 +548,49 @@ export const make = Effect.fn("CloudRunPublication.make")(function* (
     mutex.withPermits(1)(finalizeUnlocked(request));
   const status: CloudRunPublication["Service"]["status"] = (allocationId, attempt) =>
     mutex.withPermits(1)(readRecord(allocationId, attempt));
+  const deletePullRequest: CloudRunPublication["Service"]["deletePullRequest"] = (
+    allocationId,
+    attempt,
+  ) =>
+    mutex.withPermits(1)(
+      Effect.gen(function* () {
+        const record = yield* readRecord(allocationId, attempt);
+        if (record.outcome.status === "pr-deleted") return record;
+        if (record.outcome.status !== "published") {
+          return yield* publicationError({
+            reason: "pr-not-published",
+            message: "This cloud run has no published pull request to delete.",
+            retryable: false,
+          });
+        }
+        const closed = yield* credentials
+          .closePullRequest({
+            runId: `${record.allocationId}:${record.attempt}`,
+            repository: record.repository,
+            number: record.outcome.pullRequestNumber,
+          })
+          .pipe(Effect.result);
+        if (Result.isFailure(closed)) {
+          return yield* publicationError({
+            reason: "github-failed",
+            message: closed.failure.message,
+            retryable: closed.failure.reason !== "permission-denied",
+          });
+        }
+        return yield* writeRecord({
+          ...record,
+          outcome: {
+            status: "pr-deleted",
+            commit: record.outcome.commit,
+            pullRequestNumber: record.outcome.pullRequestNumber,
+            deletedAt: DateTime.formatIso(yield* DateTime.now),
+          },
+        });
+      }),
+    );
 
   yield* fs.makeDirectory(input.publicationRoot, { recursive: true });
-  return CloudRunPublication.of({ finalize, status });
+  return CloudRunPublication.of({ finalize, status, deletePullRequest });
 });
 
 export const layer = Layer.effect(

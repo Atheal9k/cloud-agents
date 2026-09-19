@@ -91,6 +91,7 @@ export class CloudRunResults extends Context.Service<
     readonly startContinuation: (
       input: CloudResultContinuationInput,
     ) => Effect.Effect<CloudResultContinuationRecord, CloudResultError>;
+    readonly purge: (resultId: CloudRunResultId) => Effect.Effect<void, CloudResultError>;
   }
 >()("t3/cloud/CloudRunResults") {}
 
@@ -116,6 +117,10 @@ function resultIdFor(allocationId: string, attempt: number): CloudRunResultId {
   return CloudRunResultId.make(
     NodeCrypto.createHash("sha256").update(`${allocationId}:${attempt}`).digest("hex"),
   );
+}
+
+export function cloudResultIdFor(allocationId: string, attempt: number): CloudRunResultId {
+  return resultIdFor(allocationId, attempt);
 }
 
 function runDirectory(path: Path.Path, root: string, resultId: CloudRunResultId) {
@@ -1017,11 +1022,35 @@ export const make = Effect.fn("CloudRunResults.make")(function* (input: CloudRun
     return record;
   });
 
+  const purge: CloudRunResults["Service"]["purge"] = Effect.fn("CloudRunResults.purge")(function* (
+    resultId,
+  ) {
+    yield* fs.remove(runDirectory(path, input.resultsRoot, resultId), {
+      recursive: true,
+      force: true,
+    }).pipe(
+      Effect.mapError(() =>
+        resultError({
+          reason: "capture-failed",
+          message: "The retained cloud result could not be deleted.",
+          retryable: true,
+        }),
+      ),
+    );
+  });
+
   yield* fs.makeDirectory(input.resultsRoot, { recursive: true });
   yield* purgeExpired().pipe(
     Effect.catch((cause) => Effect.logWarning("Could not purge expired cloud results.", { cause })),
   );
-  return CloudRunResults.of({ capture, status, readText, resolveDownload, startContinuation });
+  return CloudRunResults.of({
+    capture,
+    status,
+    readText,
+    resolveDownload,
+    startContinuation,
+    purge,
+  });
 });
 
 export const layer = Layer.effect(

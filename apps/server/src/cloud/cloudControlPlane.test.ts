@@ -355,4 +355,43 @@ describe("cloud control-plane projection", () => {
     expect(woken.agents[0]?.status).toBe("ACTIVE");
     expect(woken.runs.map((run) => run.id)).toEqual(["run-1", "run-2"]);
   });
+
+  it("omits permanently deleted agents from the review catalog", () => {
+    const projected = projectCloudControlPlane([
+      [
+        decodeEvent({
+          type: "allocation.requested",
+          sequence: 1,
+          commandId: "launch",
+          allocationId: "allocation-1",
+          attempt: 1,
+          occurredAt: "2026-09-19T01:00:00.000Z",
+          target,
+          profile,
+          deadlines,
+          control: { agentId: "agent-1", runId: "run-1" },
+        }),
+        decodeEvent({
+          type: "allocation.agent-succeeded",
+          sequence: 2,
+          commandId: "finished",
+          allocationId: "allocation-1",
+          attempt: 1,
+          occurredAt: "2026-09-19T01:00:03.000Z",
+          resultLocation: { uri: "/cloud/results/result" },
+        }),
+        decodeEvent({
+          type: "allocation.agent-deleted",
+          sequence: 3,
+          commandId: "delete",
+          allocationId: "allocation-1",
+          attempt: 1,
+          occurredAt: "2026-09-19T01:00:04.000Z",
+        }),
+      ],
+    ]);
+
+    expect(projected.agents).toEqual([]);
+    expect(projected.runs).toEqual([]);
+  });
 });

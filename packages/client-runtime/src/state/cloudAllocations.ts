@@ -1,5 +1,8 @@
 import {
   type CloudArtifactAccessInput,
+  type CloudAgentReviewActInput,
+  type CloudAgentReviewInspectInput,
+  type CloudAgentReviewShareInput,
   type CloudEnvironmentBuildCancelInput,
   type CloudEnvironmentBuildSaveInput,
   type CloudEnvironmentBuildStaleThresholdInput,
@@ -123,6 +126,38 @@ export function createCloudAllocationAtoms<R, E>(
     },
     execute: (input: CloudArtifactAccessInput) => request(WS_METHODS.cloudArtifactsGrant, input),
   });
+  const inspectAgentReview = createEnvironmentRpcCommand(runtime, {
+    label: "environment-data:cloud-agents:inspect",
+    tag: WS_METHODS.cloudAgentReviewInspect,
+    scheduler,
+    concurrency: {
+      mode: "singleFlight",
+      key: ({ environmentId, input }) => `${environmentId}:${input.agentId}`,
+    },
+    execute: (input: CloudAgentReviewInspectInput) =>
+      request(WS_METHODS.cloudAgentReviewInspect, input),
+  });
+  const actAgentReview = createEnvironmentRpcCommand(runtime, {
+    label: "environment-data:cloud-agents:act",
+    tag: WS_METHODS.cloudAgentReviewAct,
+    scheduler,
+    concurrency: {
+      mode: "singleFlight",
+      key: ({ environmentId, input }) => `${environmentId}:${input.commandId}`,
+    },
+    execute: (input: CloudAgentReviewActInput) => request(WS_METHODS.cloudAgentReviewAct, input),
+  });
+  const shareAgentReview = createEnvironmentRpcCommand(runtime, {
+    label: "environment-data:cloud-agents:share",
+    tag: WS_METHODS.cloudAgentReviewShare,
+    scheduler,
+    concurrency: {
+      mode: "singleFlight",
+      key: ({ environmentId, input }) => `${environmentId}:share:${input.agentId}`,
+    },
+    execute: (input: CloudAgentReviewShareInput) =>
+      request(WS_METHODS.cloudAgentReviewShare, input),
+  });
 
   return {
     snapshot,
@@ -135,5 +170,8 @@ export function createCloudAllocationAtoms<R, E>(
     saveBuild,
     setBuildStaleThreshold,
     grantArtifactAccess,
+    inspectAgentReview,
+    actAgentReview,
+    shareAgentReview,
   };
 }

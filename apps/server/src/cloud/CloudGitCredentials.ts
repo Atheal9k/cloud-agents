@@ -113,6 +113,11 @@ export class CloudGitCredentials extends Context.Service<
       readonly title: string;
       readonly body: string;
     }) => Effect.Effect<CloudGitPullRequest, CloudGitCredentialError>;
+    readonly closePullRequest: (input: {
+      readonly runId: string;
+      readonly repository: string;
+      readonly number: number;
+    }) => Effect.Effect<void, CloudGitCredentialError>;
   }
 >()("t3/cloud/CloudGitCredentials") {}
 
@@ -182,7 +187,7 @@ function classifyGitFailure(
 
 function classifyGitHubFailure(
   stderr: string,
-  operation: "inspect" | "create",
+  operation: "inspect" | "create" | "close",
 ): CloudGitCredentialError {
   const normalized = stderr.toLowerCase();
   if (normalized.includes("401") || normalized.includes("bad credentials")) {
@@ -200,14 +205,18 @@ function classifyGitHubFailure(
       "permission-denied",
       operation === "create"
         ? "The controller GitHub credential cannot create a pull request for this repository."
-        : "The controller GitHub credential cannot inspect pull requests for this repository.",
+        : operation === "close"
+          ? "The controller GitHub credential cannot delete a pull request for this repository."
+          : "The controller GitHub credential cannot inspect pull requests for this repository.",
     );
   }
   return error(
     "github-failed",
     operation === "create"
       ? "GitHub did not create the draft pull request."
-      : "GitHub did not return the repository's pull requests.",
+      : operation === "close"
+        ? "GitHub did not close the pull request."
+        : "GitHub did not return the repository's pull requests.",
   );
 }
 
@@ -744,6 +753,62 @@ export const make = Effect.fn("CloudGitCredentials.make")(function* (input: {
       );
     });
 
+  const closePullRequest: CloudGitCredentials["Service"]["closePullRequest"] = (request) =>
+    Effect.gen(function* () {
+      const repository = yield* decodeRepository(request.repository).pipe(
+        Effect.mapError(() =>
+          error("github-failed", "The configured GitHub repository is invalid."),
+        ),
+      );
+      if (!Number.isInteger(request.number) || request.number <= 0) {
+        return yield* error("github-failed", "The pull request number is invalid.");
+      }
+      const raw = yield* readSecret(input.githubTokenSecretRef, "GitHub API");
+      const token = decodeTokenSecret(raw);
+      if (token === null) {
+        return yield* error(
+          "invalid-secret",
+          "The configured GitHub API secret must contain one token without whitespace.",
+        );
+      }
+      return yield* withRunDirectory(request.runId, (directory) =>
+        runner
+          .run({
+            command: "gh",
+            args: [
+              "api",
+              "--hostname",
+              "github.com",
+              "--method",
+              "PATCH",
+              `repos/${repository}/pulls/${request.number}`,
+              "--input",
+              "-",
+            ],
+            env: {
+              GH_HOST: "github.com",
+              GH_TOKEN: token,
+              GITHUB_TOKEN: token,
+              GH_CONFIG_DIR: directory,
+              GH_DEBUG: "",
+            },
+            stdin: JSON.stringify({ state: "closed" }),
+            timeout: "30 seconds",
+            maxOutputBytes: 1024 * 1024,
+          })
+          .pipe(
+            Effect.mapError(() =>
+              error("github-failed", "The controller could not start the GitHub API request."),
+            ),
+            Effect.flatMap((result) =>
+              result.code === ChildProcessSpawner.ExitCode(0)
+                ? Effect.void
+                : Effect.fail(classifyGitHubFailure(result.stderr, "close")),
+            ),
+          ),
+      );
+    });
+
   return CloudGitCredentials.of({
     clone,
     fetch,
@@ -752,6 +817,7 @@ export const make = Effect.fn("CloudGitCredentials.make")(function* (input: {
     readBranch,
     findPullRequest,
     createDraftPullRequest,
+    closePullRequest,
   });
 });
 

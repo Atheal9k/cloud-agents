@@ -79,6 +79,7 @@ const fixture = Effect.fn("CloudEnvironmentBuildRunner.fixture")(function* () {
     readBranch: () => Effect.succeed(null),
     findPullRequest: () => Effect.succeed(null),
     createDraftPullRequest: () => Effect.die("This fixture never publishes."),
+    closePullRequest: () => Effect.die("This fixture never deletes a pull request."),
   });
 
   const environments = yield* makeEnvironments();

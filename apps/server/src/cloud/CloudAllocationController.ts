@@ -361,7 +361,11 @@ export const make = Effect.fn("CloudAllocationController.make")(function* (input
       grouped.set(row.event.allocationId, events);
     }
     const allocations = yield* Effect.forEach(grouped.values(), replayEvents).pipe(
-      Effect.map((values) => values.filter((value): value is RunAllocation => value !== undefined)),
+      Effect.map((values) =>
+        values.filter(
+          (value): value is RunAllocation => value !== undefined && value.deletedAt === undefined,
+        ),
+      ),
     );
     const controlPlane = yield* Effect.try({
       try: () => projectCloudControlPlane(grouped.values()),
@@ -563,6 +567,24 @@ export const make = Effect.fn("CloudAllocationController.make")(function* (input
           return yield* controllerError(
             "agent_busy",
             `Cloud agent for allocation '${current.id}' already has an active run.`,
+          );
+        }
+        if (current?.deletedAt !== undefined) {
+          return yield* controllerError(
+            "agent-deleted",
+            `Cloud agent for allocation '${current.id}' was permanently deleted.`,
+          );
+        }
+        if (
+          command.type === "allocation.agent-delete" &&
+          current !== undefined &&
+          (current.agentOutcome.status === "not-started" ||
+            current.agentOutcome.status === "running" ||
+            current.idleState.status === "waking")
+        ) {
+          return yield* controllerError(
+            "agent_busy",
+            `Cloud agent for allocation '${current.id}' still has an active run.`,
           );
         }
         if (command.type === "allocation.retry" && current?.cleanupState.status === "succeeded") {

@@ -623,4 +623,49 @@ describe("cloud allocation hibernation", () => {
     expect(cancelled.cleanupState.status).toBe("requested");
     expect(cancelled.agentOutcome.status).toBe("succeeded");
   });
+
+  it("permanently deletes a settled agent without launching compute", () => {
+    const deleted = applyAccepted(
+      idleAllocation(),
+      command({
+        type: "allocation.agent-delete",
+        commandId: "command-delete",
+        allocationId: "allocation-1",
+        attempt: 1,
+        occurredAt: "2026-09-18T10:00:00.000Z",
+      }),
+    ).allocation;
+
+    expect(deleted.deletedAt).toBe("2026-09-18T10:00:00.000Z");
+    expect(
+      decideRunAllocationCommand(
+        deleted,
+        command({
+          type: "allocation.follow-up",
+          commandId: "command-follow-up-deleted",
+          allocationId: "allocation-1",
+          attempt: 1,
+          occurredAt: "2026-09-18T10:00:01.000Z",
+          runId: "run-2",
+          execution: {
+            threadId: "thread-1",
+            title: "Wake",
+            selectedRef: "main",
+            unansweredRequestSeconds: 900,
+            turn: {
+              commandId: "command-follow-up-deleted",
+              messageId: "message-wake",
+              prompt: "Wake",
+              attachments: [],
+              modelSelection: { instanceId: "codex", model: "gpt-5.6-sol" },
+              runtimeMode: "approval-required",
+              interactionMode: "default",
+              createdAt: "2026-09-18T10:00:01.000Z",
+            },
+          },
+          deadlines,
+        }),
+      ),
+    ).toEqual([]);
+  });
 });

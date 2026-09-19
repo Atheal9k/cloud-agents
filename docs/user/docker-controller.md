@@ -306,8 +306,13 @@ the run shows as **Hibernated**; a later follow-up starts it again and reports w
 the filesystem returning does not imply the provider resumed its own session. The preview is
 withdrawn on its own grace period, 15 minutes by default, and the hard run deadline still applies
 to a run in flight. The controller captures the transcript, diff, verification output, workspace
-checkpoint, and declared artifacts, and saved results remain readable after the worker is gone and
-expire after seven days.
+checkpoint, and declared artifacts. Saved results stay reviewable from **Review cloud agents**
+(command palette, `Mod+Alt+R`, or Review on a recent cloud run) and from authorized `/cloud/agents/`
+and short-lived `/cloud/review/` links without waking the worker. Agent status (`ACTIVE`, `IDLE`,
+`ARCHIVED`) is separate from the latest run status and from whether preview or terminal is live.
+Artifact downloads use short-lived authorized URLs; untrusted HTML is download-only. Archive,
+unarchive, cancel, wake, pull-request deletion, and permanent delete are separate, access-checked
+actions. Results expire after seven days.
 
 **Stop** cancels provider work and requests cleanup. It does not delete an already opened pull
 request or a saved result. Retry creates a new allocation attempt after the prior attempt is

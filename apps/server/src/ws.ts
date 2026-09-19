@@ -121,6 +121,7 @@ import { makeProviderInstallation } from "./provider/providerInstallation.ts";
 import * as ServerSelfUpdate from "./cloud/selfUpdate.ts";
 import * as CloudAllocationController from "./cloud/CloudAllocationController.ts";
 import * as CloudArtifactAccess from "./cloud/CloudArtifactAccess.ts";
+import * as CloudAgentReview from "./cloud/CloudAgentReview.ts";
 import * as CloudEnvironmentBuildRunner from "./cloud/CloudEnvironmentBuildRunner.ts";
 import * as SharedBrowserGateway from "./cloud/SharedBrowserGateway.ts";
 import * as ServerLifecycleEvents from "./serverLifecycleEvents.ts";
@@ -568,6 +569,7 @@ const makeWsRpcLayer = (
       const previewGateway = yield* PreviewGateway.PreviewGateway;
       const sharedBrowserGateway = yield* SharedBrowserGateway.SharedBrowserGateway;
       const cloudArtifactAccess = yield* CloudArtifactAccess.CloudArtifactAccess;
+      const cloudAgentReview = yield* CloudAgentReview.CloudAgentReviewService;
       const cloudBuildRunner = yield* CloudEnvironmentBuildRunner.CloudEnvironmentBuildRunner;
       const deviceService = yield* DeviceService.DeviceService;
       const deviceHostContext =
@@ -3546,6 +3548,18 @@ const makeWsRpcLayer = (
         [WS_METHODS.cloudArtifactsGrant]: (input) =>
           observeRpcEffect(WS_METHODS.cloudArtifactsGrant, cloudArtifactAccess.grant(input), {
             "rpc.aggregate": "cloud-artifacts",
+          }),
+        [WS_METHODS.cloudAgentReviewInspect]: (input) =>
+          observeRpcEffect(WS_METHODS.cloudAgentReviewInspect, cloudAgentReview.inspect(input), {
+            "rpc.aggregate": "cloud-review",
+          }),
+        [WS_METHODS.cloudAgentReviewAct]: (input) =>
+          observeRpcEffect(WS_METHODS.cloudAgentReviewAct, cloudAgentReview.act(input), {
+            "rpc.aggregate": "cloud-review",
+          }),
+        [WS_METHODS.cloudAgentReviewShare]: (input) =>
+          observeRpcEffect(WS_METHODS.cloudAgentReviewShare, cloudAgentReview.share(input), {
+            "rpc.aggregate": "cloud-review",
           }),
         [WS_METHODS.previewAutomationConnect]: (input) =>
           observeRpcStreamEffect(
