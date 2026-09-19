@@ -248,3 +248,180 @@ it.effect("reports elapsed worker time and categorized estimate assumptions", ()
     expect(snapshot.spendingControl).toBe("estimate-only");
   }).pipe(Effect.provide(SqlitePersistenceMemory)),
 );
+
+it.effect("keeps one durable agent across runs and rejects active-run races", () =>
+  Effect.gen(function* () {
+    const controller = yield* make({ enabled: true });
+    const controlledLaunch = decodeCommand({
+      ...launchInput,
+      control: { agentId: "agent-1", runId: "run-1" },
+    });
+    let allocation = yield* controller.dispatch(controlledLaunch);
+    const duplicateAgent = yield* controller
+      .dispatch(
+        decodeCommand({
+          ...launchInput,
+          commandId: "command-duplicate-agent",
+          allocationId: "allocation-2",
+          control: { agentId: "agent-1", runId: "run-duplicate" },
+        }),
+      )
+      .pipe(Effect.flip);
+
+    expect(duplicateAgent.reason).toBe("agent_busy");
+    expect((yield* controller.snapshot).agents).toEqual([
+      expect.objectContaining({ id: "agent-1", status: "ACTIVE", activeRunId: "run-1" }),
+    ]);
+
+    const dispatch = (input: typeof RunAllocationCommand.Encoded) =>
+      controller.dispatch(decodeCommand(input));
+    allocation = yield* dispatch({
+      type: "allocation.launch-started",
+      commandId: "command-start-launch",
+      allocationId: allocation.id,
+      attempt: allocation.attempt,
+      occurredAt: "2026-09-17T03:00:01.000Z",
+      launchTemplate: { id: "lt-worker", version: 1 },
+    });
+    allocation = yield* dispatch({
+      type: "allocation.instance-launched",
+      commandId: "command-instance",
+      allocationId: allocation.id,
+      attempt: allocation.attempt,
+      occurredAt: "2026-09-17T03:00:02.000Z",
+      instanceId: "i-worker",
+    });
+    allocation = yield* dispatch({
+      type: "allocation.worker-booted",
+      commandId: "command-booted",
+      allocationId: allocation.id,
+      attempt: allocation.attempt,
+      occurredAt: "2026-09-17T03:00:03.000Z",
+    });
+    allocation = yield* dispatch({
+      type: "allocation.worker-registered",
+      commandId: "command-registered",
+      allocationId: allocation.id,
+      attempt: allocation.attempt,
+      occurredAt: "2026-09-17T03:00:04.000Z",
+      references: {
+        workerId: "worker-1",
+        environmentId: "environment-1",
+        threadId: "thread-allocation-1-1",
+      },
+      route: {
+        httpBaseUrl: "https://worker.example.test",
+        wsBaseUrl: "wss://worker.example.test",
+        accessToken: "worker-token",
+      },
+    });
+    allocation = yield* dispatch({
+      type: "allocation.agent-started",
+      commandId: "command-run-started",
+      allocationId: allocation.id,
+      attempt: allocation.attempt,
+      occurredAt: "2026-09-17T03:00:05.000Z",
+    });
+    allocation = yield* dispatch({
+      type: "allocation.agent-succeeded",
+      commandId: "command-run-finished",
+      allocationId: allocation.id,
+      attempt: allocation.attempt,
+      occurredAt: "2026-09-17T03:00:06.000Z",
+      resultLocation: { uri: "s3://results/run-1" },
+    });
+
+    expect((yield* controller.snapshot).agents?.[0]).toMatchObject({
+      id: "agent-1",
+      status: "IDLE",
+    });
+
+    allocation = yield* dispatch({
+      type: "allocation.follow-up",
+      commandId: "command-follow-up",
+      allocationId: allocation.id,
+      attempt: allocation.attempt,
+      occurredAt: "2026-09-17T03:01:00.000Z",
+      runId: "run-2",
+      execution: {
+        ...launchInput.execution,
+        title: "Review the result",
+        turn: {
+          ...launchInput.execution.turn,
+          commandId: "command-follow-up",
+          messageId: "message-follow-up",
+          prompt: "Review the result",
+          createdAt: "2026-09-17T03:01:00.000Z",
+        },
+      },
+      deadlines: {
+        launchBy: "2026-09-17T03:06:00.000Z",
+        bootBy: "2026-09-17T03:11:00.000Z",
+        registerBy: "2026-09-17T03:16:00.000Z",
+        expiresAt: "2026-09-17T05:01:00.000Z",
+        cleanupBy: "2026-09-17T05:06:00.000Z",
+      },
+    });
+    const activeSnapshot = yield* controller.snapshot;
+    expect(activeSnapshot.agents?.[0]).toMatchObject({
+      id: "agent-1",
+      status: "ACTIVE",
+      activeRunId: "run-2",
+    });
+    expect(activeSnapshot.runs?.map((run) => [run.id, run.status])).toEqual([
+      ["run-1", "FINISHED"],
+      ["run-2", "CREATING"],
+    ]);
+
+    const busyFollowUp = yield* dispatch({
+      type: "allocation.follow-up",
+      commandId: "command-follow-up-race",
+      allocationId: allocation.id,
+      attempt: allocation.attempt,
+      occurredAt: "2026-09-17T03:01:01.000Z",
+      runId: "run-3",
+      execution: launchInput.execution,
+      deadlines: launchInput.deadlines,
+    }).pipe(Effect.flip);
+    const busyArchive = yield* dispatch({
+      type: "allocation.agent-archive",
+      commandId: "command-archive-race",
+      allocationId: allocation.id,
+      attempt: allocation.attempt,
+      occurredAt: "2026-09-17T03:01:02.000Z",
+    }).pipe(Effect.flip);
+    expect(busyFollowUp.reason).toBe("agent_busy");
+    expect(busyArchive.reason).toBe("agent_busy");
+
+    allocation = yield* dispatch({
+      type: "allocation.cancel",
+      commandId: "command-cancel-follow-up",
+      allocationId: allocation.id,
+      attempt: allocation.attempt,
+      occurredAt: "2026-09-17T03:01:03.000Z",
+    });
+    allocation = yield* dispatch({
+      type: "allocation.agent-archive",
+      commandId: "command-archive",
+      allocationId: allocation.id,
+      attempt: allocation.attempt,
+      occurredAt: "2026-09-17T03:01:04.000Z",
+    });
+    expect((yield* controller.snapshot).agents?.[0]).toMatchObject({
+      id: "agent-1",
+      status: "ARCHIVED",
+    });
+
+    yield* dispatch({
+      type: "allocation.agent-unarchive",
+      commandId: "command-unarchive",
+      allocationId: allocation.id,
+      attempt: allocation.attempt,
+      occurredAt: "2026-09-17T03:01:05.000Z",
+    });
+    expect((yield* controller.snapshot).agents?.[0]).toMatchObject({
+      id: "agent-1",
+      status: "IDLE",
+    });
+  }).pipe(Effect.provide(SqlitePersistenceMemory)),
+);

@@ -437,7 +437,7 @@ it.effect("expires an allocation without a connected client", () =>
     yield* reconciler.reconcileOnce();
 
     const allocation = (yield* controller.snapshot).allocations[0];
-    expect(allocation?.agentOutcome.status).toBe("cancelled");
+    expect(allocation?.agentOutcome.status).toBe("expired");
     expect(allocation?.cleanupState.status).toBe("requested");
     expect(state.launchCalls).toBe(0);
   }).pipe(Effect.provide(SqlitePersistenceMemory)),

@@ -16,7 +16,7 @@ import { SqlitePersistenceMemory } from "../persistence/Layers/Sqlite.ts";
 import * as CloudAllocationController from "./CloudAllocationController.ts";
 import * as CloudWorkerRegistration from "./CloudWorkerRegistration.ts";
 
-const decodeCommand = Schema.decodeSync(RunAllocationCommand);
+const decodeUnknownCommand = Schema.decodeUnknownSync(RunAllocationCommand);
 const decodeRegistration = Schema.decodeSync(RunWorkerRegistrationInput);
 const descriptor = Schema.decodeSync(ExecutionEnvironmentDescriptor)({
   environmentId: "environment-1",
@@ -43,8 +43,12 @@ function firstAllocation(snapshot: {
   return allocation;
 }
 
-function command(type: string, sequence: number, extra: Record<string, unknown> = {}) {
-  return decodeCommand({
+function command(
+  type: RunAllocationCommand["type"],
+  sequence: number,
+  extra: Record<string, unknown> = {},
+) {
+  return decodeUnknownCommand({
     type,
     commandId: `command-${sequence}`,
     allocationId: "allocation-1",

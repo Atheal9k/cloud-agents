@@ -1,5 +1,7 @@
 import {
+  CloudAgentId,
   CloudProviderUnansweredRequestSeconds,
+  CloudRunId,
   CommandId,
   MessageId,
   type OrchestrationProjectShell,
@@ -197,6 +199,10 @@ export function buildCloudRunLaunchCommand(input: {
         branch: `cloud/${input.requestId.slice(0, 12)}`,
       },
       publication,
+      control: {
+        agentId: CloudAgentId.make(`agent:${input.requestId}`),
+        runId: CloudRunId.make(`run:${input.requestId}:1`),
+      },
       execution: {
         threadId,
         title,

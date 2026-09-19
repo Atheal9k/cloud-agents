@@ -153,8 +153,14 @@ describe("cloud allocation transitions", () => {
 
   it("retains the launch publication choice in controller state", () => {
     const automaticLaunch = command({
-      ...launch,
+      type: "allocation.launch",
       commandId: "command-automatic-publication",
+      allocationId: "allocation-1",
+      attempt: 1,
+      occurredAt: "2026-09-17T03:00:00.000Z",
+      target,
+      profile,
+      deadlines,
       publication: {
         mode: "automatic-draft-pr",
         baseBranch: "main",
@@ -162,6 +168,9 @@ describe("cloud allocation transitions", () => {
         body: "Controller-owned publication.",
       },
     });
+    if (automaticLaunch.type !== "allocation.launch") {
+      throw new Error("Expected a launch command");
+    }
 
     const launched = applyAccepted(undefined, automaticLaunch);
 

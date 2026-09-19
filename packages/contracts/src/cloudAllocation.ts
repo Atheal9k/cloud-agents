@@ -2,8 +2,11 @@ import * as Effect from "effect/Effect";
 import * as Schema from "effect/Schema";
 
 import {
+  CloudAgentId,
+  CloudRunId,
   CommandId,
   CloudRunResultId,
+  CloudRuntimeAttemptId,
   EnvironmentId,
   IsoDateTime,
   NonNegativeInt,
@@ -110,6 +113,146 @@ export const RunExecutionIntent = Schema.Struct({
 });
 export type RunExecutionIntent = typeof RunExecutionIntent.Type;
 
+export const RunControlPlaneLink = Schema.Struct({
+  agentId: CloudAgentId,
+  runId: CloudRunId,
+});
+export type RunControlPlaneLink = typeof RunControlPlaneLink.Type;
+
+export const CloudAgentRuntimeReferences = Schema.Struct({
+  runtimeAttemptId: CloudRuntimeAttemptId,
+  workerId: RunWorkerId,
+  environmentId: EnvironmentId,
+  threadId: ThreadId,
+});
+export type CloudAgentRuntimeReferences = typeof CloudAgentRuntimeReferences.Type;
+
+export const CloudAgentConversation = Schema.Struct({
+  title: TrimmedNonEmptyString,
+  runIds: Schema.Array(CloudRunId),
+});
+export type CloudAgentConversation = typeof CloudAgentConversation.Type;
+
+export const CloudAgentStatus = Schema.Literals(["ACTIVE", "IDLE", "ARCHIVED"]);
+export type CloudAgentStatus = typeof CloudAgentStatus.Type;
+
+const CloudAgentBase = {
+  id: CloudAgentId,
+  allocationId: RunAllocationId,
+  conversation: CloudAgentConversation,
+  repository: TrimmedNonEmptyString,
+  baseCommit: TrimmedNonEmptyString,
+  environmentProfileId: TrimmedNonEmptyString,
+  branches: Schema.Array(TrimmedNonEmptyString),
+  createdAt: IsoDateTime,
+  updatedAt: IsoDateTime,
+};
+
+export const CloudAgent = Schema.Union([
+  Schema.Struct({
+    ...CloudAgentBase,
+    status: Schema.Literal("ACTIVE"),
+    activeRunId: CloudRunId,
+    runtime: Schema.optionalKey(CloudAgentRuntimeReferences),
+  }),
+  Schema.Struct({ ...CloudAgentBase, status: Schema.Literal("IDLE") }),
+  Schema.Struct({
+    ...CloudAgentBase,
+    status: Schema.Literal("ARCHIVED"),
+    archivedAt: IsoDateTime,
+  }),
+]);
+export type CloudAgent = typeof CloudAgent.Type;
+
+const CloudRunBase = {
+  id: CloudRunId,
+  agentId: CloudAgentId,
+  allocationId: RunAllocationId,
+  branch: TrimmedNonEmptyString,
+  execution: Schema.optionalKey(RunExecutionIntent),
+  createdAt: IsoDateTime,
+  updatedAt: IsoDateTime,
+};
+
+export const CloudRunStatus = Schema.Literals([
+  "CREATING",
+  "RUNNING",
+  "FINISHED",
+  "ERROR",
+  "CANCELLED",
+  "EXPIRED",
+]);
+export type CloudRunStatus = typeof CloudRunStatus.Type;
+
+export const CloudRun = Schema.Union([
+  Schema.Struct({ ...CloudRunBase, status: Schema.Literal("CREATING") }),
+  Schema.Struct({
+    ...CloudRunBase,
+    status: Schema.Literal("RUNNING"),
+    startedAt: IsoDateTime,
+  }),
+  Schema.Struct({
+    ...CloudRunBase,
+    status: Schema.Literal("FINISHED"),
+    completedAt: IsoDateTime,
+    resultLocation: RunResultLocation,
+  }),
+  Schema.Struct({
+    ...CloudRunBase,
+    status: Schema.Literal("ERROR"),
+    completedAt: IsoDateTime,
+    reason: TrimmedNonEmptyString,
+    resultLocation: Schema.optionalKey(RunResultLocation),
+  }),
+  Schema.Struct({
+    ...CloudRunBase,
+    status: Schema.Literal("CANCELLED"),
+    completedAt: IsoDateTime,
+  }),
+  Schema.Struct({
+    ...CloudRunBase,
+    status: Schema.Literal("EXPIRED"),
+    completedAt: IsoDateTime,
+  }),
+]);
+export type CloudRun = typeof CloudRun.Type;
+
+const CloudRuntimeAttemptBase = {
+  id: CloudRuntimeAttemptId,
+  agentId: CloudAgentId,
+  allocationId: RunAllocationId,
+  attempt: RunAllocationAttempt,
+  runIds: Schema.Array(CloudRunId),
+  createdAt: IsoDateTime,
+  updatedAt: IsoDateTime,
+};
+
+export const CloudRuntimeAttemptStatus = Schema.Literals([
+  "CREATING",
+  "ACTIVE",
+  "ERROR",
+  "RELEASED",
+  "FENCED",
+]);
+export type CloudRuntimeAttemptStatus = typeof CloudRuntimeAttemptStatus.Type;
+
+export const CloudRuntimeAttempt = Schema.Union([
+  Schema.Struct({ ...CloudRuntimeAttemptBase, status: Schema.Literal("CREATING") }),
+  Schema.Struct({
+    ...CloudRuntimeAttemptBase,
+    status: Schema.Literal("ACTIVE"),
+    references: RunWorkerReferences,
+  }),
+  Schema.Struct({
+    ...CloudRuntimeAttemptBase,
+    status: Schema.Literal("ERROR"),
+    reason: TrimmedNonEmptyString,
+  }),
+  Schema.Struct({ ...CloudRuntimeAttemptBase, status: Schema.Literal("RELEASED") }),
+  Schema.Struct({ ...CloudRuntimeAttemptBase, status: Schema.Literal("FENCED") }),
+]);
+export type CloudRuntimeAttempt = typeof CloudRuntimeAttempt.Type;
+
 const defaultPublicationIntent = RunPublicationIntent.make({ mode: "review-only" });
 const RunPublicationIntentWithDefault = RunPublicationIntent.pipe(
   Schema.withDecodingDefault(Effect.succeed(defaultPublicationIntent)),
@@ -200,6 +343,7 @@ export const RunAgentOutcome = Schema.Union([
     completedAt: IsoDateTime,
   }),
   Schema.Struct({ status: Schema.Literal("cancelled"), cancelledAt: IsoDateTime }),
+  Schema.Struct({ status: Schema.Literal("expired"), expiredAt: IsoDateTime }),
 ]);
 export type RunAgentOutcome = typeof RunAgentOutcome.Type;
 
@@ -233,6 +377,8 @@ export const RunAllocation = Schema.Struct({
   publication: RunPublicationIntentWithDefault,
   /** Missing on allocations requested before the web launch flow was added. */
   execution: Schema.optionalKey(RunExecutionIntent),
+  /** Missing on allocations created before durable cloud agents and runs. */
+  control: Schema.optionalKey(RunControlPlaneLink),
   profile: RunWorkerProfile,
   deadlines: RunDeadlines,
   allocationState: RunAllocationState,
@@ -240,6 +386,7 @@ export const RunAllocation = Schema.Struct({
   previewState: RunPreviewState,
   cleanupState: RunCleanupState,
   retry: Schema.optionalKey(RunRetryRecord),
+  archivedAt: Schema.optionalKey(IsoDateTime),
   handledCommandIds: Schema.Array(CommandId),
   sequence: NonNegativeInt,
   createdAt: IsoDateTime,
@@ -265,6 +412,7 @@ export const RunAllocationCommand = Schema.Union([
     target: RunRepositoryTarget,
     publication: RunPublicationIntentWithDefault,
     execution: Schema.optionalKey(RunExecutionIntent),
+    control: Schema.optionalKey(RunControlPlaneLink),
     profile: RunWorkerProfile,
     deadlines: RunDeadlines,
   }),
@@ -321,6 +469,16 @@ export const RunAllocationCommand = Schema.Union([
   }),
   Schema.Struct({ ...AttemptCommandBase, type: Schema.Literal("allocation.preview-withdrawn") }),
   Schema.Struct({ ...AttemptCommandBase, type: Schema.Literal("allocation.cancel") }),
+  Schema.Struct({ ...AttemptCommandBase, type: Schema.Literal("allocation.expire") }),
+  Schema.Struct({
+    ...AttemptCommandBase,
+    type: Schema.Literal("allocation.follow-up"),
+    runId: CloudRunId,
+    execution: RunExecutionIntent,
+    deadlines: RunDeadlines,
+  }),
+  Schema.Struct({ ...AttemptCommandBase, type: Schema.Literal("allocation.agent-archive") }),
+  Schema.Struct({ ...AttemptCommandBase, type: Schema.Literal("allocation.agent-unarchive") }),
   Schema.Struct({ ...AttemptCommandBase, type: Schema.Literal("allocation.cleanup-started") }),
   Schema.Struct({ ...AttemptCommandBase, type: Schema.Literal("allocation.cleanup-succeeded") }),
   Schema.Struct({
@@ -356,6 +514,8 @@ export const RunAllocationEvent = Schema.Union([
     publication: Schema.optionalKey(RunPublicationIntent),
     /** Missing on allocation events written before CA-19. */
     execution: Schema.optionalKey(RunExecutionIntent),
+    /** Missing on allocation events written before CA-40. */
+    control: Schema.optionalKey(RunControlPlaneLink),
     profile: RunWorkerProfile,
     deadlines: RunDeadlines,
   }),
@@ -412,6 +572,16 @@ export const RunAllocationEvent = Schema.Union([
   }),
   Schema.Struct({ ...EventBase, type: Schema.Literal("allocation.preview-withdrawn") }),
   Schema.Struct({ ...EventBase, type: Schema.Literal("allocation.cancellation-requested") }),
+  Schema.Struct({ ...EventBase, type: Schema.Literal("allocation.expired") }),
+  Schema.Struct({
+    ...EventBase,
+    type: Schema.Literal("allocation.follow-up-requested"),
+    runId: CloudRunId,
+    execution: RunExecutionIntent,
+    deadlines: RunDeadlines,
+  }),
+  Schema.Struct({ ...EventBase, type: Schema.Literal("allocation.agent-archived") }),
+  Schema.Struct({ ...EventBase, type: Schema.Literal("allocation.agent-unarchived") }),
   Schema.Struct({ ...EventBase, type: Schema.Literal("allocation.cleanup-started") }),
   Schema.Struct({ ...EventBase, type: Schema.Literal("allocation.cleanup-succeeded") }),
   Schema.Struct({
@@ -509,6 +679,12 @@ export const CloudAllocationSnapshot = Schema.Struct({
   /** Billing alerts can lag and are not an exact live spending cap. */
   spendingControl: Schema.Literal("estimate-only"),
   allocations: Schema.Array(RunAllocation),
+  /** Absent when decoding snapshots from controllers older than CA-40. */
+  agents: Schema.optionalKey(Schema.Array(CloudAgent)),
+  /** Absent when decoding snapshots from controllers older than CA-40. */
+  runs: Schema.optionalKey(Schema.Array(CloudRun)),
+  /** Absent when decoding snapshots from controllers older than CA-40. */
+  runtimeAttempts: Schema.optionalKey(Schema.Array(CloudRuntimeAttempt)),
   usage: Schema.Array(CloudRunUsage),
 });
 export type CloudAllocationSnapshot = typeof CloudAllocationSnapshot.Type;
@@ -520,6 +696,9 @@ export class CloudAllocationControllerError extends Schema.TaggedError<CloudAllo
       "controller-disabled",
       "admission-stopped",
       "allocation-not-found",
+      "agent_busy",
+      "agent-archived",
+      "run-already-exists",
       "invalid-request",
       "queue-full",
       "persistence-failed",
