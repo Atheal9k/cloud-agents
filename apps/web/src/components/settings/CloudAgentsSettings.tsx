@@ -444,6 +444,23 @@ function CloudAgentsSettingsForEnvironment({
                       `${environment.egressMode}${environment.egressAllowlist.length > 0 ? ` · ${environment.egressAllowlist.join(", ")}` : ""}`,
                     ],
                     [
+                      "Network",
+                      environment.networkProfile === undefined
+                        ? "public"
+                        : environment.networkProfile.enabled
+                          ? `${environment.networkProfile.kind} · ${environment.networkProfile.costClass}`
+                          : `disabled · was ${environment.networkProfile.disabledFrom ?? environment.networkProfile.kind}`,
+                    ],
+                    [
+                      "Private dependencies",
+                      environment.privateDependencies === undefined ||
+                      environment.privateDependencies.length === 0
+                        ? "none"
+                        : environment.privateDependencies
+                            .map((dependency) => `${dependency.kind} ${dependency.destination}`)
+                            .join(", "),
+                    ],
+                    [
                       "Secrets",
                       environment.secrets.length === 0
                         ? "none"

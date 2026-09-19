@@ -38,13 +38,43 @@ An environment chooses one of three modes in `environment.json`:
 
 The controller's own destinations are always reachable and are listed explicitly
 on every resolved policy so an allowlist-only runtime is never mysterious: the
-controller itself, the source-control hosts, and the artifact store.
+controller itself, the source-control hosts, the artifact store, and Cursor
+(`cursor.com`, `api2.cursor.sh`).
 
 Set a team ceiling with `T3CODE_CLOUD_EGRESS_MODE` and
 `T3CODE_CLOUD_EGRESS_ALLOWLIST`. Setting `T3CODE_CLOUD_EGRESS_ADMIN_LOCK=true`
 makes it a lock: an environment may narrow the mode or the allowlist and may not
 widen either. A narrowed policy reports `source: narrowed` with the mode it
 overrode.
+
+## Private dependencies
+
+An environment can name the private submodule, Git LFS, and package-registry
+hosts it needs. The controller checks each destination against the resolved
+egress policy before a Build starts and reports the failing host. Submodule and
+LFS fetch go through the same trusted Git wrapper as clone, so task code never
+sees the publication key. Only the secrets those dependencies name are injected
+into setup; `AWS_`, `GH_`, `GIT_`, `SSH_`, and `T3CODE_` names stay on the
+controller. Credential files such as `.npmrc` are stripped from snapshots,
+caches, and exported trees.
+
+## Company-network profiles
+
+Optional overlays change how the guest reaches private networks. Each profile
+records cost class, trust boundary, and routing:
+
+| Kind                | Cost         | Trust                 | Routing               |
+| ------------------- | ------------ | --------------------- | --------------------- |
+| `public`            | included     | Public internet       | Direct guest egress   |
+| `stable-egress`     | per-GB       | Controller-owned NAT  | Stable public address |
+| `tailscale`         | subscription | Tailnet identity      | Overlay               |
+| `cloudflare-tunnel` | subscription | Cloudflare edge       | Named tunnel          |
+| `aws-privatelink`   | per-hour     | VPC endpoint policies | PrivateLink           |
+
+Set `T3CODE_CLOUD_NETWORK_PROFILE` for a team default. A locked team profile is
+a ceiling on more-open overlays. `T3CODE_CLOUD_NETWORK_PROFILE_ENABLED=false`
+turns the overlay off without stranding runs: public routing plus the documented
+exceptions remain.
 
 ## Runtime identity
 

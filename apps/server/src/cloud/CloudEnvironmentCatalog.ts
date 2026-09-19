@@ -5,6 +5,7 @@ import {
   CloudEnvironmentId,
   cloudEnvironmentSecretValidationMessage,
   cloudEnvironmentVersionSummary,
+  cloudNetworkProfileDetails,
   type CloudEnvironmentResolution,
   type CloudEnvironmentResolutionInput,
   type CloudEnvironmentRestoreInput,
@@ -78,6 +79,8 @@ function effectivePolicy(
     mcpServerAllowlist: config.mcpServerAllowlist ?? [],
     ports: config.ports ?? [],
     secrets,
+    privateDependencies: config.privateDependencies ?? [],
+    networkProfile: cloudNetworkProfileDetails(config.networkProfile),
   };
 }
 

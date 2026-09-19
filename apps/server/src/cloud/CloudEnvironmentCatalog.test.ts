@@ -158,6 +158,43 @@ it.effect("refuses a saved environment that would shadow a committed repository 
   }).pipe(Effect.provide(SqlitePersistenceMemory)),
 );
 
+it.effect("records private dependencies and the resolved network overlay", () =>
+  Effect.gen(function* () {
+    const catalog = yield* make();
+    const saved = yield* catalog.save(
+      decodeSave({
+        ...personal,
+        config: {
+          ...personal.config,
+          privateDependencies: [
+            {
+              id: "npm",
+              kind: "package-registry",
+              destination: "registry.npmjs.org",
+              secretName: "NPM_TOKEN",
+            },
+          ],
+          networkProfile: { kind: "tailscale" },
+        },
+      }),
+    );
+
+    expect(saved.current.effectivePolicy.privateDependencies).toEqual([
+      {
+        id: "npm",
+        kind: "package-registry",
+        destination: "registry.npmjs.org",
+        secretName: "NPM_TOKEN",
+      },
+    ]);
+    expect(saved.current.effectivePolicy.networkProfile).toMatchObject({
+      kind: "tailscale",
+      enabled: true,
+      costClass: "subscription",
+    });
+  }).pipe(Effect.provide(SqlitePersistenceMemory)),
+);
+
 it.effect("rejects stale edits", () =>
   Effect.gen(function* () {
     const catalog = yield* make();
