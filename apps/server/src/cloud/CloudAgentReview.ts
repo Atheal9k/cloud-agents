@@ -227,13 +227,13 @@ export const make = Effect.fn("CloudAgentReview.make")(function* () {
             `Cloud agent '${agent.id}' still has an active run.`,
           );
         }
-        yield* results
-          .purge(CloudRunResults.cloudResultIdFor(allocation.id, allocation.attempt))
-          .pipe(Effect.ignore);
+        // Review only records the intent. Retention releases the compute claim
+        // and erases the retained files, so the page never deletes data a live
+        // guest still owns.
         yield* dispatch(allocation, "allocation.agent-delete", input.commandId, input.occurredAt);
         return yield* reviewError(
           "agent-deleted",
-          `Cloud agent '${agent.id}' was permanently deleted.`,
+          `Cloud agent '${agent.id}' is being permanently deleted.`,
         );
       }
       case "delete-pr":

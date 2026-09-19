@@ -4,21 +4,22 @@ import {
   CommandId,
   type CloudAgentReview,
   type CloudAgentReviewAction,
+  type EnvironmentId,
 } from "@t3tools/contracts";
 import { Link } from "@tanstack/react-router";
 import { AsyncResult } from "effect/unstable/reactivity";
 import { useEffect, useState } from "react";
 
-import { Button } from "../components/ui/button";
-import { cloudAllocations } from "../state/cloudAllocations";
-import { useAtomCommand } from "../state/use-atom-command";
-import { randomUUID } from "../lib/utils";
+import { Button } from "../ui/button";
+import { cloudAllocations } from "../../state/cloudAllocations";
+import { useAtomCommand } from "../../state/use-atom-command";
+import { randomUUID } from "../../lib/utils";
 import {
   cloudAgentStatusLabel,
   cloudDiffInspectionLabel,
   cloudReviewActionLabel,
   cloudSessionAvailabilityLabel,
-} from "../cloud/cloudAgentReviewPresentation";
+} from "../../cloud/cloudAgentReviewPresentation";
 
 function inspectionBody(inspection: CloudAgentReview["diff"]): string {
   switch (inspection.status) {
@@ -32,7 +33,7 @@ function inspectionBody(inspection: CloudAgentReview["diff"]): string {
 }
 
 export function CloudAgentReviewView(props: {
-  readonly environmentId: string;
+  readonly environmentId: EnvironmentId;
   readonly agentId: CloudAgentId;
 }) {
   const inspect = useAtomCommand(cloudAllocations.inspectAgentReview, { reportFailure: false });
@@ -235,7 +236,7 @@ export function CloudAgentReviewView(props: {
   );
 }
 
-export function CloudAgentReviewList(props: { readonly environmentId: string }) {
+export function CloudAgentReviewList(props: { readonly environmentId: EnvironmentId }) {
   const snapshotResult = useAtomValue(
     cloudAllocations.snapshot({ environmentId: props.environmentId, input: {} }),
   );

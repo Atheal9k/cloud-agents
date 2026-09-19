@@ -207,8 +207,19 @@ prepared tree rather than a cold clone. When no fresh Build exists the
 allocation carries none and the run prepares for itself, which is the honest
 outcome when the refs, config, or secrets may have moved on.
 
-The base stage records the base a snapshot was made on rather than packing an
-image; packing Linux runtimes is CA-44's work. The base is part of the config
+The base stage records the base a snapshot was made on. Linux runtimes pack as
+Firecracker guests on hypervisor hosts in a dedicated execution account. Each
+guest consumes explicit CPU, memory, disk, and profile slots: CPU may be
+oversubscribed within the host's measured ratio, but memory and disk may not,
+so one agent cannot OOM a neighbor. A guest gets its own VM, encrypted disk
+key, tap network, and cgroup, and cannot read hypervisor credentials, instance
+metadata, or sibling disks. See
+[`firecrackerPlacement`](../../apps/server/src/cloud/firecrackerPlacement.ts).
+
+Losing a hypervisor reschedules only guests that already have a snapshot.
+Active processes are not migrated. The older per-thread `RunInstances` path is
+still a migration fallback: it is tagged `ec2-migration-fallback` and is not
+Cursor parity. Packing is `cursor-firecracker`. The base is part of the config
 and therefore part of the fingerprint, so changing it still invalidates the
 snapshot. `install` runs from a generated script file rather than an inline
 shell argument, because passing a shell string as one spawn argument is mangled
@@ -267,3 +278,51 @@ depends on.
 Compute is metered across these transitions by summing the intervals a guest
 was running, rather than from launch to cleanup. An open conversation would
 otherwise report days of compute it never used.
+
+## Retention, archive, and deletion
+
+Live compute, the disk an idle agent left behind, the conversation, and the
+retained artifacts each leave on their own terms. Keeping them separate is what
+lets an abandoned disk stop costing storage while the conversation it belongs
+to stays readable forever. See
+[`cloudRetentionPolicy`](../../apps/server/src/cloud/cloudRetentionPolicy.ts)
+and [`CloudAgentRetention`](../../apps/server/src/cloud/CloudAgentRetention.ts).
+
+A hibernated disk gets a rolling ninety-day inactivity window, reissued in full
+by every successful start or resume rather than extended. The clock is read
+from the last start or resume, not from `updatedAt`, because the sweep writes
+events itself and would otherwise keep an abandoned agent alive by touching it.
+Collecting an expired disk only requests cleanup; the reconciler is still the
+one thing that terminates a guest, so a collection pass cannot reach one that
+is running or waking. The conversation survives, and a later follow-up places a
+fresh runtime instead of restoring a snapshot that no longer exists.
+
+Conversations and runs are kept indefinitely. An administrator can set
+`T3CODE_CLOUD_CONVERSATION_RETENTION_DAYS`, where the default `0` means
+forever; a cap deletes rather than archives, because an agent an operator can
+still read is not a retention limit. Retained artifacts keep their own declared
+expiry and are swept on the same pass.
+
+Archive releases the runtime claim along with the stopped guest it was holding.
+That is what makes unarchive honest: eligibility comes back without waking
+anything, because there is no snapshot left to restore, and the follow-up that
+comes next places a new runtime. Archiving and deleting both refuse while a run
+is in flight, and both are idempotent.
+
+Permanent delete is the one place this system erases rather than hides. The
+delete is recorded first and the guest released before anything is removed, so
+a controller that crashes mid-delete finishes it rather than leaving half a
+conversation behind. Once cleanup succeeds, the retained results for every
+attempt are erased and the agent's event rows are deleted in the same
+transaction that writes its tombstone. The rows have to go: the prompt, titles,
+and run history live in them, and a delete that only hid the conversation would
+not be permanent. The tombstone is all that remains, which is what keeps the
+delete idempotent and visible without retaining what it erased.
+
+Two limits are recorded rather than papered over. An immutable disk snapshot
+leaves on policy expiry, not on demand, so the tombstone says `policy-expiry`
+instead of claiming the disk is gone. Published branches and pull requests are
+never touched, because nothing in the delete path talks to a remote. Result
+directories are derived from the allocation rather than taken as a path, so a
+purge cannot reach another agent's data, and Build snapshots live in their own
+root that retention never reads.

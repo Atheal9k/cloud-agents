@@ -16,6 +16,7 @@ import {
   CloudRunResultId,
   type OrchestrationThreadDetailSnapshot,
   type RunAllocation,
+  type RunAllocationId,
 } from "@t3tools/contracts";
 import * as Context from "effect/Context";
 import * as DateTime from "effect/DateTime";
@@ -91,7 +92,19 @@ export class CloudRunResults extends Context.Service<
     readonly startContinuation: (
       input: CloudResultContinuationInput,
     ) => Effect.Effect<CloudResultContinuationRecord, CloudResultError>;
-    readonly purge: (resultId: CloudRunResultId) => Effect.Effect<void, CloudResultError>;
+    /**
+     * Removes everything retained for one allocation's attempts: transcript,
+     * diff, verification, workspace bundle, and artifacts. Result directories
+     * are derived from the allocation, so a purge cannot reach another
+     * agent's data even when asked to. Already-absent attempts are a no-op,
+     * which keeps a re-run after a crash safe.
+     */
+    readonly purgeAllocation: (input: {
+      readonly allocationId: RunAllocationId;
+      readonly attempts: ReadonlyArray<number>;
+    }) => Effect.Effect<ReadonlyArray<CloudRunResultId>, CloudResultError>;
+    /** Drops every retained result past its declared expiry. */
+    readonly purgeExpired: Effect.Effect<ReadonlyArray<CloudRunResultId>, CloudResultError>;
   }
 >()("t3/cloud/CloudRunResults") {}
 
@@ -119,6 +132,7 @@ function resultIdFor(allocationId: string, attempt: number): CloudRunResultId {
   );
 }
 
+/** Lets a reader locate one attempt's retained result without capturing it. */
 export function cloudResultIdFor(allocationId: string, attempt: number): CloudRunResultId {
   return resultIdFor(allocationId, attempt);
 }
@@ -224,6 +238,7 @@ export const make = Effect.fn("CloudRunResults.make")(function* (input: CloudRun
   const purgeExpired = Effect.fn("CloudRunResults.purgeExpired")(function* () {
     const nowMillis = DateTime.toEpochMillis(yield* DateTime.now);
     const entries = yield* fs.readDirectory(input.resultsRoot);
+    const purged: Array<CloudRunResultId> = [];
     for (const entry of entries) {
       if (!/^[a-f0-9]{64}$/.test(entry)) continue;
       const directory = path.join(input.resultsRoot, entry);
@@ -238,9 +253,39 @@ export const make = Effect.fn("CloudRunResults.make")(function* (input: CloudRun
         Date.parse(status.value.manifest.expiresAt) <= nowMillis
       ) {
         yield* fs.remove(directory, { recursive: true, force: true });
+        purged.push(CloudRunResultId.make(entry));
       }
     }
+    return purged as ReadonlyArray<CloudRunResultId>;
   });
+
+  /**
+   * Derives each attempt's directory from the allocation rather than taking a
+   * path, so the only thing a delete can erase is the agent that asked for it.
+   */
+  const purgeAllocation: CloudRunResults["Service"]["purgeAllocation"] = (request) =>
+    mutex.withPermits(1)(
+      Effect.gen(function* () {
+        const purged: Array<CloudRunResultId> = [];
+        for (const attempt of request.attempts) {
+          const resultId = resultIdFor(request.allocationId, attempt);
+          const directory = runDirectory(path, input.resultsRoot, resultId);
+          const exists = yield* fs.exists(directory).pipe(Effect.orElseSucceed(() => false));
+          if (!exists) continue;
+          yield* fs.remove(directory, { recursive: true, force: true });
+          purged.push(resultId);
+        }
+        return purged as ReadonlyArray<CloudRunResultId>;
+      }).pipe(
+        Effect.mapError(() =>
+          resultError({
+            reason: "capture-failed",
+            message: "The retained cloud results could not be erased.",
+            retryable: true,
+          }),
+        ),
+      ),
+    );
 
   const readManifest = Effect.fn("CloudRunResults.readManifest")(function* (
     resultId: CloudRunResultId,
@@ -1022,23 +1067,6 @@ export const make = Effect.fn("CloudRunResults.make")(function* (input: CloudRun
     return record;
   });
 
-  const purge: CloudRunResults["Service"]["purge"] = Effect.fn("CloudRunResults.purge")(function* (
-    resultId,
-  ) {
-    yield* fs.remove(runDirectory(path, input.resultsRoot, resultId), {
-      recursive: true,
-      force: true,
-    }).pipe(
-      Effect.mapError(() =>
-        resultError({
-          reason: "capture-failed",
-          message: "The retained cloud result could not be deleted.",
-          retryable: true,
-        }),
-      ),
-    );
-  });
-
   yield* fs.makeDirectory(input.resultsRoot, { recursive: true });
   yield* purgeExpired().pipe(
     Effect.catch((cause) => Effect.logWarning("Could not purge expired cloud results.", { cause })),
@@ -1049,7 +1077,18 @@ export const make = Effect.fn("CloudRunResults.make")(function* (input: CloudRun
     readText,
     resolveDownload,
     startContinuation,
-    purge,
+    purgeAllocation,
+    purgeExpired: mutex.withPermits(1)(
+      purgeExpired().pipe(
+        Effect.mapError(() =>
+          resultError({
+            reason: "capture-failed",
+            message: "The expired cloud results could not be swept.",
+            retryable: true,
+          }),
+        ),
+      ),
+    ),
   });
 });
 

@@ -70,7 +70,6 @@ export function projectCloudControlPlane(
       requested.control?.runId ?? CloudRunId.make(`run:${requested.allocationId}:1`);
     let currentRunId = firstRunId;
     let archivedAt: string | undefined;
-    let deletedAt: string | undefined;
     let updatedAt = requested.occurredAt;
     const runs = new Map<CloudRunId, CloudRun>();
     const runtimes = new Map<number, CloudRuntimeAttempt>();
@@ -114,6 +113,11 @@ export function projectCloudControlPlane(
         case "allocation.cleanup-failed":
         case "allocation.went-idle":
         case "allocation.runtime-restored":
+        // A stopped guest stays HIBERNATED until cleanup terminates it, so an
+        // expired or deleting agent releases its runtime through the same
+        // cleanup receipt as every other release.
+        case "allocation.snapshot-expired":
+        case "allocation.agent-deletion-requested":
           if (runtime !== undefined) {
             runtimes.set(event.attempt, { ...runtime, updatedAt: event.occurredAt });
           }
@@ -287,9 +291,6 @@ export function projectCloudControlPlane(
         case "allocation.agent-unarchived":
           archivedAt = undefined;
           break;
-        case "allocation.agent-deleted":
-          deletedAt = event.occurredAt;
-          break;
         default:
           assertNever(event);
       }
@@ -317,10 +318,6 @@ export function projectCloudControlPlane(
       createdAt: requested.occurredAt,
       updatedAt,
     };
-
-    if (deletedAt !== undefined) {
-      continue;
-    }
 
     if (archivedAt !== undefined) {
       agents.push({ ...agentBase, status: "ARCHIVED", archivedAt });

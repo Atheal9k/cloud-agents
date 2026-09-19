@@ -172,9 +172,9 @@ stay last until you choose to pick them up.
 | 2    | ~~CA-41~~                        | Environment model and config resolution.                                                   |
 | 3    | ~~CA-04B~~, ~~CA-48~~            | Controller deployment and host cutover; artifact, computer-use, and desktop-viewing paths. |
 | 4    | ~~CA-42~~                        | Build records, preparation, and activation.                                                |
-| 5    | CA-43                            | Runtime snapshot, hibernate, and wake lifecycle.                                           |
+| 5    | ~~CA-43~~                        | Runtime snapshot, hibernate, and wake lifecycle.                                           |
 | 6    | CA-38, CA-46                     | macOS worker infrastructure; retention and deletion services.                              |
-| 7    | CA-44                            | Linux fleet and Firecracker runtime infrastructure.                                        |
+| 7    | ~~CA-44~~                        | Linux fleet and Firecracker runtime infrastructure.                                        |
 | 8    | CA-21, CA-45                     | Retained-results review UI; fleet capacity and Build pre-warming.                          |
 | 9    | CA-05, CA-37, CA-47              | AWS settings UI; Android worker profile; public Cloud Agents API.                          |
 | 10   | CA-49                            | Shared secret, identity, encryption, and network policy.                                   |
@@ -918,6 +918,8 @@ Acceptance criteria:
 
 ### CA-44: Isolate and pack Linux runtimes on a managed fleet
 
+Status: Done on 19 September 2026 in [PR #34](https://github.com/Atheal9k/cloud-agents/pull/34).
+
 Dependencies: CA-03, CA-07, CA-40, CA-42, CA-43.
 
 Description: Replace per-thread `RunInstances` with Firecracker microVM guests
@@ -959,6 +961,8 @@ Acceptance criteria:
   choosing pool sizes.
 
 ### CA-46: Implement snapshot retention, archive, and deletion
+
+Status: Done on 19 September 2026 in [PR #37](https://github.com/Atheal9k/cloud-agents/pull/37).
 
 Dependencies: CA-40, CA-43.
 

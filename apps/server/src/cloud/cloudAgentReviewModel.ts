@@ -169,7 +169,11 @@ export function reviewActions(input: {
   readonly allocation: RunAllocation;
   readonly publication: CloudPublicationInspection;
 }): ReadonlyArray<CloudAgentReviewActionAvailability> {
+  // A requested delete is irreversible once retention starts erasing, so it
+  // blocks every other action rather than racing them.
+  const deleting = input.allocation.deletion !== undefined;
   const busy =
+    deleting ||
     input.agent.status === "ACTIVE" ||
     input.allocation.agentOutcome.status === "running" ||
     input.allocation.idleState.status === "waking";
@@ -183,11 +187,20 @@ export function reviewActions(input: {
   const hasPr =
     input.publication.status === "present" && input.publication.outcome.status === "published";
   return [
-    action("archive", !archived && !busy, busy ? "An active run must finish or be cancelled first." : "Already archived."),
-    action("unarchive", archived, "The agent is not archived."),
+    action(
+      "archive",
+      !archived && !busy,
+      deleting
+        ? "This agent is being permanently deleted."
+        : busy
+          ? "An active run must finish or be cancelled first."
+          : "Already archived.",
+    ),
+    action("unarchive", archived && !deleting, "The agent is not archived."),
     action(
       "cancel",
-      input.allocation.cleanupState.status === "not-requested" &&
+      !deleting &&
+        input.allocation.cleanupState.status === "not-requested" &&
         input.allocation.agentOutcome.status !== "cancelled" &&
         input.allocation.agentOutcome.status !== "expired" &&
         (busy || input.allocation.agentOutcome.status === "not-started"),
@@ -204,8 +217,14 @@ export function reviewActions(input: {
             ? "The agent already has an active run."
             : "No hibernated snapshot is available to restore.",
     ),
-    action("delete", !busy, "Cancel or wait for the active run before permanently deleting."),
-    action("delete-pr", hasPr, "There is no published pull request to delete."),
+    action(
+      "delete",
+      !busy,
+      deleting
+        ? "A permanent delete is already in progress."
+        : "Cancel or wait for the active run before permanently deleting.",
+    ),
+    action("delete-pr", hasPr && !deleting, "There is no published pull request to delete."),
   ];
 }
 

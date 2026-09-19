@@ -43,7 +43,27 @@ output "worker" {
   }
 }
 
-output "artifact_bucket_name" {
+output "hypervisor" {
+  description = "Firecracker host templates in the execution account. Empty when packing is not enabled and EC2 workers remain the documented fallback."
+  value = {
+    execution_account_id = var.execution_account_id
+    controller_account_id = var.controller_account_id
+    role_arn             = try(aws_iam_role.hypervisor[0].arn, null)
+    security_group_id    = try(aws_security_group.hypervisor[0].id, null)
+    subnet_id            = try(aws_subnet.hypervisors[0].id, null)
+    launch_templates = {
+      for name, template in aws_launch_template.hypervisor : name => {
+        id            = template.id
+        version       = template.latest_version
+        image_id      = var.hypervisor_profiles[name].ami_id
+        image_version = var.hypervisor_profiles[name].image_version
+        cpu_millis    = var.hypervisor_profiles[name].cpu_millis
+        memory_mib    = var.hypervisor_profiles[name].memory_mib
+        disk_gib      = var.hypervisor_profiles[name].disk_gib
+      }
+    }
+  }
+}
   description = "Encrypted retained bucket for run results."
   value       = aws_s3_bucket.artifacts.id
 }

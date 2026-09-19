@@ -623,49 +623,334 @@ describe("cloud allocation hibernation", () => {
     expect(cancelled.cleanupState.status).toBe("requested");
     expect(cancelled.agentOutcome.status).toBe("succeeded");
   });
+});
 
-  it("permanently deletes a settled agent without launching compute", () => {
-    const deleted = applyAccepted(
-      idleAllocation(),
+describe("cloud agent retention, archive, and deletion", () => {
+  const flush = {
+    userdata: { status: "flushed", detail: "Checkpointed 12 write-ahead log pages." },
+    workspace: { status: "flushed", detail: "Captured refs/t3/cloud-idle/allocation-1/1." },
+    providerHome: { status: "unavailable", reason: "The provider home is a runtime directory." },
+    flushedAt: "2026-09-17T03:10:00.000Z",
+  } as const;
+  const snapshot = {
+    instanceId: "i-worker",
+    attempt: 1,
+    flush,
+    capturedAt: "2026-09-17T04:10:02.000Z",
+  } as const;
+  const followUpExecution = {
+    threadId: "thread-1",
+    title: "Cloud task",
+    selectedRef: "afd7667ed",
+    unansweredRequestSeconds: 900,
+    turn: {
+      commandId: "turn-2",
+      messageId: "message-2",
+      prompt: "Pick this back up",
+      attachments: [],
+      modelSelection: { instanceId: "codex", model: "gpt-5.6-sol" },
+      runtimeMode: "approval-required",
+      interactionMode: "default",
+      createdAt: "2026-12-18T09:00:00.000Z",
+    },
+  } as const;
+
+  function settled(): RunAllocation {
+    return applyAccepted(
+      runningAllocation().allocation,
       command({
-        type: "allocation.agent-delete",
-        commandId: "command-delete",
+        type: "allocation.agent-succeeded",
+        commandId: "command-agent-succeeded",
         allocationId: "allocation-1",
         attempt: 1,
-        occurredAt: "2026-09-18T10:00:00.000Z",
+        occurredAt: "2026-09-17T03:10:00.000Z",
+        resultLocation: { uri: "t3://environment-1/thread-1" },
       }),
     ).allocation;
+  }
 
-    expect(deleted.deletedAt).toBe("2026-09-18T10:00:00.000Z");
+  function hibernated(): RunAllocation {
+    const idle = applyAccepted(
+      settled(),
+      command({
+        type: "allocation.idle",
+        commandId: "command-idle",
+        allocationId: "allocation-1",
+        attempt: 1,
+        occurredAt: "2026-09-17T03:10:01.000Z",
+        releaseAt: "2026-09-17T04:10:01.000Z",
+        flush,
+      }),
+    ).allocation;
+    return applyAccepted(
+      idle,
+      command({
+        type: "allocation.hibernate",
+        commandId: "command-hibernate",
+        allocationId: "allocation-1",
+        attempt: 1,
+        occurredAt: "2026-09-17T04:10:02.000Z",
+        snapshot,
+      }),
+    ).allocation;
+  }
+
+  function cleanedUp(allocation: RunAllocation, discriminator: string): RunAllocation {
+    const started = applyAccepted(
+      allocation,
+      command({
+        type: "allocation.cleanup-started",
+        commandId: "command-cleanup-started-" + discriminator,
+        allocationId: "allocation-1",
+        attempt: allocation.attempt,
+        occurredAt: "2026-09-17T04:20:00.000Z",
+      }),
+    ).allocation;
+    return applyAccepted(
+      started,
+      command({
+        type: "allocation.cleanup-succeeded",
+        commandId: "command-cleanup-succeeded-" + discriminator,
+        allocationId: "allocation-1",
+        attempt: allocation.attempt,
+        occurredAt: "2026-09-17T04:21:00.000Z",
+      }),
+    ).allocation;
+  }
+
+  it("rolls the snapshot retention window forward on every start and resume", () => {
+    const started = runningAllocation().allocation;
+    expect(started.snapshotRetention).toEqual({
+      lastActiveAt: "2026-09-17T03:00:05.000Z",
+      expiresAt: "2026-12-16T03:00:05.000Z",
+    });
+
+    const woken = applyAccepted(
+      hibernated(),
+      command({
+        type: "allocation.follow-up",
+        commandId: "command-follow-up",
+        allocationId: "allocation-1",
+        attempt: 1,
+        occurredAt: "2026-12-01T09:00:00.000Z",
+        runId: "run:allocation-1:2",
+        execution: followUpExecution,
+        deadlines: retryDeadlines,
+      }),
+    ).allocation;
+    const wakeCommands = [
+      command({
+        type: "allocation.launch-started",
+        commandId: "command-wake-launch-started",
+        allocationId: "allocation-1",
+        attempt: 2,
+        occurredAt: "2026-12-01T09:00:01.000Z",
+        launchTemplate: { id: "lt-worker", version: 7 },
+      }),
+      command({
+        type: "allocation.instance-launched",
+        commandId: "command-wake-instance-launched",
+        allocationId: "allocation-1",
+        attempt: 2,
+        occurredAt: "2026-12-01T09:00:02.000Z",
+        instanceId: "i-worker",
+      }),
+      command({
+        type: "allocation.worker-booted",
+        commandId: "command-wake-worker-booted",
+        allocationId: "allocation-1",
+        attempt: 2,
+        occurredAt: "2026-12-01T09:00:03.000Z",
+      }),
+      command({
+        type: "allocation.worker-registered",
+        commandId: "command-wake-worker-registered",
+        allocationId: "allocation-1",
+        attempt: 2,
+        occurredAt: "2026-12-01T09:00:04.000Z",
+        references,
+        route,
+      }),
+      command({
+        type: "allocation.runtime-restored",
+        commandId: "command-runtime-restored",
+        allocationId: "allocation-1",
+        attempt: 2,
+        occurredAt: "2026-12-01T09:01:00.000Z",
+        restore: {
+          filesystem: { status: "resumed", detail: "Restored the snapshot root volume." },
+          providerSession: { status: "not-resumed", reason: "The CLI starts a new session." },
+          restoredAt: "2026-12-01T09:01:00.000Z",
+        },
+      }),
+    ];
+    let restored = woken;
+    for (const nextCommand of wakeCommands) {
+      restored = applyAccepted(restored, nextCommand).allocation;
+    }
+
+    expect(restored.snapshotRetention).toEqual({
+      lastActiveAt: "2026-12-01T09:01:00.000Z",
+      expiresAt: "2027-03-01T09:01:00.000Z",
+    });
+  });
+
+  it("hands an expired snapshot to cleanup exactly once", () => {
+    const expire = command({
+      type: "allocation.snapshot-expire",
+      commandId: "command-snapshot-expire",
+      allocationId: "allocation-1",
+      attempt: 1,
+      occurredAt: "2026-12-17T03:00:05.000Z",
+    });
+    const expired = applyAccepted(hibernated(), expire).allocation;
+
+    expect(expired.idleState).toEqual({ status: "busy" });
+    expect(expired.cleanupState.status).toBe("requested");
     expect(
       decideRunAllocationCommand(
-        deleted,
+        expired,
+        command({ ...expire, commandId: "command-snapshot-expire-again" }),
+      ),
+    ).toEqual([]);
+  });
+
+  it("refuses to expire the snapshot of an agent that is not hibernated", () => {
+    expect(
+      decideRunAllocationCommand(
+        runningAllocation().allocation,
         command({
-          type: "allocation.follow-up",
-          commandId: "command-follow-up-deleted",
+          type: "allocation.snapshot-expire",
+          commandId: "command-snapshot-expire-running",
           allocationId: "allocation-1",
           attempt: 1,
-          occurredAt: "2026-09-18T10:00:01.000Z",
-          runId: "run-2",
-          execution: {
-            threadId: "thread-1",
-            title: "Wake",
-            selectedRef: "main",
-            unansweredRequestSeconds: 900,
-            turn: {
-              commandId: "command-follow-up-deleted",
-              messageId: "message-wake",
-              prompt: "Wake",
-              attachments: [],
-              modelSelection: { instanceId: "codex", model: "gpt-5.6-sol" },
-              runtimeMode: "approval-required",
-              interactionMode: "default",
-              createdAt: "2026-09-18T10:00:01.000Z",
-            },
-          },
-          deadlines,
+          occurredAt: "2026-12-17T03:00:05.000Z",
         }),
       ),
     ).toEqual([]);
+  });
+
+  it("releases the retained snapshot on archive so unarchive cannot wake it", () => {
+    const archived = applyAccepted(
+      hibernated(),
+      command({
+        type: "allocation.agent-archive",
+        commandId: "command-archive",
+        allocationId: "allocation-1",
+        attempt: 1,
+        occurredAt: "2026-09-18T09:00:00.000Z",
+      }),
+    ).allocation;
+
+    expect(archived.idleState).toEqual({ status: "busy" });
+    expect(archived.cleanupState.status).toBe("requested");
+    expect(
+      decideRunAllocationCommand(
+        archived,
+        command({
+          type: "allocation.follow-up",
+          commandId: "command-follow-up-archived",
+          allocationId: "allocation-1",
+          attempt: 1,
+          occurredAt: "2026-09-18T09:05:00.000Z",
+          runId: "run:allocation-1:2",
+          execution: followUpExecution,
+          deadlines: retryDeadlines,
+        }),
+      ),
+    ).toEqual([]);
+
+    const unarchived = applyAccepted(
+      cleanedUp(archived, "archive"),
+      command({
+        type: "allocation.agent-unarchive",
+        commandId: "command-unarchive",
+        allocationId: "allocation-1",
+        attempt: 1,
+        occurredAt: "2026-09-19T09:00:00.000Z",
+      }),
+    ).allocation;
+    const followedUp = applyAccepted(
+      unarchived,
+      command({
+        type: "allocation.follow-up",
+        commandId: "command-follow-up-unarchived",
+        allocationId: "allocation-1",
+        attempt: 1,
+        occurredAt: "2026-09-19T09:05:00.000Z",
+        runId: "run:allocation-1:2",
+        execution: followUpExecution,
+        deadlines: retryDeadlines,
+      }),
+    ).allocation;
+
+    expect(unarchived.archivedAt).toBeUndefined();
+    expect(followedUp.idleState).toEqual({ status: "busy" });
+    expect(followedUp.attempt).toBe(2);
+  });
+
+  it("refuses to delete an agent whose run is still in flight", () => {
+    expect(
+      decideRunAllocationCommand(
+        runningAllocation().allocation,
+        command({
+          type: "allocation.agent-delete",
+          commandId: "command-delete-running",
+          allocationId: "allocation-1",
+          attempt: 1,
+          occurredAt: "2026-09-18T09:00:00.000Z",
+        }),
+      ),
+    ).toEqual([]);
+  });
+
+  it("records one delete, releases the runtime claim, and rejects new runs", () => {
+    const deleteCommand = command({
+      type: "allocation.agent-delete",
+      commandId: "command-delete",
+      allocationId: "allocation-1",
+      attempt: 1,
+      occurredAt: "2026-09-18T09:00:00.000Z",
+    });
+    const deleting = applyAccepted(hibernated(), deleteCommand).allocation;
+
+    expect(deleting.deletion).toEqual({
+      status: "requested",
+      requestedAt: "2026-09-18T09:00:00.000Z",
+    });
+    expect(deleting.idleState).toEqual({ status: "busy" });
+    expect(deleting.cleanupState.status).toBe("requested");
+    expect(
+      decideRunAllocationCommand(
+        deleting,
+        command({ ...deleteCommand, commandId: "command-delete-again" }),
+      ),
+    ).toEqual([]);
+
+    for (const blocked of [
+      command({
+        type: "allocation.follow-up",
+        commandId: "command-follow-up-deleting",
+        allocationId: "allocation-1",
+        attempt: 1,
+        occurredAt: "2026-09-18T09:01:00.000Z",
+        runId: "run:allocation-1:2",
+        execution: followUpExecution,
+        deadlines: retryDeadlines,
+      }),
+      command({
+        type: "allocation.agent-archive",
+        commandId: "command-archive-deleting",
+        allocationId: "allocation-1",
+        attempt: 1,
+        occurredAt: "2026-09-18T09:01:00.000Z",
+      }),
+    ]) {
+      expect(decideRunAllocationCommand(deleting, blocked)).toEqual([]);
+    }
+
+    // Cleanup still has to run, or a delete would wait forever on a guest
+    // nothing is allowed to release.
+    expect(cleanedUp(deleting, "delete").cleanupState.status).toBe("succeeded");
   });
 });

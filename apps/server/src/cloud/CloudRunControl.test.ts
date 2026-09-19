@@ -133,6 +133,7 @@ function fixture(initial: RunAllocation, options?: { readonly captureFails?: boo
     let captureCount = 0;
     const manifest = retainedManifest();
     const controller = CloudAllocationController.CloudAllocationController.of({
+      purgeAllocation: () => Effect.die("unused"),
       dispatch: (command) =>
         Effect.sync(() => {
           commands.push(command);
@@ -175,6 +176,7 @@ function fixture(initial: RunAllocation, options?: { readonly captureFails?: boo
           maxInputWaitSeconds: 900,
           previewGraceSeconds: 900,
           idleReleaseSeconds: 3_600,
+          conversationRetentionDays: 0,
           allowedInstanceTypes: ["t3.medium"],
         },
         workerPriceAssumptions: [],
@@ -220,7 +222,8 @@ function fixture(initial: RunAllocation, options?: { readonly captureFails?: boo
       readText: () => Effect.die("unused"),
       resolveDownload: () => Effect.die("unused"),
       startContinuation: () => Effect.die("unused"),
-      purge: () => Effect.die("unused"),
+      purgeAllocation: () => Effect.die("unused"),
+      purgeExpired: Effect.die("unused"),
     });
     const control = yield* make().pipe(
       Effect.provideService(CloudAllocationController.CloudAllocationController, controller),
