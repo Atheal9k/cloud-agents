@@ -53,11 +53,22 @@ profile fields only for user keys. Each principal sees only the agents it create
 - `GET /v1/me`, `GET /v1/models`, `GET /v1/repositories`
 
 Create accepts agent or plan `mode`, `model` (id plus params), named `env` or `repos`,
-ref/PR fields, images (max 5, 15 MB, png/jpeg/gif/webp), `envVars` (max 50; not with
+ref/PR fields (`startingRef`, `prUrl`, `workOnCurrentBranch`, `autoCreatePR`,
+`skipReviewerRequest`), images (max 5, 15 MB, png/jpeg/gif/webp), `envVars` (max 50; not with
 `agentId`), inline MCP servers (max 50; HTTP or stdio), and custom subagents (max 20;
 names cannot collide with built-ins; prompts are size-bounded). HTTP MCP credentials,
 including OAuth, stay on the controller. stdio MCP runs in the guest. Custom subagents
-inherit the parent run's permissions and cannot widen them.
+inherit the parent run's permissions and cannot widen them. New branches use the `cursor/`
+prefix unless the request stays on the current branch, starting ref, or an existing PR.
+
+Web, desktop Cloud destination, API, Slack, GitHub/Bitbucket mentions, and Linear create
+or follow up through one idempotent path: `POST /v1/integrations/runs` or
+`/v1/integrations/{slack,github,bitbucket,linear}`. A repeated `deliveryId` returns the
+original agent and run. Connect GitHub, GHES, GitLab, Bitbucket, or Azure DevOps with
+`POST /v1/integrations/scm`. Access is the intersection of that installation, the
+triggering principal, and the agent's `repos`. Shared `/cloud-agents/{id}` URLs require
+same-team membership and the viewer's own SCM access; viewing is read-only unless team
+follow-ups are enabled.
 
 Cloud agents also receive the built-in diagnostics MCP (`environment-info`, snapshot
 and Build tools, run transcript/events, and authorized fleet diagnostics). Repository
@@ -70,7 +81,8 @@ mutating hooks do not run during early read-only environment setup.
 Error bodies are `{ "code", "message" }` with stable codes including `unauthorized`,
 `invalid_request`, `agent_id_conflict`, `agent_busy`, `agent_archived`,
 `agent_not_found`, `run_not_found`, `run_not_cancellable`, `invalid_last_event_id`,
-`stream_expired`, `rate_limited`, and `spend_limit_exceeded`.
+`stream_expired`, `rate_limited`, `spend_limit_exceeded`, `follow_up_forbidden`, and
+`scm_access_denied`.
 
 Every response includes `X-Request-Id` and `X-RateLimit-*` headers. Repositories
 are limited to 1 request per minute and 30 per hour per principal. Other routes

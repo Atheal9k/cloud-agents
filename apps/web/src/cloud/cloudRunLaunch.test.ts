@@ -39,6 +39,8 @@ const draft: CloudRunLaunchDraft = {
   workerProfile: "linux-web",
   publication: "automatic-draft-pr",
   baseBranch: "main",
+  branchBehavior: "new-cursor-branch",
+  skipReviewerRequest: false,
 };
 
 describe("cloud run launch", () => {
@@ -155,7 +157,7 @@ describe("cloud run launch", () => {
       }),
     ).toEqual({
       status: "invalid",
-      message: "Choose a project linked to a GitHub repository.",
+      message: "Choose a project linked to a source-control repository.",
     });
   });
 
@@ -221,7 +223,11 @@ describe("cloud run launch", () => {
       commandId: "cloud-launch:request-19",
       allocationId: "request-19",
       control: { agentId: "agent:request-19", runId: "run:request-19:1" },
-      target: { repository: "Atheal9k/cloud-agents", baseCommit: "main" },
+      target: {
+        repository: "Atheal9k/cloud-agents",
+        baseCommit: "main",
+        branch: "cursor/request-19",
+      },
       publication: { mode: "automatic-draft-pr", baseBranch: "main" },
       profile: { id: "linux-web", os: "linux", arch: "x64", instanceType: "t3.medium" },
       execution: {
@@ -234,6 +240,28 @@ describe("cloud run launch", () => {
           modelSelection: { instanceId: "codex", model: "gpt-5.6-sol" },
         },
       },
+    });
+  });
+
+  it("continues an existing PR on the selected head without requesting reviewers", () => {
+    const result = buildCloudRunLaunchCommand({
+      draft: {
+        ...draft,
+        selectedRef: "cursor/existing",
+        branchBehavior: "continue-pr",
+        skipReviewerRequest: true,
+      },
+      limits,
+      now: new Date("2026-09-17T10:00:00.000Z"),
+      requestId: "request-19",
+    });
+
+    expect(result.status).toBe("valid");
+    if (result.status !== "valid" || result.command.type !== "allocation.launch") return;
+    expect(result.command.target.branch).toBe("cursor/existing");
+    expect(result.command.publication).toMatchObject({
+      mode: "automatic-draft-pr",
+      skipReviewerRequest: true,
     });
   });
 

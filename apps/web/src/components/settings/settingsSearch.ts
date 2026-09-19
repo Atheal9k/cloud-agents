@@ -725,7 +725,15 @@ export const SETTINGS_SEARCH_ITEMS = [
     title: "Cloud run defaults",
     to: "/settings/cloud-agents",
     searchTerms: [
-      "default model context repository ref long-running computer use summaries artifacts spend limit audit export policy",
+      "default model context repository ref long-running computer use summaries artifacts spend limit audit export policy team follow-up github gitlab bitbucket azure",
+    ],
+  },
+  {
+    id: "cloud-scm",
+    title: "Source-control connections",
+    to: "/settings/cloud-agents",
+    searchTerms: [
+      "github ghes gitlab bitbucket azure devops install repository scope team follow-up",
     ],
   },
   {

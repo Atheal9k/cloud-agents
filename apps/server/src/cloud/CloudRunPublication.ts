@@ -519,6 +519,9 @@ export const make = Effect.fn("CloudRunPublication.make")(function* (
         head: allocation.target.branch,
         title: allocation.publication.title,
         body: allocation.publication.body,
+        ...(allocation.publication.skipReviewerRequest === true
+          ? { skipReviewerRequest: true }
+          : {}),
       })
       .pipe(Effect.result);
     if (Result.isFailure(created)) {

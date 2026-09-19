@@ -16,6 +16,7 @@ import {
   type CloudControllerDefaultsInput,
   type CloudGuidedSetupInput,
   type CloudReadinessCheckInput,
+  type CloudScmConnectionInput,
   type RunAllocationCommand,
   WS_METHODS,
 } from "@t3tools/contracts";
@@ -253,6 +254,32 @@ export function createCloudAllocationAtoms<R, E>(
     },
     execute: (input: CloudHandoffExecuteInput) => request(WS_METHODS.cloudHandoffExecute, input),
   });
+  const listScmConnections = createEnvironmentRpcCommand(runtime, {
+    label: "environment-data:cloud-collaboration:list-scm",
+    tag: WS_METHODS.cloudCollaborationListScm,
+    scheduler,
+    concurrency: { mode: "singleFlight", key: ({ environmentId }) => environmentId },
+    execute: () => request(WS_METHODS.cloudCollaborationListScm, {}),
+  });
+  const connectScm = createEnvironmentRpcCommand(runtime, {
+    label: "environment-data:cloud-collaboration:connect-scm",
+    tag: WS_METHODS.cloudCollaborationConnectScm,
+    scheduler,
+    concurrency: { mode: "singleFlight", key: ({ environmentId }) => environmentId },
+    execute: (input: CloudScmConnectionInput) =>
+      request(WS_METHODS.cloudCollaborationConnectScm, input),
+  });
+  const disconnectScm = createEnvironmentRpcCommand(runtime, {
+    label: "environment-data:cloud-collaboration:disconnect-scm",
+    tag: WS_METHODS.cloudCollaborationDisconnectScm,
+    scheduler,
+    concurrency: {
+      mode: "singleFlight",
+      key: ({ environmentId, input }) => `${environmentId}:${input.connectionId}`,
+    },
+    execute: (input: { readonly connectionId: string }) =>
+      request(WS_METHODS.cloudCollaborationDisconnectScm, input),
+  });
 
   return {
     snapshot,
@@ -278,5 +305,8 @@ export function createCloudAllocationAtoms<R, E>(
     shareAgentReview,
     previewHandoff,
     executeHandoff,
+    listScmConnections,
+    connectScm,
+    disconnectScm,
   };
 }

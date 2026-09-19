@@ -894,6 +894,41 @@ function CloudRunDialogForEnvironment(props: {
                     />
                   </label>
                 </div>
+                <div className="grid gap-3 sm:grid-cols-2">
+                  <label className={fieldClassName}>
+                    <span className={labelClassName}>Branch</span>
+                    <select
+                      className={selectClassName}
+                      value={draft.branchBehavior}
+                      onChange={(event) =>
+                        setDraft((current) => ({
+                          ...current,
+                          branchBehavior: event.target
+                            .value as CloudRunLaunchDraft["branchBehavior"],
+                        }))
+                      }
+                    >
+                      <option value="new-cursor-branch">New cursor/ branch</option>
+                      <option value="current-branch">Current branch</option>
+                      <option value="starting-ref">Starting ref</option>
+                      <option value="continue-pr">Continue existing PR</option>
+                    </select>
+                  </label>
+                  <label className="flex items-center gap-2 pt-6 text-sm">
+                    <input
+                      type="checkbox"
+                      checked={draft.skipReviewerRequest}
+                      disabled={draft.publication === "review-only"}
+                      onChange={(event) =>
+                        setDraft((current) => ({
+                          ...current,
+                          skipReviewerRequest: event.target.checked,
+                        }))
+                      }
+                    />
+                    <span>Skip reviewer requests</span>
+                  </label>
+                </div>
                 <p className="text-xs text-muted-foreground">
                   One worker at a time. The controller allows {snapshot.limits.maxQueueDepth} queued{" "}
                   {snapshot.limits.maxQueueDepth === 1 ? "run" : "runs"} and estimates cost from
