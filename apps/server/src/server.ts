@@ -143,6 +143,7 @@ import * as CloudAgentsApi from "./cloud/CloudAgentsApi.ts";
 import * as CloudAgentsApiKeys from "./cloud/CloudAgentsApiKeys.ts";
 import * as CloudAgentSchedules from "./cloud/CloudAgentSchedules.ts";
 import * as CloudAssistants from "./cloud/CloudAssistants.ts";
+import * as CloudAgentSubscriptions from "./cloud/CloudAgentSubscriptions.ts";
 import {
   cloudAgentsApiRateLimitsLayer,
   cloudAgentsApiRouteLayer,
@@ -678,8 +679,15 @@ const RuntimeCoreDependenciesWithoutSchedulesLive = Layer.mergeAll(
 );
 
 const RuntimeCoreDependenciesLive = CloudAssistants.layer.pipe(
-  Layer.provideMerge(CloudAgentSchedules.layer),
-  Layer.provideMerge(RuntimeCoreDependenciesWithoutSchedulesLive),
+  Layer.provideMerge(
+    CloudAgentSubscriptions.layer.pipe(
+      Layer.provideMerge(
+        CloudAgentSchedules.layer.pipe(
+          Layer.provideMerge(RuntimeCoreDependenciesWithoutSchedulesLive),
+        ),
+      ),
+    ),
+  ),
 );
 
 const RuntimeDependenciesLive = RuntimeCoreDependenciesLive.pipe(

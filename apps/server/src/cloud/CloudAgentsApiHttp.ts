@@ -4,6 +4,8 @@ import * as NodeCrypto from "node:crypto";
 import {
   CLOUD_AGENTS_API_STREAM_RETENTION_SECONDS,
   CloudAgentScheduleCreateRequest,
+  CloudAgentSubscriptionCreateRequest,
+  CloudAgentSubscriptionDeliveryRequest,
   CloudAgentsApiCreateAgentRequest,
   CloudAgentsApiCreateRunRequest,
   CloudAssistantCreateRequest,
@@ -24,6 +26,7 @@ import * as CloudAgentsApi from "./CloudAgentsApi.ts";
 import * as CloudAgentsApiKeys from "./CloudAgentsApiKeys.ts";
 import * as CloudAgentSchedules from "./CloudAgentSchedules.ts";
 import * as CloudAssistants from "./CloudAssistants.ts";
+import * as CloudAgentSubscriptions from "./CloudAgentSubscriptions.ts";
 import {
   CloudAgentsApiFailure,
   defaultMinuteLimit,
@@ -47,6 +50,10 @@ const decodeAssistantPersistence = Schema.decodeUnknownEffect(
     kind: CloudAssistantPersistenceKind,
     plaintext: Schema.String,
   }),
+);
+const decodeSubscription = Schema.decodeUnknownEffect(CloudAgentSubscriptionCreateRequest);
+const decodeSubscriptionDelivery = Schema.decodeUnknownEffect(
+  CloudAgentSubscriptionDeliveryRequest,
 );
 
 type LimitState = {
@@ -123,6 +130,7 @@ const handleV1 = (deps: {
   readonly keys: CloudAgentsApiKeys.CloudAgentsApiKeys["Service"];
   readonly schedules: CloudAgentSchedules.CloudAgentSchedules["Service"];
   readonly assistants: CloudAssistants.CloudAssistants["Service"];
+  readonly subscriptions: CloudAgentSubscriptions.CloudAgentSubscriptions["Service"];
   readonly limits: Ref.Ref<LimitState>;
 }) =>
   Effect.gen(function* () {
@@ -161,6 +169,7 @@ const handleV1 = (deps: {
       api: deps.api,
       schedules: deps.schedules,
       assistants: deps.assistants,
+      subscriptions: deps.subscriptions,
       principal,
       request,
       url,
@@ -195,6 +204,7 @@ const dispatchV1 = (input: {
   readonly api: CloudAgentsApi.CloudAgentsApi["Service"];
   readonly schedules: CloudAgentSchedules.CloudAgentSchedules["Service"];
   readonly assistants: CloudAssistants.CloudAssistants["Service"];
+  readonly subscriptions: CloudAgentSubscriptions.CloudAgentSubscriptions["Service"];
   readonly principal: CloudAgentsApiPrincipal;
   readonly request: HttpServerRequest.HttpServerRequest;
   readonly url: URL;
@@ -203,7 +213,18 @@ const dispatchV1 = (input: {
   readonly meta: Record<string, string>;
 }) =>
   Effect.gen(function* () {
-    const { api, schedules, assistants, principal, request, url, origin, nowMs, meta } = input;
+    const {
+      api,
+      schedules,
+      assistants,
+      subscriptions,
+      principal,
+      request,
+      url,
+      origin,
+      nowMs,
+      meta,
+    } = input;
     const method = request.method.toUpperCase();
     const path = url.pathname.replace(/\/$/u, "") || "/";
     const parts = path.split("/").filter((part) => part.length > 0);
@@ -493,6 +514,69 @@ const dispatchV1 = (input: {
         meta,
       );
     }
+    if (method === "POST" && parts.length === 4 && parts[3] === "subscriptions") {
+      const definition = yield* decodeSubscription(yield* jsonBody).pipe(
+        Effect.mapError(
+          () => new CloudAgentsApiFailure("invalid_request", "Invalid subscription request.", 400),
+        ),
+      );
+      return jsonResponse(
+        200,
+        yield* subscriptions.create({ principal, agentId, definition, urlOrigin: origin }),
+        meta,
+      );
+    }
+    if (method === "GET" && parts.length === 4 && parts[3] === "subscriptions") {
+      return jsonResponse(
+        200,
+        yield* subscriptions.list({ principal, agentId, urlOrigin: origin }),
+        meta,
+      );
+    }
+    if (parts[3] === "subscriptions" && parts[4] !== undefined) {
+      const subscriptionId = parts[4];
+      if (method === "GET" && parts.length === 5) {
+        return jsonResponse(
+          200,
+          yield* subscriptions.get({ principal, agentId, subscriptionId, urlOrigin: origin }),
+          meta,
+        );
+      }
+      if (method === "DELETE" && parts.length === 5) {
+        return jsonResponse(
+          200,
+          yield* subscriptions.remove({ principal, agentId, subscriptionId, urlOrigin: origin }),
+          meta,
+        );
+      }
+      if (method === "POST" && parts.length === 6 && parts[5] === "events") {
+        const delivery = yield* decodeSubscriptionDelivery(yield* jsonBody).pipe(
+          Effect.mapError(
+            () => new CloudAgentsApiFailure("invalid_request", "Invalid subscription event.", 400),
+          ),
+        );
+        return jsonResponse(
+          200,
+          yield* subscriptions.deliver({
+            principal,
+            agentId,
+            subscriptionId,
+            urlOrigin: origin,
+            delivery,
+          }),
+          meta,
+        );
+      }
+      if (method === "GET" && parts.length === 6 && parts[5] === "receipts") {
+        const limit = parseLimitParam(url.searchParams.get("limit"));
+        if (limit instanceof CloudAgentsApiFailure) return errorResponse(limit, meta);
+        return jsonResponse(
+          200,
+          yield* subscriptions.listReceipts({ principal, agentId, subscriptionId, limit }),
+          meta,
+        );
+      }
+    }
     if (method === "POST" && parts.length === 4 && parts[3] === "runs") {
       const body = yield* decodeCreateRun(yield* jsonBody).pipe(
         Effect.mapError(
@@ -590,7 +674,12 @@ export const cloudAgentsApiRouteLayer = Layer.unwrap(
     const keys = yield* CloudAgentsApiKeys.CloudAgentsApiKeys;
     const schedules = yield* CloudAgentSchedules.CloudAgentSchedules;
     const assistants = yield* CloudAssistants.CloudAssistants;
+    const subscriptions = yield* CloudAgentSubscriptions.CloudAgentSubscriptions;
     const limits = yield* CloudAgentsApiRateLimits;
-    return HttpRouter.add("*", "/v1*", handleV1({ api, keys, schedules, assistants, limits }));
+    return HttpRouter.add(
+      "*",
+      "/v1*",
+      handleV1({ api, keys, schedules, assistants, subscriptions, limits }),
+    );
   }),
 );
