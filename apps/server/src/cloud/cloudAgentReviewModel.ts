@@ -24,6 +24,8 @@ const HTML_MEDIA_TYPE = /(?:^text\/html$|\/xml(?:$|-)|\+xml$)/i;
 export function inspectRetainedText(input: {
   readonly value: string | undefined;
   readonly missingReason: string;
+  readonly truncated?: boolean;
+  readonly sizeChars?: number;
 }): CloudDiffInspection {
   if (input.value === undefined) {
     return { status: "missing", reason: input.missingReason };
@@ -31,18 +33,19 @@ export function inspectRetainedText(input: {
   if (input.value.includes("\0")) {
     return { status: "binary", reason: "The retained file contains binary data." };
   }
-  if (input.value.length > CLOUD_REVIEW_DIFF_PREVIEW_CHARS) {
+  const sizeChars = input.sizeChars ?? input.value.length;
+  if (input.truncated === true || input.value.length > CLOUD_REVIEW_DIFF_PREVIEW_CHARS) {
     return {
       status: "oversized",
       reason: "The retained file is larger than the inline review limit. Download it instead.",
-      sizeChars: input.value.length,
+      sizeChars,
     };
   }
   return {
     status: "text",
     preview: input.value,
     truncated: false,
-    sizeChars: input.value.length,
+    sizeChars,
   };
 }
 

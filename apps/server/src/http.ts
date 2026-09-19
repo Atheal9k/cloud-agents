@@ -373,13 +373,16 @@ const handleCloudResultPage = Effect.gen(function* () {
   let texts: readonly [string, string] = ["", ""];
   if (status.value.status === "retained") {
     const retainedTexts = yield* Effect.all(
-      [results.readText(resultId, "diff"), results.readText(resultId, "verification")],
+      [
+        results.readTextPrefix(resultId, "diff", CLOUD_RESULT_INLINE_TEXT_LIMIT),
+        results.readTextPrefix(resultId, "verification", CLOUD_RESULT_INLINE_TEXT_LIMIT),
+      ],
       { concurrency: "unbounded" },
     ).pipe(Effect.option);
     if (Option.isNone(retainedTexts)) {
       return HttpServerResponse.text("Retained result is unavailable.", { status: 500 });
     }
-    texts = retainedTexts.value;
+    texts = [retainedTexts.value[0].text, retainedTexts.value[1].text];
   }
   return HttpServerResponse.text(
     renderCloudResultPage({ status: status.value, diff: texts[0], verification: texts[1] }),

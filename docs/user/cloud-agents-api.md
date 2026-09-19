@@ -28,7 +28,7 @@ profile fields only for user keys. Each principal sees only the agents it create
 
 - `POST /v1/agents` — create an agent and its first run. Caller-supplied `agentId`
   values conflict with `409 agent_id_conflict`.
-- `GET /v1/agents` — list agents, newest first. `limit` (default 20, max 100) and
+- `GET /v1/agents` — list bounded agent summaries, newest first. `limit` (default 20, max 100) and
   `cursor` paginate. `nextCursor` is omitted when there is no further page.
 - `GET /v1/agents/{id}` — load the durable agent record.
 - `POST /v1/agents/{id}/runs` — follow-up run. A live run returns `409 agent_busy`.
@@ -37,7 +37,14 @@ profile fields only for user keys. Each principal sees only the agents it create
   return `409 run_not_cancellable`.
 - `GET /v1/agents/{id}/runs/{runId}/stream` — SSE. Events: `status`, `assistant`,
   `thinking`, `tool_call`, `interaction_update`, `heartbeat`, `result`, `error`,
-  `done`. Resume with `Last-Event-ID`. An expired stream returns `410 stream_expired`.
+  `done`. Resume with `Last-Event-ID`. The stream is retained for 24 hours, 10,000
+  events, or 8 MiB. An expired or dropped cursor returns `410 stream_expired`.
+  Live agents reconnect through the worker's T3 cursor; hibernated agents read the
+  retained transcript without waking compute. `X-T3-Reconnect-Source` reports
+  `worker-cursor` or `controller-transcript`.
+- `GET /v1/agents/{id}/runs/{runId}/history?kind=transcript|tool|setup|artifacts`
+  — paged history, tool output, setup logs, or artifact names under a 256 KiB
+  byte budget. Full payloads stay off the live stream.
 - `GET /v1/agents/{id}/usage`
 - `POST /v1/agents/{id}/archive` and `POST /v1/agents/{id}/unarchive` (idempotent)
 - `DELETE /v1/agents/{id}` — permanent delete

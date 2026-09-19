@@ -3,6 +3,7 @@ import * as NodeCrypto from "node:crypto";
 
 import {
   CLOUD_AGENT_REVIEW_SHARE_PREFIX,
+  CLOUD_REVIEW_DIFF_PREVIEW_CHARS,
   CloudAgentReviewError,
   CloudAllocationControllerError,
   CloudRunId,
@@ -137,20 +138,26 @@ export const make = Effect.fn("CloudAgentReview.make")(function* () {
       ? ([undefined, undefined, undefined] as const)
       : yield* Effect.all(
           [
-            results.readText(resultId, "diff").pipe(Effect.option),
-            results.readText(resultId, "verification").pipe(Effect.option),
-            results.readText(resultId, "transcript").pipe(Effect.option),
+            results.readTextPrefix(resultId, "diff", CLOUD_REVIEW_DIFF_PREVIEW_CHARS).pipe(Effect.option),
+            results
+              .readTextPrefix(resultId, "verification", CLOUD_REVIEW_DIFF_PREVIEW_CHARS)
+              .pipe(Effect.option),
+            results
+              .readTextPrefix(resultId, "transcript", CLOUD_REVIEW_DIFF_PREVIEW_CHARS)
+              .pipe(Effect.option),
           ],
           { concurrency: "unbounded" },
         ).pipe(
-          Effect.map(
-            ([diff, verification, transcript]) =>
-              [
-                Option.getOrUndefined(diff),
-                Option.getOrUndefined(verification),
-                Option.getOrUndefined(transcript),
-              ] as const,
-          ),
+          Effect.map(([diff, verification, transcript]) => {
+            const preview = (value: typeof diff) => {
+              if (Option.isNone(value)) return undefined;
+              if (value.value.truncated) {
+                return `${value.value.text.slice(0, CLOUD_REVIEW_DIFF_PREVIEW_CHARS)}x`;
+              }
+              return value.value.text;
+            };
+            return [preview(diff), preview(verification), preview(transcript)] as const;
+          }),
         );
     const grant: CloudArtifactAccessGrant | undefined = missingResult
       ? undefined
