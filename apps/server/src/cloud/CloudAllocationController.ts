@@ -41,6 +41,8 @@ import { projectCloudControlPlane } from "./cloudControlPlane.ts";
 import * as CloudEnvironmentBuildCatalog from "./CloudEnvironmentBuildCatalog.ts";
 import { isCloudEnvironmentBuildStale } from "./cloudEnvironmentBuildPolicy.ts";
 import * as CloudEnvironmentCatalog from "./CloudEnvironmentCatalog.ts";
+import * as CloudWarmPoolCatalog from "./CloudWarmPoolCatalog.ts";
+import { planWarmPoolCapacity, warmPoolInventories } from "./cloudWarmPoolPolicy.ts";
 import * as ControllerSettings from "./controllerSettings.ts";
 import {
   decideRunAllocationCommand,
@@ -173,6 +175,7 @@ export const make = Effect.fn("CloudAllocationController.make")(function* (input
   const sql = yield* SqlClient.SqlClient;
   const environments = yield* CloudEnvironmentCatalog.make();
   const builds = yield* CloudEnvironmentBuildCatalog.make();
+  const warmPool = yield* CloudWarmPoolCatalog.make();
   const settings = yield* ControllerSettings.make();
   const mode = input.mode ?? "local";
   const changes = yield* PubSub.unbounded<CloudAllocationSnapshot>();
@@ -326,13 +329,16 @@ export const make = Effect.fn("CloudAllocationController.make")(function* (input
 
   const readSnapshot = Effect.gen(function* () {
     yield* requireEnabled;
-    const [rows, controllerSettings, now, environmentCatalog, buildCatalog] = yield* Effect.all([
-      readAllEventRows({}),
-      settings.read({}),
-      DateTime.now,
-      environments.list,
-      builds.list,
-    ]).pipe(Effect.mapError(persistenceError));
+    const [rows, controllerSettings, now, environmentCatalog, buildCatalog, warmGuests, timings] =
+      yield* Effect.all([
+        readAllEventRows({}),
+        settings.read({}),
+        DateTime.now,
+        environments.list,
+        builds.list,
+        warmPool.list,
+        warmPool.timings,
+      ]).pipe(Effect.mapError(persistenceError));
     const grouped = new Map<RunAllocationId, Array<RunAllocationEvent>>();
     for (const row of rows) {
       const events = grouped.get(row.event.allocationId) ?? [];
@@ -372,6 +378,11 @@ export const make = Effect.fn("CloudAllocationController.make")(function* (input
       runtimeAttempts: controlPlane.runtimeAttempts,
       environments: environmentCatalog,
       builds: buildCatalog,
+      warmGuests,
+      capacity: planWarmPoolCapacity({
+        inventories: warmPoolInventories({ guests: warmGuests, allocations }),
+        timings,
+      }),
       usage: allocations.map((allocation) =>
         usageForAllocation(allocation, grouped.get(allocation.id) ?? [], now),
       ),
