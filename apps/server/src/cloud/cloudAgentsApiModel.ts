@@ -38,6 +38,8 @@ import {
 } from "@t3tools/contracts";
 import type { CloudAgent, CloudRun, CloudRunStatus } from "@t3tools/contracts";
 
+import { parseCloudRepositoryUrl } from "./cloudCollaborationPolicy.ts";
+
 export class CloudAgentsApiFailure {
   readonly _tag = "CloudAgentsApiFailure";
   readonly code: CloudAgentsApiErrorCode;
@@ -85,6 +87,9 @@ export function statusForCode(code: CloudAgentsApiErrorCode): number {
     case "self_hosted_disabled":
     case "self_hosted_required":
       return 409;
+    case "follow_up_forbidden":
+    case "scm_access_denied":
+      return 403;
     case "internal_error":
       return 500;
   }
@@ -310,17 +315,12 @@ export function titleFromPrompt(text: string, name?: string): string {
   return (firstLine || "Cloud task").slice(0, CLOUD_AGENTS_API_NAME_MAX_CHARS);
 }
 
-export function parseRepositoryUrl(url: string): { ownerName: string; hostPath: string } | undefined {
-  try {
-    const parsed = new URL(url);
-    if (parsed.protocol !== "https:" && parsed.protocol !== "http:") return undefined;
-    const parts = parsed.pathname.replace(/\.git$/u, "").split("/").filter((part) => part.length > 0);
-    if (parts.length < 2) return undefined;
-    const ownerName = `${parts[0]}/${parts[1]}`;
-    return { ownerName, hostPath: `${parsed.host}/${ownerName}` };
-  } catch {
-    return undefined;
-  }
+export function parseRepositoryUrl(
+  url: string,
+): { ownerName: string; hostPath: string } | undefined {
+  const parsed = parseCloudRepositoryUrl(url);
+  if (parsed === undefined) return undefined;
+  return { ownerName: parsed.repository, hostPath: parsed.hostPath };
 }
 
 export function interactionMode(
@@ -386,6 +386,7 @@ export interface CloudAgentsApiAgentRecord {
   readonly repos?: ReadonlyArray<CloudAgentsApiRepoInput>;
   readonly workOnCurrentBranch?: boolean;
   readonly autoCreatePR?: boolean;
+  readonly skipReviewerRequest?: boolean;
   readonly urlOrigin: string;
 }
 
@@ -428,6 +429,9 @@ export function publicAgent(
       ? {}
       : { workOnCurrentBranch: record.workOnCurrentBranch }),
     ...(record.autoCreatePR === undefined ? {} : { autoCreatePR: record.autoCreatePR }),
+    ...(record.skipReviewerRequest === undefined
+      ? {}
+      : { skipReviewerRequest: record.skipReviewerRequest }),
     url: `${record.urlOrigin}/cloud-agents/${agent.id}`,
     createdAt: agent.createdAt,
     updatedAt: agent.updatedAt,

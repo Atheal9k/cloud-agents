@@ -112,6 +112,7 @@ export class CloudGitCredentials extends Context.Service<
       readonly head: string;
       readonly title: string;
       readonly body: string;
+      readonly skipReviewerRequest?: boolean;
     }) => Effect.Effect<CloudGitPullRequest, CloudGitCredentialError>;
     readonly closePullRequest: (input: {
       readonly runId: string;
@@ -749,7 +750,7 @@ export const make = Effect.fn("CloudGitCredentials.make")(function* (input: {
         );
       }
 
-      return yield* withRunDirectory(request.runId, (directory) =>
+      const created = yield* withRunDirectory(request.runId, (directory) =>
         runner
           .run({
             command: "gh",
@@ -802,6 +803,46 @@ export const make = Effect.fn("CloudGitCredentials.make")(function* (input: {
             ),
           ),
       );
+      if (request.skipReviewerRequest === true) {
+        yield* withRunDirectory(request.runId, (directory) =>
+          runner
+            .run({
+              command: "gh",
+              args: [
+                "api",
+                "--hostname",
+                "github.com",
+                "--method",
+                "DELETE",
+                `repos/${repository}/pulls/${created.number}/requested_reviewers`,
+                "--input",
+                "-",
+              ],
+              env: {
+                GH_HOST: "github.com",
+                GH_TOKEN: token,
+                GITHUB_TOKEN: token,
+                GH_CONFIG_DIR: directory,
+                GH_DEBUG: "",
+              },
+              stdin: JSON.stringify({ reviewers: [], team_reviewers: [] }),
+              timeout: "30 seconds",
+              maxOutputBytes: 1024 * 1024,
+            })
+            .pipe(
+              Effect.mapError(() =>
+                error("github-failed", "The controller could not suppress pull request reviewers."),
+              ),
+              Effect.flatMap((result) =>
+                result.code === ChildProcessSpawner.ExitCode(0) ||
+                result.stderr.toLowerCase().includes("422")
+                  ? Effect.void
+                  : Effect.fail(classifyGitHubFailure(result.stderr, "create")),
+              ),
+            ),
+        );
+      }
+      return created;
     });
 
   const closePullRequest: CloudGitCredentials["Service"]["closePullRequest"] = (request) =>

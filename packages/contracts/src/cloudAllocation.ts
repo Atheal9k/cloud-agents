@@ -283,6 +283,7 @@ export const RunPublicationIntent = Schema.Union([
     baseBranch: TrimmedNonEmptyString,
     title: TrimmedNonEmptyString,
     body: Schema.String,
+    skipReviewerRequest: Schema.optionalKey(Schema.Boolean),
   }),
 ]);
 export type RunPublicationIntent = typeof RunPublicationIntent.Type;

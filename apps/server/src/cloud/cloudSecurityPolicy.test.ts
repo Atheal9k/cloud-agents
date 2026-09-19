@@ -369,13 +369,38 @@ describe("source-control access", () => {
     });
   });
 
-  it("refuses a scope wider than the environment ceiling", () => {
+  it("refuses a scope wider than the environment ceiling or the app install", () => {
     expect(
       evaluateCloudScmAccess({
         policy,
         request: { repository: "acme/app", scope: "admin", userRepositories, userScope: "admin" },
       }),
     ).toMatchObject({ allowed: false, reason: "scope-exceeds-policy" });
+    expect(
+      evaluateCloudScmAccess({
+        policy,
+        request: {
+          repository: "acme/app",
+          scope: "read",
+          userRepositories,
+          userScope: "write",
+          installRepositories: ["other/*"],
+        },
+      }),
+    ).toMatchObject({ allowed: false, reason: "outside-install-access" });
+    expect(
+      evaluateCloudScmAccess({
+        policy,
+        request: {
+          repository: "acme/other",
+          scope: "read",
+          userRepositories,
+          userScope: "write",
+          installRepositories: ["acme/*"],
+          configuredRepositories: ["acme/app"],
+        },
+      }),
+    ).toMatchObject({ allowed: false, reason: "outside-configured-scope" });
   });
 });
 

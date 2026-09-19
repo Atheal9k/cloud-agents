@@ -5,6 +5,8 @@ import {
   selfHostedLaunchPreview,
   type CloudReadinessCheckId,
   type CloudReadinessReport,
+  type CloudScmConnection,
+  type CloudScmHostKind,
 } from "@t3tools/contracts";
 import { AsyncResult } from "effect/unstable/reactivity";
 import * as Option from "effect/Option";
@@ -76,6 +78,9 @@ function CloudAgentsSettingsForEnvironment({
   const setSpendLimit = useAtomCommand(cloudAllocations.setSpendLimit, { reportFailure: false });
   const exportUsage = useAtomCommand(cloudAllocations.exportUsage, { reportFailure: false });
   const runGuidedSetup = useAtomCommand(cloudAllocations.runGuidedSetup, { reportFailure: false });
+  const listScm = useAtomCommand(cloudAllocations.listScmConnections, { reportFailure: false });
+  const connectScm = useAtomCommand(cloudAllocations.connectScm, { reportFailure: false });
+  const disconnectScm = useAtomCommand(cloudAllocations.disconnectScm, { reportFailure: false });
 
   const [report, setReport] = useState<CloudReadinessReport | null>(null);
   const [error, setError] = useState<string | null>(null);
@@ -102,6 +107,13 @@ function CloudAgentsSettingsForEnvironment({
   const [setupOpen, setSetupOpen] = useState(false);
   const [setupDraft, setSetupDraft] = useState<CloudGuidedSetupDraft | null>(null);
   const [setupNotice, setSetupNotice] = useState<string | null>(null);
+  const [scmConnections, setScmConnections] = useState<ReadonlyArray<CloudScmConnection>>([]);
+  const [scmDraft, setScmDraft] = useState({
+    kind: "github" as CloudScmHostKind,
+    displayName: "GitHub",
+    baseUrl: "https://github.com",
+    installedRepositories: "",
+  });
 
   /** Every mutation reports through one busy key and one error line. */
   const run = useCallback(
@@ -140,6 +152,12 @@ function CloudAgentsSettingsForEnvironment({
   useEffect(() => {
     void refresh();
   }, [refresh]);
+
+  useEffect(() => {
+    void listScm({ environmentId, input: {} }).then((result) => {
+      if (AsyncResult.isSuccess(result)) setScmConnections(result.value);
+    });
+  }, [environmentId, listScm]);
 
   useEffect(() => {
     const defaults = report?.settings.defaults;
@@ -682,6 +700,129 @@ function CloudAgentsSettingsForEnvironment({
         ) : null}
       </SettingsSection>
 
+      <SettingsSection id="cloud-scm" title="Source-control connections">
+        <p className="text-xs text-muted-foreground">
+          Connect GitHub, GitHub Enterprise, GitLab, Bitbucket, or Azure DevOps. Each agent only
+          reaches repositories in the intersection of the app install, the triggering principal, and
+          the agent's configured scope.
+        </p>
+        {scmConnections.length === 0 ? (
+          <p className="text-sm text-muted-foreground">No source-control apps connected yet.</p>
+        ) : (
+          <ul className="text-sm">
+            {scmConnections.map((connection) => (
+              <li key={connection.id} className="flex items-center justify-between gap-2 py-1">
+                <span>
+                  {connection.displayName} · {connection.kind} ·{" "}
+                  {connection.installedRepositories.join(", ")}
+                </span>
+                <Button
+                  size="xs"
+                  variant="ghost"
+                  disabled={busy !== null}
+                  onClick={() =>
+                    void run(
+                      "scm",
+                      async () => {
+                        const result = await disconnectScm({
+                          environmentId,
+                          input: { connectionId: connection.id },
+                        });
+                        if (result._tag === "Success") {
+                          setScmConnections((current) =>
+                            current.filter((row) => row.id !== connection.id),
+                          );
+                        }
+                        return result;
+                      },
+                      "Could not disconnect that source-control app.",
+                    )
+                  }
+                >
+                  Disconnect
+                </Button>
+              </li>
+            ))}
+          </ul>
+        )}
+        <div className="grid gap-3 sm:grid-cols-4">
+          <label className={fieldClassName}>
+            <span className={labelClassName}>Host</span>
+            <select
+              className={selectClassName}
+              value={scmDraft.kind}
+              onChange={(event) =>
+                setScmDraft({ ...scmDraft, kind: event.currentTarget.value as CloudScmHostKind })
+              }
+            >
+              <option value="github">GitHub</option>
+              <option value="github-enterprise">GitHub Enterprise</option>
+              <option value="gitlab">GitLab</option>
+              <option value="gitlab-self-hosted">GitLab self-hosted</option>
+              <option value="bitbucket">Bitbucket</option>
+              <option value="azure-devops">Azure DevOps</option>
+            </select>
+          </label>
+          <label className={fieldClassName}>
+            <span className={labelClassName}>Name</span>
+            <Input
+              value={scmDraft.displayName}
+              onChange={(event) =>
+                setScmDraft({ ...scmDraft, displayName: event.currentTarget.value })
+              }
+            />
+          </label>
+          <label className={fieldClassName}>
+            <span className={labelClassName}>Base URL</span>
+            <Input
+              value={scmDraft.baseUrl}
+              onChange={(event) => setScmDraft({ ...scmDraft, baseUrl: event.currentTarget.value })}
+            />
+          </label>
+          <label className={fieldClassName}>
+            <span className={labelClassName}>Installed repositories</span>
+            <Input
+              value={scmDraft.installedRepositories}
+              placeholder="owner/app, owner/*"
+              onChange={(event) =>
+                setScmDraft({ ...scmDraft, installedRepositories: event.currentTarget.value })
+              }
+            />
+          </label>
+        </div>
+        <Button
+          size="xs"
+          disabled={busy !== null}
+          onClick={() =>
+            void run(
+              "scm",
+              async () => {
+                const installedRepositories = scmDraft.installedRepositories
+                  .split(",")
+                  .map((value) => value.trim())
+                  .filter((value) => value.length > 0);
+                const result = await connectScm({
+                  environmentId,
+                  input: {
+                    kind: scmDraft.kind,
+                    displayName: scmDraft.displayName.trim() || scmDraft.kind,
+                    baseUrl: scmDraft.baseUrl.trim(),
+                    installedRepositories,
+                  },
+                });
+                if (result._tag === "Success") {
+                  setScmConnections((current) => [...current, result.value]);
+                }
+                return result;
+              },
+              "Could not connect that source-control app.",
+            )
+          }
+        >
+          Connect
+        </Button>
+      </SettingsSection>
+
       <SettingsSection id="cloud-defaults" title="Defaults and policy">
         <div className="grid gap-3 sm:grid-cols-3">
           <label className={fieldClassName}>
@@ -758,6 +899,18 @@ function CloudAgentsSettingsForEnvironment({
             </select>
           </label>
         </div>
+        {defaultsDraft.collaboration === "disabled" ? null : (
+          <ul className="list-disc pl-5 text-xs text-muted-foreground">
+            <li>
+              Teammate follow-ups can reach repositories and threads the follower did not create.
+              Treat that as lateral access.
+            </li>
+            <li>
+              A follow-up can observe runtime-redacted secrets already bound to the agent. Disable
+              team follow-ups if that is too wide.
+            </li>
+          </ul>
+        )}
         <div className="flex flex-wrap gap-4 text-sm">
           {(
             [

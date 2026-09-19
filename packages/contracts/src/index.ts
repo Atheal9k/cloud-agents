@@ -28,6 +28,7 @@ export * from "./sourceControl.ts";
 export * from "./projectClone.ts";
 export * from "./cloudAllocation.ts";
 export * from "./cloudAccounting.ts";
+export * from "./cloudCollaboration.ts";
 export * from "./cloudAgentsApi.ts";
 export * from "./cloudMacIos.ts";
 export * from "./cloudLinuxAndroid.ts";

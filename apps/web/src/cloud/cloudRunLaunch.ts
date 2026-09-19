@@ -35,6 +35,8 @@ export interface CloudRunLaunchDraft {
   readonly workerProfile: "linux-web" | "linux-android";
   readonly publication: "review-only" | "automatic-draft-pr";
   readonly baseBranch: string;
+  readonly branchBehavior: "new-cursor-branch" | "current-branch" | "starting-ref" | "continue-pr";
+  readonly skipReviewerRequest: boolean;
 }
 
 const DEFAULT_CLOUD_RUN_MINUTES = 3 * 24 * 60;
@@ -49,7 +51,14 @@ export function cloudRunProjectOptions(
 ): ReadonlyArray<CloudRunProjectOption> {
   const seenRepositories = new Set<string>();
   return projects.flatMap((project) => {
-    if (project.repositoryIdentity?.provider !== "github") return [];
+    if (
+      project.repositoryIdentity?.provider !== "github" &&
+      project.repositoryIdentity?.provider !== "gitlab" &&
+      project.repositoryIdentity?.provider !== "bitbucket" &&
+      project.repositoryIdentity?.provider !== "azure-devops"
+    ) {
+      return [];
+    }
     const repository = sourceControlRepositorySelector(project.repositoryIdentity);
     if (repository === null) return [];
     const key = repository.toLowerCase();
@@ -103,6 +112,8 @@ export function createInitialCloudRunDraft(
     workerProfile: "linux-web",
     publication: "automatic-draft-pr",
     baseBranch: ref,
+    branchBehavior: "new-cursor-branch",
+    skipReviewerRequest: false,
   };
 }
 
@@ -117,8 +128,6 @@ export function reconcileCloudRunLaunchInstanceType(
 export type CloudRunLaunchValidation =
   | { readonly status: "valid"; readonly command: RunAllocationCommand }
   | { readonly status: "invalid"; readonly message: string };
-
-const REPOSITORY_PATTERN = /^[A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+$/;
 
 function minutes(value: string): number | null {
   const parsed = Number(value);
@@ -150,10 +159,10 @@ export function buildCloudRunLaunchCommand(input: {
   const inputWaitMinutes = minutes(input.draft.inputWaitMinutes);
 
   if (repository.length === 0) {
-    return { status: "invalid", message: "Choose a project linked to a GitHub repository." };
+    return { status: "invalid", message: "Choose a project linked to a source-control repository." };
   }
-  if (!REPOSITORY_PATTERN.test(repository)) {
-    return { status: "invalid", message: "Repository must use the owner/name format." };
+  if (repository.includes(" ") || repository.includes("..")) {
+    return { status: "invalid", message: "Repository must be a source-control path." };
   }
   if (selectedRef.length === 0) {
     return { status: "invalid", message: "Choose a branch, tag, or commit to start from." };
@@ -200,6 +209,11 @@ export function buildCloudRunLaunchCommand(input: {
   const threadId = ThreadId.make(`thread-${input.requestId}-1`);
   const messageId = MessageId.make(`message-${input.requestId}`);
   const title = titleForTask(task);
+  const skipReviewerRequest = input.draft.skipReviewerRequest === true;
+  const branch =
+    input.draft.branchBehavior === "new-cursor-branch"
+      ? `cursor/${input.requestId.replace(/[^A-Za-z0-9-]/gu, "").slice(0, 12)}`
+      : selectedRef;
   const publication: RunPublicationIntent =
     input.draft.publication === "review-only"
       ? { mode: "review-only" }
@@ -208,6 +222,7 @@ export function buildCloudRunLaunchCommand(input: {
           baseBranch,
           title,
           body: "Started from the T3 Code cloud launch dialog.",
+          ...(skipReviewerRequest ? { skipReviewerRequest: true } : {}),
         };
 
   return {
@@ -221,7 +236,7 @@ export function buildCloudRunLaunchCommand(input: {
       target: {
         repository,
         baseCommit: selectedRef,
-        branch: `cloud/${input.requestId.slice(0, 12)}`,
+        branch,
       },
       publication,
       control: {

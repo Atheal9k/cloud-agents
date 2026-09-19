@@ -55,6 +55,8 @@ export const CloudAgentsApiErrorCode = Schema.Literals([
   "rate_limited",
   "admission_stopped",
   "spend_limit_exceeded",
+  "follow_up_forbidden",
+  "scm_access_denied",
   "self_hosted_disabled",
   "self_hosted_required",
   "internal_error",
@@ -79,6 +81,7 @@ export const CloudAgentsApiPrincipal = Schema.Struct({
   userEmail: Schema.optionalKey(TrimmedNonEmptyString),
   userFirstName: Schema.optionalKey(TrimmedNonEmptyString),
   userLastName: Schema.optionalKey(TrimmedNonEmptyString),
+  teamId: Schema.optionalKey(TrimmedNonEmptyString),
 });
 export type CloudAgentsApiPrincipal = typeof CloudAgentsApiPrincipal.Type;
 
@@ -215,6 +218,7 @@ export const CloudAgentsApiAgent = Schema.Struct({
   repos: Schema.optionalKey(Schema.Array(CloudAgentsApiRepoInput)),
   workOnCurrentBranch: Schema.optionalKey(Schema.Boolean),
   autoCreatePR: Schema.optionalKey(Schema.Boolean),
+  skipReviewerRequest: Schema.optionalKey(Schema.Boolean),
   url: TrimmedNonEmptyString,
   createdAt: IsoDateTime,
   updatedAt: IsoDateTime,
