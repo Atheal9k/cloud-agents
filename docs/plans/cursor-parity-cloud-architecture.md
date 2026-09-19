@@ -237,6 +237,15 @@ Repo recipes from CA-10 become the environment config:
 A committed `environment.json` (or `t3.cloud.json`) on the branch wins over
 the dashboard copy. Editing config does **not** mutate a running guest.
 
+### First-time create uses Cursor's env-setup skills
+
+When no effective environment exists, CA-59 requires T3 to run Cursor's
+`env-setup` skill and `create-environment` reference: verbatim opener and
+five-item checklist, discover the repo, generate `install`/`start`, snapshot,
+draft Build, verify in a fresh subagent, propose, then the user Saves. Later
+changes use the matching update/migrate references from `environment-info`.
+A settings form is not a substitute for that agent-led path.
+
 ### Secrets and git
 
 Keep CA-06’s split: task code cannot read publication keys; clone/push uses
@@ -453,8 +462,11 @@ Order is dependency, not ticket IDs.
 1. **Model split (CA-40)** — persist Environment, Build, Agent, RuntimeVm separately
    from `RunAllocation` instance IDs. Agent conversation survives missing
    `instanceId`.
-2. **Environment builds (CA-41/CA-42)** — snapshot after `install`; boot next run from it
-   with git reuse. Still allowed to use one EC2 for the build job.
+2. **Environment builds (CA-41/CA-42/CA-59)** — snapshot after `install`; boot
+   next run from it with git reuse. First-time setup uses Cursor's
+   `env-setup` / `create-environment` skill: discover, install twice, snapshot,
+   draft Build, fresh-agent verify, propose, user Saves. Still allowed to use
+   one EC2 for the first Build job.
 3. **Idle hibernate (CA-43/CA-46)** — on settle, snapshot and stop/destroy guest; follow-up
    restores. Replace 120-minute TTL as primary policy. Fix cleanup Lambda so
    stopped snapshot volumes are not terminated as expired workers.

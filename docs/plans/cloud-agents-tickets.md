@@ -146,7 +146,7 @@ priority.
 | ---------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------- |
 | Architecture proof                 | CA-01                                                                                                                                                      | Select one provider and prove T3 reuse, ownership, offline execution, and the basic worker route.                    |
 | Local-hosted web/desktop release   | CA-02, CA-03, CA-04A, CA-04C, CA-06, CA-07, CA-08, CA-09, CA-10, CA-11, CA-14, CA-15, CA-16, CA-17, CA-18, CA-19, CA-23, CA-24, CA-25, CA-27, CA-34, CA-35 | Run the complete single-worker workflow from the local Docker controller. The controller machine must remain online. |
-| Agent/runtime foundation           | CA-40, CA-41, CA-42, CA-43, CA-44, CA-45, CA-46                                                                                                            | Split agents/runs from runtimes, build reusable environments, hibernate idle guests, then pack guests safely.        |
+| Agent/runtime foundation           | CA-40, CA-41, CA-42, CA-59, CA-43, CA-44, CA-45, CA-46                                                                                                     | Split agents/runs from runtimes, create environments with Cursor's setup skills, then pack and hibernate guests.     |
 | Permanent controller deployment    | CA-04B                                                                                                                                                     | Move the controller and new catalogs to an always-on host with safe single-writer cutover.                           |
 | Review and operations improvements | CA-05, CA-12, CA-13, CA-21, CA-33, CA-36                                                                                                                   | Administer environments, Builds, retained agents, review, and preview restore.                                       |
 | Product/API parity                 | CA-47, CA-48, CA-49, CA-50, CA-51, CA-52, CA-53, CA-54, CA-55, CA-56, CA-57, CA-58                                                                         | Match Cursor's API, integrations, collaboration, security, automation, diagnostics, and self-hosted runtime choices. |
@@ -604,7 +604,8 @@ Acceptance criteria:
 - Validate IAM, KVM/Firecracker support, image and snapshot access, artifact
   storage, guest registration, and optional SSM diagnostics independently.
 - Guided setup can create, test, and activate an environment version without
-  replacing the last successful Build on failure.
+  replacing the last successful Build on failure. First-time repository
+  environment create uses CA-59, not a separate settings-only form.
 - Settings expose config source/precedence, secrets, egress, stale-build
   threshold, and default model/repository/ref.
 - Stop-admission leaves active runs, idle snapshots, cleanup, and review
@@ -616,7 +617,7 @@ Dependencies: CA-10, CA-19, CA-24, CA-41, CA-42, CA-49.
 
 Description: Replace per-run recipes with versioned environments. Map setup to
 Build-time `install`, per-runtime services to `start` and named terminals, and
-secrets to explicit Build/runtime classes.
+secrets to explicit Build/runtime classes. First-time create follows CA-59.
 
 Acceptance criteria:
 
@@ -675,7 +676,7 @@ Acceptance criteria:
 ### CA-33: Expand remote administration beyond the first workflow
 
 Dependencies: CA-05, CA-12, CA-18, CA-19, CA-24, CA-40, CA-41, CA-42, CA-44,
-CA-49, CA-55.
+CA-49, CA-55, CA-59.
 
 Description: Administer repositories, environments, Builds, models, secrets,
 network policy, agents, runtime capacity, integrations, and spend remotely.
@@ -683,7 +684,8 @@ network policy, agents, runtime capacity, integrations, and spend remotely.
 Acceptance criteria:
 
 - Manage environment version history; trigger, inspect, activate, and roll back
-  Builds; set recurring/manual Build policy.
+  Builds; set recurring/manual Build policy. Starting Setup for a repository
+  with no effective environment launches CA-59, not a blank JSON editor.
 - Configure default model/context, repository/ref, long-running permission,
   team follow-ups, computer use, Git artifacts, and spend limits.
 - Show hypervisor slots, warm inventory, runtime placement, snapshots, queue,
@@ -743,10 +745,10 @@ Acceptance criteria:
 
 ### CA-41: Add versioned environments and config resolution
 
-Dependencies: CA-10, CA-12, CA-40.
+Dependencies: CA-10, CA-40.
 
 Description: Make environment setup a first-class, versioned resource rather
-than a mutable recipe attached to each allocation.
+than a mutable recipe attached to each allocation. First-time create is CA-59.
 
 Acceptance criteria:
 
@@ -757,10 +759,12 @@ Acceptance criteria:
   equivalent, personal saved environment, then team/default environment.
 - Every edit creates an immutable version; active agents retain the version
   they started with. Restore creates a new version pointing to prior config.
-- Agent-led setup can inspect the repo, propose config, request missing secrets
-  or user actions, test it, and hand the proposal to the user before saving.
 - The dashboard exposes source, version history, repositories, owner/scope,
-  active Build, and effective policy.
+  active Build, and effective policy. Do not create a competing dashboard
+  environment when a committed `.cursor/environment.json` already exists.
+- Schema matches https://cursor.com/schemas/environment.schema.json. Do not
+  write a `$schema` property. Choose exactly one of Dockerfile, image, or
+  snapshot.
 
 ### CA-42: Build and activate prepared environment snapshots
 
@@ -783,6 +787,104 @@ Acceptance criteria:
   `gitSetup`, and logs. User-only runtime secrets never enter shared snapshots.
 - Stale-build threshold defaults to 24 hours and may be `0` to always refresh.
   A feature-branch run boots the Build then checks out the requested ref.
+- Agent-requested Builds from CA-59 are draft until the user Saves. A failed
+  draft never replaces the last active Build.
+
+### CA-59: Run Cursor's agent-led first-time environment setup
+
+Dependencies: CA-41, CA-42, CA-49, CA-51.
+
+Description: When no effective environment exists, or the user asks to make a
+repository fully usable for Cloud Agents, T3 must run Cursor's `env-setup` /
+`create-environment` skill rather than a custom setup wizard. Later
+inspect/update/migrate work uses the matching env-setup references: create,
+update repository-managed, update DB-managed, and migrate to builds.
+
+Ship the skills and MCP tools as first-class product behavior. Agents follow
+the skill text; they do not invent a parallel flow.
+
+Acceptance criteria:
+
+- T3 ships an `env-setup` skill and a `create-environment` reference equivalent
+  to Cursor's Cloud Agent environment skills, including update and migrate
+  references. Agents load them for environment create, inspect, improve, and
+  build.
+- First-time create, before any tool call, sends this opener as plain chat
+  with the blank line preserved, verbatim except the product name in the
+  "Cursor will:" line may say T3:
+
+  Environments let agents run, test, verify, and demo changes like an engineer. Setup is free, agent-led, and takes 5-20 minutes. Cursor will:
+  1. Explore, install, and verify your application
+  2. Ask for secrets or network access as needed
+  3. Prompt you to review and save the configuration
+
+  Interrupt anytime to steer the agent or ask questions.
+
+  If the skill is resumed after work started, do not resend the opener or
+  recreate todos.
+
+- Immediately after the opener, the agent creates exactly this five-item
+  checklist, in this order, with the first item `in_progress` and the rest
+  `pending`. Titles are verbatim and must not be renamed, reordered, split, or
+  merged:
+
+  1. `Understand the codebase`
+  2. `Generate setup script`
+  3. `Take a snapshot`
+  4. `Verify build in a subagent`
+  5. `Verify success and show card`
+
+  Keep at most one `in_progress` item. Mark completed only after success. Keep
+  the current item `in_progress` while blocked on required user action. Mark
+  `Verify build in a subagent` `cancelled` only when build selection or
+  subagents are unavailable, and disclose the skip.
+
+- Discovery inspects products and services, README, CONTRIBUTING, AGENTS.md,
+  manifests, hooks, Docker/Compose/devcontainer, canonical
+  lint/typecheck/test/build/dev-server commands, existing
+  `.cursor/environment.json`, secrets, test accounts, egress domains, and
+  current third-party docs. Prefer the repository's pinned tools and
+  lockfiles. Do not upgrade dependencies or rewrite lockfiles unless the user
+  asks. Do not create `AGENTS.md` if it is missing.
+- Design uses the default base image unless a stable toolchain is missing.
+  Custom Dockerfiles are deterministic, non-interactive, include `git` and
+  `curl`, target x86_64 Debian/Ubuntu unless docs say otherwise, and do not
+  copy the whole repository. Nested Docker and Tailscale userspace networking
+  are validated, not copied from stale recipes. Commands split as `install`
+  (idempotent, terminating), `start` (per-boot, returns), and `terminals`
+  (named long-running processes).
+- Local validation installs system deps, runs `install` twice, starts
+  `start`/`terminals`, runs lint/typecheck/test/build for the agreed scope,
+  and exercises a real hello-world product action. Capture command evidence
+  and, for GUI products, a screenshot or short recording. Do not change
+  application code to hide environment failures.
+- Blockers use `request-environment-setup-actions` as soon as a required
+  secret, test login, egress domain, or external action is confirmed missing.
+  Only `add_secrets`, `add_egress_allowlist_domain`, and `external_action` are
+  allowed. Test-login username/password/OTP go in `add_secrets`. Do not
+  snapshot, trigger a build, propose, or ask the user to Save while required
+  blockers remain. If the user declines a required action, setup stays
+  incomplete.
+- After local success, take a VM snapshot and wait until READY. When build
+  tools exist, trigger a draft Build with READY `snapshot` plus the
+  install/start scripts, wait for `SUCCEEDED`/`FAILED`, inspect logs, then
+  verify that exact Build in a fresh cloud subagent (`environment: "cloud"`,
+  `cloud_requested_environment_build_id`). Propose scripts with that
+  `buildId`, never the raw snapshot id. If build tools are unavailable,
+  snapshot then propose without claiming a Build was tested. A proposal does
+  not save.
+- Saving is a user action in the Environment panel. After proposal, the
+  success summary uses Cursor's Save card: opening sentence, **What was done**
+  bullets, Validation table (including Install idempotence twice and Fresh
+  Cloud Agent only when the subagent ran), Setup details only when
+  `environment-info` returns a non-empty `url`, and **Click Save in the
+  Environment panel on the right.** Never imply a draft was saved.
+- `env-setup` inspect/update flows choose create vs repository-managed vs
+  DB-managed vs migrate-to-builds from `environment-info`
+  (`environmentJsonPath` present vs null). Editing config does not rebuild or
+  migrate an already running agent. Web, desktop, command palette, and
+  settings all start the same create skill; a dashboard form is not a
+  substitute.
 
 ### CA-43: Hibernate idle agents and wake from snapshots
 
@@ -973,7 +1075,11 @@ Acceptance criteria:
   per user, HTTP credentials can stay outside the guest, and stdio executes in
   the runtime.
 - The built-in cloud diagnostics MCP exposes run info, transcripts, events,
-  environment/Build details, setup logs, and authorized fleet diagnostics.
+  environment/Build details, setup logs, and authorized fleet diagnostics, plus
+  the CA-59 setup tools: `environment-info`, `take-environment-snapshot`,
+  `check-environment-snapshot`, `trigger-environment-build`,
+  `list-environment-builds`, `environment-build-logs`,
+  `propose-environment-json`, and `request-environment-setup-actions`.
 - Repository `.cursor/hooks.json` command hooks cover supported tool/file and
   lifecycle events. Early read-only setup and unavailable local-home hooks are
   documented.
