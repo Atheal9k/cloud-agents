@@ -1,13 +1,88 @@
 import {
   cloudEnvironmentBase,
+  type CloudAllocationSnapshot,
   type CloudControllerDefaults,
   type CloudEnvironment,
+  type CloudEnvironmentBuild,
   type CloudEnvironmentSource,
   type CloudGuidedSetupInput,
   type CloudReadinessCheck,
   type CloudReadinessCheckOutcome,
   type CloudReadinessReport,
 } from "@t3tools/contracts";
+
+export type CloudBuildAction = "cancel" | "activate";
+
+export function cloudBuildActions(build: CloudEnvironmentBuild): ReadonlyArray<CloudBuildAction> {
+  if (build.outcome.status === "running") return ["cancel"];
+  if (build.draft && build.outcome.status === "succeeded") return ["activate"];
+  return [];
+}
+
+export type CloudBuildPolicyValidation =
+  | { readonly status: "invalid"; readonly message: string }
+  | { readonly status: "valid"; readonly staleThresholdSeconds: number };
+
+export function validateCloudBuildPolicyDraft(value: string): CloudBuildPolicyValidation {
+  const trimmedValue = value.trim();
+  const staleThresholdSeconds = Number(trimmedValue);
+  if (
+    trimmedValue.length === 0 ||
+    !Number.isSafeInteger(staleThresholdSeconds) ||
+    staleThresholdSeconds < 0
+  ) {
+    return {
+      status: "invalid",
+      message: "Build refresh must be a whole number of seconds, including 0 for every run.",
+    };
+  }
+  return { status: "valid", staleThresholdSeconds };
+}
+
+export interface CloudFleetSummary {
+  readonly queuedAllocations: number;
+  readonly activeRuntimeAttempts: number;
+  readonly hibernatedRuntimeAttempts: number;
+  readonly warmPlacements: number;
+  readonly coldPlacements: number;
+  readonly cleanupPending: number;
+  readonly cleanupFailed: number;
+  readonly warmGuests: Readonly<Record<"warming" | "ready" | "claimed" | "draining", number>>;
+}
+
+export function cloudFleetSummary(snapshot: CloudAllocationSnapshot): CloudFleetSummary {
+  const runtimeAttempts = snapshot.runtimeAttempts ?? [];
+  const warmGuests = snapshot.warmGuests ?? [];
+  const placements = snapshot.allocations.flatMap((allocation) =>
+    allocation.placement === undefined ? [] : [allocation.placement],
+  );
+  return {
+    queuedAllocations: snapshot.allocations.filter(
+      (allocation) => allocation.allocationState.status === "queued",
+    ).length,
+    activeRuntimeAttempts: runtimeAttempts.filter(
+      (runtime) => runtime.status === "ACTIVE" || runtime.status === "CREATING",
+    ).length,
+    hibernatedRuntimeAttempts: runtimeAttempts.filter((runtime) => runtime.status === "HIBERNATED")
+      .length,
+    warmPlacements: placements.filter((placement) => placement.warmFork === "warm").length,
+    coldPlacements: placements.filter((placement) => placement.warmFork === "cold").length,
+    cleanupPending: snapshot.allocations.filter(
+      (allocation) =>
+        allocation.cleanupState.status === "requested" ||
+        allocation.cleanupState.status === "running",
+    ).length,
+    cleanupFailed: snapshot.allocations.filter(
+      (allocation) => allocation.cleanupState.status === "failed",
+    ).length,
+    warmGuests: {
+      warming: warmGuests.filter((guest) => guest.status === "warming").length,
+      ready: warmGuests.filter((guest) => guest.status === "ready").length,
+      claimed: warmGuests.filter((guest) => guest.status === "claimed").length,
+      draining: warmGuests.filter((guest) => guest.status === "draining").length,
+    },
+  };
+}
 
 export type CloudReadinessTone = "ok" | "problem" | "muted";
 

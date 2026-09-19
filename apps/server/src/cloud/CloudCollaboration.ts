@@ -19,7 +19,9 @@ import * as SqlClient from "effect/unstable/sql/SqlClient";
 import * as SqlSchema from "effect/unstable/sql/SqlSchema";
 
 import * as CloudAllocationController from "./CloudAllocationController.ts";
+import * as CloudAccountingCatalog from "./CloudAccountingCatalog.ts";
 import { CloudAgentsApiFailure, apiError } from "./cloudAgentsApiModel.ts";
+import { auditEvent } from "./cloudAccountingPolicy.ts";
 import {
   cloudIdempotentRunKey,
   evaluateCloudSharedAgentView,
@@ -113,6 +115,7 @@ export function teamIdOf(principal: CloudAgentsApiPrincipal): string {
 export const make = Effect.fn("CloudCollaboration.make")(function* () {
   const sql = yield* SqlClient.SqlClient;
   const allocations = yield* CloudAllocationController.CloudAllocationController;
+  const accounting = yield* CloudAccountingCatalog.make();
 
   const listConnectionRows = SqlSchema.findAll({
     Request: EmptyRequest,
@@ -252,15 +255,47 @@ export const make = Effect.fn("CloudCollaboration.make")(function* () {
           ),
         ),
       );
+      yield* accounting
+        .appendAudit(
+          auditEvent({
+            id: `audit:scm-connect:${connection.id}`,
+            occurredAt: connectedAt,
+            action: "auth",
+            resourceType: "scm-connection",
+            resourceId: connection.id,
+            summary: `Connected ${connection.displayName}.`,
+          }),
+        )
+        .pipe(Effect.ignore);
+      yield* allocations.refresh.pipe(Effect.ignore);
       return connection;
     });
 
   const disconnect: CloudCollaboration["Service"]["disconnect"] = (connectionId) =>
-    deleteConnection({ connectionId }).pipe(
-      Effect.mapError(() =>
-        collaborationError("persistence-failed", "Could not remove the source-control connection."),
-      ),
-    );
+    Effect.gen(function* () {
+      yield* deleteConnection({ connectionId }).pipe(
+        Effect.mapError(() =>
+          collaborationError(
+            "persistence-failed",
+            "Could not remove the source-control connection.",
+          ),
+        ),
+      );
+      const disconnectedAt = DateTime.formatIso(yield* DateTime.now);
+      yield* accounting
+        .appendAudit(
+          auditEvent({
+            id: `audit:scm-disconnect:${connectionId}:${disconnectedAt}`,
+            occurredAt: disconnectedAt,
+            action: "auth",
+            resourceType: "scm-connection",
+            resourceId: connectionId,
+            summary: "Disconnected a source-control connection.",
+          }),
+        )
+        .pipe(Effect.ignore);
+      yield* allocations.refresh.pipe(Effect.ignore);
+    });
 
   const authorizeRepository: CloudCollaboration["Service"]["authorizeRepository"] = (input) =>
     Effect.gen(function* () {

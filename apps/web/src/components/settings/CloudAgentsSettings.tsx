@@ -23,6 +23,10 @@ import { Button } from "../ui/button";
 import { Input } from "../ui/input";
 import { Textarea } from "../ui/textarea";
 import {
+  CloudEnvironmentAdministration,
+  CloudFleetAdministration,
+} from "./CloudAgentsAdministration";
+import {
   cloudControllerDefaultsFromDraft,
   cloudEnvironmentSourceLabel,
   cloudReadinessCheckRows,
@@ -562,6 +566,12 @@ function CloudAgentsSettingsForEnvironment({
                     ],
                   ]}
                 />
+                <CloudEnvironmentAdministration
+                  controllerEnvironmentId={environmentId}
+                  environment={environment}
+                  snapshot={snapshot}
+                  onMutated={refresh}
+                />
               </li>
             ))}
           </ul>
@@ -720,11 +730,19 @@ function CloudAgentsSettingsForEnvironment({
         ) : null}
       </SettingsSection>
 
+      <CloudFleetAdministration snapshot={snapshot} />
+
       <SettingsSection id="cloud-scm" title="Source-control connections">
         <p className="text-xs text-muted-foreground">
           Connect GitHub, GitHub Enterprise, GitLab, Bitbucket, or Azure DevOps. Each agent only
           reaches repositories in the intersection of the app install, the triggering principal, and
           the agent's configured scope.
+        </p>
+        <p className="text-xs text-muted-foreground">
+          Provider and source-control credential values stay write-only in the configured secret
+          store. Replacing a value affects new runtime sessions and Git operations without returning
+          the credential to this browser or rebuilding an environment unless a Build-only reference
+          changed.
         </p>
         {scmConnections.length === 0 ? (
           <p className="text-sm text-muted-foreground">No source-control apps connected yet.</p>

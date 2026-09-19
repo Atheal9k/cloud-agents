@@ -729,6 +729,20 @@ export const SETTINGS_SEARCH_ITEMS = [
     ],
   },
   {
+    id: "cloud-operations",
+    title: "Cloud runtime operations",
+    to: "/settings/cloud-agents",
+    searchTerms: [
+      "queue capacity warm inventory placement runtime snapshots cleanup hypervisor guest",
+    ],
+  },
+  {
+    id: "cloud-audit",
+    title: "Cloud administrative audit",
+    to: "/settings/cloud-agents",
+    searchTerms: ["actor mutation auth config build secret spend history"],
+  },
+  {
     id: "cloud-scm",
     title: "Source-control connections",
     to: "/settings/cloud-agents",

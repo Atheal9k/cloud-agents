@@ -1,4 +1,6 @@
 import {
+  CloudAllocationSnapshot,
+  CloudEnvironmentBuild,
   CloudGuidedSetupInput,
   type CloudEnvironment,
   type CloudReadinessReport,
@@ -7,16 +9,53 @@ import { describe, expect, it } from "@effect/vitest";
 import * as Schema from "effect/Schema";
 
 import {
+  cloudBuildActions,
   cloudControllerDefaultsFromDraft,
+  cloudFleetSummary,
   cloudReadinessCheckRows,
   cloudReadinessHeadline,
   createCloudGuidedSetupDraft,
+  validateCloudBuildPolicyDraft,
   validateCloudGuidedSetupDraft,
   type CloudGuidedSetupDraft,
 } from "./CloudAgentsSettings.logic";
 
 const NOW = "2026-09-19T12:00:00.000Z";
 const isGuidedSetupInput = Schema.is(CloudGuidedSetupInput);
+const decodeBuild = Schema.decodeUnknownSync(CloudEnvironmentBuild);
+const decodeSnapshot = Schema.decodeUnknownSync(CloudAllocationSnapshot);
+
+function build(input: {
+  readonly draft: boolean;
+  readonly outcome:
+    | { readonly status: "running" }
+    | {
+        readonly status: "succeeded";
+        readonly snapshot: {
+          readonly id: string;
+          readonly digest: string;
+          readonly sizeBytes: number;
+          readonly createdAt: string;
+        };
+        readonly completedAt: string;
+      };
+}): CloudEnvironmentBuild {
+  return decodeBuild({
+    id: "build:primary:2",
+    environmentId: "environment:primary",
+    versionId: "version:primary:2",
+    version: 2,
+    trigger: "manual",
+    draft: input.draft,
+    base: { kind: "image", image: "ubuntu:24.04" },
+    inputsFingerprint: "a".repeat(64),
+    gitSetup: [],
+    logs: [],
+    timings: {},
+    outcome: input.outcome,
+    startedAt: NOW,
+  });
+}
 
 function report(overrides: Partial<CloudReadinessReport> = {}): CloudReadinessReport {
   return {
@@ -340,6 +379,199 @@ describe("cloudControllerDefaultsFromDraft", () => {
       artifactsToGit: false,
       collaboration: "disabled",
       selfHostedMode: "off",
+    });
+  });
+});
+
+describe("cloudBuildActions", () => {
+  it("offers only actions the Build catalog can accept", () => {
+    expect(cloudBuildActions(build({ draft: false, outcome: { status: "running" } }))).toEqual([
+      "cancel",
+    ]);
+    expect(
+      cloudBuildActions(
+        build({
+          draft: true,
+          outcome: {
+            status: "succeeded",
+            snapshot: {
+              id: "snapshot:primary:2",
+              digest: "b".repeat(64),
+              sizeBytes: 1_024,
+              createdAt: NOW,
+            },
+            completedAt: NOW,
+          },
+        }),
+      ),
+    ).toEqual(["activate"]);
+    expect(
+      cloudBuildActions(
+        build({
+          draft: false,
+          outcome: {
+            status: "succeeded",
+            snapshot: {
+              id: "snapshot:primary:2",
+              digest: "b".repeat(64),
+              sizeBytes: 1_024,
+              createdAt: NOW,
+            },
+            completedAt: NOW,
+          },
+        }),
+      ),
+    ).toEqual([]);
+  });
+});
+
+describe("validateCloudBuildPolicyDraft", () => {
+  it("accepts every-run and recurring refresh windows", () => {
+    expect(validateCloudBuildPolicyDraft("0")).toEqual({
+      status: "valid",
+      staleThresholdSeconds: 0,
+    });
+    expect(validateCloudBuildPolicyDraft("86400")).toEqual({
+      status: "valid",
+      staleThresholdSeconds: 86_400,
+    });
+  });
+
+  it("rejects empty, negative, fractional, and unsafe refresh windows", () => {
+    expect(validateCloudBuildPolicyDraft(" ").status).toBe("invalid");
+    expect(validateCloudBuildPolicyDraft("-1").status).toBe("invalid");
+    expect(validateCloudBuildPolicyDraft("1.5").status).toBe("invalid");
+    expect(validateCloudBuildPolicyDraft(String(Number.MAX_SAFE_INTEGER + 1)).status).toBe(
+      "invalid",
+    );
+  });
+});
+
+describe("cloudFleetSummary", () => {
+  it("separates queue, placement, snapshot, warm inventory, and cleanup state", () => {
+    const snapshot = decodeSnapshot({
+      controller: {
+        mode: "permanent",
+        requiresHostOnline: false,
+        admission: { status: "open" },
+      },
+      limits: {
+        maxConcurrentWorkers: 4,
+        maxQueueDepth: 8,
+        maxRunSeconds: 3_600,
+        maxInputWaitSeconds: 300,
+        previewLeaseSeconds: 300,
+        previewLeaseMaxSeconds: 3_600,
+        idleReleaseSeconds: 300,
+        conversationRetentionDays: 0,
+        allowedInstanceTypes: ["c7i.large"],
+      },
+      workerPriceAssumptions: [],
+      spendingControl: "estimate-only",
+      allocations: [
+        {
+          id: "allocation:queued",
+          attempt: 1,
+          target: {
+            repository: "t3tools/t3code",
+            baseCommit: "c".repeat(40),
+            branch: "cursor/queued",
+          },
+          publication: { mode: "review-only" },
+          profile: {
+            id: "linux-web",
+            os: "linux",
+            arch: "x64",
+            instanceType: "c7i.large",
+          },
+          placement: {
+            warmFork: "warm",
+            buildId: "build:primary:1",
+            claimLatencyMs: 40,
+            bootTimeMs: 2_000,
+          },
+          deadlines: {
+            launchBy: NOW,
+            bootBy: NOW,
+            registerBy: NOW,
+            expiresAt: NOW,
+            cleanupBy: NOW,
+          },
+          allocationState: { status: "queued" },
+          agentOutcome: { status: "not-started" },
+          previewState: { status: "unavailable" },
+          leases: {
+            appPreview: { status: "released" },
+            desktopViewer: { status: "released" },
+            input: { status: "released" },
+          },
+          idleState: { status: "busy" },
+          cleanupState: { status: "failed", reason: "timeout", failedAt: NOW },
+          handledCommandIds: [],
+          sequence: 0,
+          createdAt: NOW,
+          updatedAt: NOW,
+        },
+      ],
+      runtimeAttempts: [
+        {
+          id: "runtime:active",
+          agentId: "agent:active",
+          allocationId: "allocation:active",
+          attempt: 1,
+          runIds: [],
+          createdAt: NOW,
+          updatedAt: NOW,
+          status: "CREATING",
+        },
+        {
+          id: "runtime:hibernated",
+          agentId: "agent:hibernated",
+          allocationId: "allocation:hibernated",
+          attempt: 1,
+          runIds: [],
+          createdAt: NOW,
+          updatedAt: NOW,
+          status: "HIBERNATED",
+          snapshot: {
+            instanceId: "guest:hibernated",
+            attempt: 1,
+            flush: {
+              userdata: { status: "flushed", detail: "saved" },
+              workspace: { status: "flushed", detail: "saved" },
+              providerHome: { status: "flushed", detail: "saved" },
+              flushedAt: NOW,
+            },
+            capturedAt: NOW,
+          },
+        },
+      ],
+      warmGuests: [
+        {
+          id: "warm:ready",
+          environmentId: "environment:primary",
+          versionId: "version:primary:1",
+          profileId: "linux-web",
+          buildId: "build:primary:1",
+          snapshotId: "snapshot:primary:1",
+          status: "ready",
+          bootTimeMs: 5_000,
+          createdAt: NOW,
+          updatedAt: NOW,
+        },
+      ],
+      usage: [],
+    });
+
+    expect(cloudFleetSummary(snapshot)).toMatchObject({
+      queuedAllocations: 1,
+      activeRuntimeAttempts: 1,
+      hibernatedRuntimeAttempts: 1,
+      warmPlacements: 1,
+      coldPlacements: 0,
+      cleanupPending: 0,
+      cleanupFailed: 1,
+      warmGuests: { warming: 0, ready: 1, claimed: 0, draining: 0 },
     });
   });
 });

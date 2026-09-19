@@ -4,6 +4,7 @@ import * as Layer from "effect/Layer";
 
 import { SqlitePersistenceMemory } from "../persistence/Layers/Sqlite.ts";
 import * as CloudAllocationController from "./CloudAllocationController.ts";
+import * as CloudAccountingCatalog from "./CloudAccountingCatalog.ts";
 import * as CloudAgentsApi from "./CloudAgentsApi.ts";
 import * as CloudAgentsApiKeys from "./CloudAgentsApiKeys.ts";
 import * as CloudCollaboration from "./CloudCollaboration.ts";
@@ -137,5 +138,10 @@ it.effect("connects SCM hosts and reuses one idempotent run path", () =>
       "bitbucket",
       "azure-devops",
     ]);
+    const audit = yield* (yield* CloudAccountingCatalog.make()).listAudit();
+    expect(audit.map((event) => event.resourceId)).toContain(github.id);
+    expect(
+      audit.filter((event) => event.resourceId === github.id).map((event) => event.action),
+    ).toEqual(["auth", "auth"]);
   }).pipe(Effect.provide(live)),
 );

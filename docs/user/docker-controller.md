@@ -207,6 +207,22 @@ personal, team, or default environment version and starts a Build that tests it.
 activates only if it succeeds, so runs keep booting the last successful Build while a new version
 is still being proved.
 
+Each environment also shows its immutable version and Build history. **Run Build now** forces a
+manual rebuild. The recurring refresh value controls how long an active Build stays fresh; `0`
+checks before every run. Successful agent-requested draft Builds need **Activate** before they can
+serve runs. Restoring an older version appends a new version and tests it, so rollback cannot
+silently replace the last working snapshot. Build inspection shows resolved commits, stages, and
+bounded command output.
+
+**Runtime operations** shows the queue, warm inventory, warm versus cold placement, hibernated
+snapshots, capacity decisions, and cleanup failures. It deliberately has no hypervisor or guest
+shell. Administrative changes appear in the audit section with the actor, resource, and time.
+
+The browser receives secret names and references, never values. Rotate provider and
+source-control values in the configured secret store; new runtime sessions and Git operations use
+the replacement. Only Build configuration and Build-only secret-reference changes invalidate a
+prepared Build.
+
 **Default model**, **Default repository**, and **Default ref** prefill a new cloud thread when the
 launcher has nothing more specific. Clearing a field removes the default rather than storing a
 blank one.
