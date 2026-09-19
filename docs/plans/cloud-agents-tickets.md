@@ -176,7 +176,7 @@ stay last until you choose to pick them up.
 | 6    | ~~CA-38~~, ~~CA-46~~             | macOS worker infrastructure; retention and deletion services.                              |
 | 7    | ~~CA-44~~                        | Linux fleet and Firecracker runtime infrastructure.                                        |
 | 8    | ~~CA-21~~, ~~CA-45~~             | Retained-results review UI; fleet capacity and Build pre-warming.                          |
-| 9    | ~~CA-05~~, ~~CA-37~~, CA-47      | AWS settings UI; Android worker profile; public Cloud Agents API.                          |
+| 9    | ~~CA-05~~, ~~CA-37~~, ~~CA-47~~  | AWS settings UI; Android worker profile; public Cloud Agents API.                          |
 | 10   | CA-49                            | Shared secret, identity, encryption, and network policy.                                   |
 | 11   | CA-12, CA-13, CA-26              | Environment recipes; event-stream performance; local/cloud handoff.                        |
 | 12   | CA-36, CA-51, CA-55              | Preview leases; provider extensibility; usage and audit accounting.                        |
@@ -991,6 +991,9 @@ Acceptance criteria:
 ## Cursor-parity product, API, and security
 
 ### CA-47: Expose the Cloud Agents API and event stream
+
+Status: Done on 19 September 2026 in
+[PR #41](https://github.com/Atheal9k/cloud-agents/pull/41).
 
 Dependencies: CA-40, CA-46.
 
