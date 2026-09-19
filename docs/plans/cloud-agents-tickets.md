@@ -154,6 +154,52 @@ priority.
 | Existing product expansion         | CA-26, CA-28, CA-29, CA-30, CA-31, CA-32                                                                                                                   | Align handoff, triggers, durable assistants, providers, and private dependencies with the new agent model.           |
 | Deferred native T3 app work        | CA-20, CA-22                                                                                                                                               | Add native T3 iOS/Android client and push integration only when you choose to maintain and distribute those builds.  |
 
+### Dependency-safe implementation waves
+
+The delivery table above groups product outcomes. The table below is the
+implementation order for the unfinished tickets. Every dependency for a wave
+is completed in an earlier wave. Tickets in the same row may run in parallel
+because their primary ownership areas do not overlap. Later waves may be
+logically ready sooner, but they stay separate to avoid competing changes to
+the agent model, public contracts, server composition, preview state, or the
+same client screens.
+
+| Wave | Tickets that may run in parallel | Primary ownership boundary                                                                 |
+| ---- | -------------------------------- | ------------------------------------------------------------------------------------------ |
+| 1    | CA-40                            | Durable agent, run, and runtime model.                                                     |
+| 2    | CA-41                            | Environment model and config resolution.                                                   |
+| 3    | CA-04B, CA-48                    | Controller deployment and host cutover; artifact, computer-use, and desktop-viewing paths. |
+| 4    | CA-42                            | Build records, preparation, and activation.                                                |
+| 5    | CA-43                            | Runtime snapshot, hibernate, and wake lifecycle.                                           |
+| 6    | CA-31, CA-38, CA-46              | Provider adapters; macOS worker infrastructure; retention and deletion services.           |
+| 7    | CA-44                            | Linux fleet and Firecracker runtime infrastructure.                                        |
+| 8    | CA-21, CA-45                     | Retained-results review UI; fleet capacity and Build pre-warming.                          |
+| 9    | CA-05, CA-37, CA-47              | AWS settings UI; Android worker profile; public Cloud Agents API.                          |
+| 10   | CA-49                            | Shared secret, identity, encryption, and network policy.                                   |
+| 11   | CA-12, CA-13, CA-26              | Environment recipes; event-stream performance; local/cloud handoff.                        |
+| 12   | CA-36, CA-51, CA-55              | Preview leases; provider extensibility; usage and audit accounting.                        |
+| 13   | CA-32, CA-50                     | Private dependency networking; source-control and collaboration entry points.              |
+| 14   | CA-20, CA-56, CA-58              | Native T3 mobile controls; multi-repository environments; self-hosted pools.               |
+| 15   | CA-28, CA-39, CA-57, CA-59       | Scheduling; simulator display; commit signing; repository-owned environment setup.         |
+| 16   | CA-29, CA-30, CA-33              | GitHub triggers; persistent assistants; remote administration UI.                          |
+| 17   | CA-52                            | Subscription wake and CI autofix.                                                          |
+| 18   | CA-22, CA-53                     | Native push; generalized automations.                                                      |
+| 19   | CA-54                            | Outbound webhooks and typed SDKs.                                                          |
+
+Within a parallel wave, each ticket owns only the area named in the third
+column. Before the wave starts, assign any shared schema, migration,
+route-registration, dependency-lock, or server-composition change to one
+ticket. Land that common change first and rebase the other tickets before
+their parallel work starts. If that cannot be done cleanly, split the wave.
+Do not combine adjacent waves merely because the tickets are otherwise
+unblocked.
+
+The dependency direction is deliberate. CA-46 and CA-48 provide services that
+CA-21 presents in the review UI. CA-47 provides the API that CA-13 tunes.
+CA-28 provides the base scheduler that CA-53 generalizes. CA-29 provides the
+GitHub trigger behavior that CA-52 uses for subscription wake and CI autofix.
+These directions avoid the previous circular dependencies.
+
 Mobile development is committed follow-on scope, not dependent on the optional product expansion or deferred native T3 app work. Run platform feasibility checks early before spending time on simulator UI. Android and iOS can be implemented independently; CA-39 passes separately for each and both must pass before claiming support for both platforms.
 
 Completed tickets are not reopened merely because their original acceptance
@@ -897,7 +943,7 @@ Acceptance criteria:
 
 ### CA-46: Implement snapshot retention, archive, and deletion
 
-Dependencies: CA-21, CA-40, CA-43.
+Dependencies: CA-40, CA-43.
 
 Description: Separate live compute, disk snapshots, conversation retention,
 archive, and permanent deletion.
@@ -919,7 +965,7 @@ Acceptance criteria:
 
 ### CA-47: Expose the Cloud Agents API and event stream
 
-Dependencies: CA-13, CA-40, CA-46.
+Dependencies: CA-40, CA-46.
 
 Description: Add a versioned API shaped like Cursor's Cloud Agents API rather
 than exposing infrastructure allocation calls.
@@ -943,7 +989,7 @@ Acceptance criteria:
 
 ### CA-48: Serve artifacts, computer use, and remote desktop
 
-Dependencies: CA-21, CA-34, CA-35, CA-40.
+Dependencies: CA-34, CA-35, CA-40.
 
 Description: Complete Cursor's verification loop while retaining T3's direct
 app-preview versus shared-desktop distinction.
@@ -1273,7 +1319,7 @@ Acceptance criteria:
 
 ### CA-28: Add API-triggered and scheduled runs
 
-Dependencies: CA-12, CA-17, CA-18, CA-24, CA-40, CA-47, CA-52, CA-53.
+Dependencies: CA-12, CA-17, CA-18, CA-24, CA-40, CA-47.
 
 Description: Run recurring work through the same agent/run admission path as
 interactive tasks. This ticket supplies T3-native schedules; CA-53 generalizes
@@ -1291,7 +1337,7 @@ Acceptance criteria:
 
 ### CA-29: Trigger work from GitHub and address feedback
 
-Dependencies: CA-06, CA-15, CA-16, CA-18, CA-28, CA-47, CA-50, CA-52.
+Dependencies: CA-06, CA-15, CA-16, CA-18, CA-28, CA-47, CA-50.
 
 Description: Add opted-in issue/PR triggers and bounded repair of review feedback or failing checks.
 
