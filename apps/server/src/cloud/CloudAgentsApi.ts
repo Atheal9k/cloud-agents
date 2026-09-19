@@ -14,6 +14,7 @@ import {
   OrchestrationThreadDetailSnapshot,
   SELF_HOSTED_WORKER_PROFILE_ID,
   admitSelfHostedTarget,
+  isCloudProviderEnabled,
   ProviderInstanceId,
   RunAllocationAttempt,
   RunAllocationId,
@@ -481,7 +482,7 @@ export const make = Effect.fn("CloudAgentsApi.make")(function* () {
   const listModels: CloudAgentsApi["Service"]["listModels"] = Effect.gen(function* () {
     if (providers === undefined) return [];
     const snapshots = yield* providers.getProviders;
-    return modelsFromProviders(snapshots);
+    return modelsFromProviders(snapshots.filter((snapshot) => isCloudProviderEnabled(snapshot.driver)));
   });
 
   const listRepositories: CloudAgentsApi["Service"]["listRepositories"] = Effect.gen(function* () {

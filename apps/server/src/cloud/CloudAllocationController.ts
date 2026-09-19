@@ -29,6 +29,7 @@ import {
   type CloudSpendLimitInput,
   type CloudUsageExportInput,
   CloudWorkerPriceAssumption,
+  admitCloudProviderExecution,
   admitLinuxAndroidWorker,
   admitMacIosWorker,
   DEFAULT_CONVERSATION_RETENTION_DAYS,
@@ -612,6 +613,7 @@ export const make = Effect.fn("CloudAllocationController.make")(function* (input
   const validateAdmission = (
     command: RunAllocationCommand,
     longRunning?: boolean,
+    previous?: RunAllocation,
   ): CloudAllocationControllerError | undefined => {
     const instanceType =
       command.type === "allocation.launch" ? command.profile.instanceType : undefined;
@@ -727,6 +729,20 @@ export const make = Effect.fn("CloudAllocationController.make")(function* (input
         `Cloud runs may last at most ${limits.maxRunSeconds} seconds.`,
       );
     }
+    if (command.type === "allocation.launch" || command.type === "allocation.follow-up") {
+      const execution = command.execution;
+      if (execution !== undefined) {
+        const admitted = admitCloudProviderExecution({
+          instanceId: execution.turn.modelSelection.instanceId,
+          ...(previous?.execution === undefined
+            ? {}
+            : { previousInstanceId: previous.execution.turn.modelSelection.instanceId }),
+        });
+        if (admitted.status === "rejected") {
+          return controllerError("invalid-request", admitted.message);
+        }
+      }
+    }
     return undefined;
   };
 
@@ -836,7 +852,11 @@ export const make = Effect.fn("CloudAllocationController.make")(function* (input
           if (followUpSpend.status === "rejected") {
             return yield* controllerError("spend-limit-exceeded", followUpSpend.message);
           }
-          const invalid = validateAdmission(command, snapshot.controller.defaults?.longRunning);
+          const invalid = validateAdmission(
+            command,
+            snapshot.controller.defaults?.longRunning,
+            current,
+          );
           if (invalid !== undefined) return yield* invalid;
         }
         if (
@@ -865,7 +885,11 @@ export const make = Effect.fn("CloudAllocationController.make")(function* (input
           if (retrySpend.status === "rejected") {
             return yield* controllerError("spend-limit-exceeded", retrySpend.message);
           }
-          const invalid = validateAdmission(command, snapshot.controller.defaults?.longRunning);
+          const invalid = validateAdmission(
+            command,
+            snapshot.controller.defaults?.longRunning,
+            current,
+          );
           if (invalid !== undefined) return yield* invalid;
           const pending = snapshot.allocations.filter(waitingForAWorker).length;
           if (pending >= limits.maxConcurrentWorkers + limits.maxQueueDepth) {

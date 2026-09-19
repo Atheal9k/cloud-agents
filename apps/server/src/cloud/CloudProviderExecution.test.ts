@@ -540,3 +540,29 @@ it.effect("rejects unqualified providers before creating worker state", () =>
     expect(commands).toEqual([]);
   }),
 );
+
+it.effect("rejects Grok, OpenCode, and Antigravity before creating worker state", () =>
+  Effect.gen(function* () {
+    for (const driver of ["grok", "opencode", "antigravity"] as const) {
+      const snapshot = decodeProvider({
+        ...readyCodex,
+        instanceId: ProviderInstanceId.make(`${driver}-cloud`),
+        driver: ProviderDriverKind.make(driver),
+      });
+      const { commands, execution } = yield* fixture([snapshot]);
+      const input = startInput();
+      const error = yield* execution
+        .start({
+          ...input,
+          turn: {
+            ...input.turn,
+            modelSelection: { instanceId: snapshot.instanceId, model: "gpt-5.6-sol" },
+          },
+        })
+        .pipe(Effect.flip);
+      expect(error.reason).toBe("provider-not-qualified");
+      expect(commands).toEqual([]);
+    }
+  }),
+);
+

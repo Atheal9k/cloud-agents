@@ -16,6 +16,8 @@ import {
   type CloudAllocationSnapshot,
   type CloudAllocationLimits,
   ThreadId,
+  admitCloudProviderExecution,
+  isCloudProviderEnabled,
   workerProfileForInstanceType,
   isAppleSiliconMacInstanceType,
   isAndroidAcceleratedInstanceType,
@@ -92,7 +94,8 @@ export function createInitialCloudRunDraft(
     1,
     Math.floor((snapshot?.limits.maxInputWaitSeconds ?? 900) / 60),
   );
-  const provider = providers[0];
+  const provider =
+    providers.find((entry) => isCloudProviderEnabled(entry.driverKind)) ?? providers[0];
   // CA-05's controller defaults only fill a field the caller left open, so a
   // launcher opened on a project still starts from that project.
   const defaults = snapshot?.controller.defaults;
@@ -198,6 +201,10 @@ export function buildCloudRunLaunchCommand(input: {
   }
   if (providerInstanceId.length === 0 || model.length === 0) {
     return { status: "invalid", message: "Choose a supported provider instance and model." };
+  }
+  const admitted = admitCloudProviderExecution({ instanceId: providerInstanceId });
+  if (admitted.status === "rejected") {
+    return { status: "invalid", message: admitted.message };
   }
   if (runMinutes === null || runMinutes * 60 > input.limits.maxRunSeconds) {
     return {

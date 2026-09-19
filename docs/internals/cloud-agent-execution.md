@@ -100,9 +100,13 @@ Claude Agent SDK use draws from a separate monthly Agent SDK credit on
 subscription plans. A Console API key uses API billing instead. Long-running
 infrastructure must choose and budget one of those modes explicitly.
 
-Codex and Claude are qualified for this ownership model. Other providers need
-the same Linux, authentication, interruption, resume, and disconnect proof
-before cloud execution enables them.
+Codex and Claude are enabled for this ownership model. Cursor, Grok,
+OpenCode, and Antigravity each have an `unsupported` or `blocked` record in
+[`cloudProviderQualification`](../../packages/contracts/src/cloudProviderQualification.ts)
+with the runtime proofs, capability flags, and credential-isolation notes
+that keep them out of allocation. The controller and launch dialog reject
+those options before a worker is started. Switching provider on a follow-up
+does not copy native session history.
 
 ## Route and bootstrap findings
 
