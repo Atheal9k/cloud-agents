@@ -272,20 +272,14 @@ const dispatchV1 = (input: {
       }
       if (method === "GET" && parts.length === 6 && parts[5] === "stream") {
         const lastEventId = request.headers["last-event-id"] ?? undefined;
-        const events = yield* api.streamRun({
+        const streamed = yield* api.streamRun({
           principal,
           agentId,
           runId,
           ...(lastEventId === undefined || lastEventId.length === 0 ? {} : { lastEventId }),
           nowMs,
         });
-        const status = events.find((event) => event.event === "status");
-        const rest = events.filter((event) => event !== status);
-        const framed =
-          status === undefined
-            ? rest
-            : [{ event: status.event, data: status.data, createdAtMs: status.createdAtMs }, ...rest];
-        const body = framed.map((event) => encodeSse(event)).join("");
+        const body = streamed.events.map((event) => encodeSse(event)).join("");
         return HttpServerResponse.text(body, {
           status: 200,
           contentType: "text/event-stream",
@@ -293,8 +287,35 @@ const dispatchV1 = (input: {
             ...meta,
             "cache-control": "no-cache",
             "x-cursor-stream-retention-seconds": String(CLOUD_AGENTS_API_STREAM_RETENTION_SECONDS),
+            "x-t3-reconnect-source": streamed.reconnectSource,
           },
         });
+      }
+      if (method === "GET" && parts.length === 6 && parts[5] === "history") {
+        const kindParam = url.searchParams.get("kind") ?? "transcript";
+        if (
+          kindParam !== "transcript" &&
+          kindParam !== "tool" &&
+          kindParam !== "setup" &&
+          kindParam !== "artifacts"
+        ) {
+          return errorResponse(
+            new CloudAgentsApiFailure("invalid_request", "Unknown history kind.", 400),
+            meta,
+          );
+        }
+        const cursor = url.searchParams.get("cursor");
+        return jsonResponse(
+          200,
+          yield* api.listHistory({
+            principal,
+            agentId,
+            runId,
+            kind: kindParam,
+            ...(cursor === null ? {} : { cursor }),
+          }),
+          meta,
+        );
       }
     }
     return errorResponse(
