@@ -7,6 +7,7 @@ import * as TestClock from "effect/testing/TestClock";
 import { SqlitePersistenceMemory } from "../persistence/Layers/Sqlite.ts";
 import * as CloudAllocationController from "./CloudAllocationController.ts";
 import * as CloudAllocationReconciler from "./CloudAllocationReconciler.ts";
+import * as ControllerSettings from "./controllerSettings.ts";
 import { CloudWorkerRegistration } from "./CloudWorkerRegistration.ts";
 import { CloudWorkerRunClient } from "./CloudWorkerRunClient.ts";
 import {
@@ -523,5 +524,30 @@ it.effect("fails registration at its own deadline before agent runtime expiry", 
     const allocation = (yield* controller.snapshot).allocations[0];
     expect(allocation?.allocationState.status).toBe("failed");
     expect(allocation?.cleanupState.status).toBe("requested");
+  }).pipe(Effect.provide(SqlitePersistenceMemory)),
+);
+
+it.effect("does not act on AWS while its controller state is fenced", () =>
+  Effect.gen(function* () {
+    yield* TestClock.setTime(startAt);
+    const { controller, reconciler, state } = yield* fixture();
+    yield* controller.dispatch(launchCommand("allocation-1", true));
+
+    const settings = yield* ControllerSettings.make();
+    yield* settings.writeFence({
+      fencedAt: "2026-09-17T03:00:30.000Z",
+      reason: "Cutover to the permanent controller.",
+    });
+
+    yield* reconciler.reconcileOnce();
+    yield* reconciler.reconcileWorkersOnce();
+    expect(state.launchCalls).toBe(0);
+    expect(state.terminateCalls).toBe(0);
+    expect((yield* controller.snapshot).allocations[0]?.allocationState.status).toBe("queued");
+
+    yield* settings.clearFence({});
+    yield* reconciler.reconcileOnce();
+    yield* reconciler.reconcileOnce();
+    expect(state.launchCalls).toBe(1);
   }).pipe(Effect.provide(SqlitePersistenceMemory)),
 );

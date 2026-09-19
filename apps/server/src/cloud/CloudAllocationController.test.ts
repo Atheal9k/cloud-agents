@@ -7,6 +7,7 @@ import * as TestClock from "effect/testing/TestClock";
 
 import { SqlitePersistenceMemory } from "../persistence/Layers/Sqlite.ts";
 import { make } from "./CloudAllocationController.ts";
+import * as ControllerSettings from "./controllerSettings.ts";
 
 const decodeCommand = Schema.decodeSync(RunAllocationCommand);
 const decodeEnvironmentSave = Schema.decodeSync(CloudEnvironmentSaveInput);
@@ -108,6 +109,7 @@ it.effect("persists allocation events and rebuilds the catalog after restart", (
       mode: "local",
       requiresHostOnline: true,
       admission: { status: "open" },
+      writability: { status: "writable" },
     });
     expect(snapshot.limits.maxRunSeconds).toBe(3 * 24 * 60 * 60);
     expect(snapshot.allocations).toEqual([launched]);
@@ -504,5 +506,54 @@ it.effect("keeps one durable agent across runs and rejects active-run races", ()
       id: "agent-1",
       status: "IDLE",
     });
+  }).pipe(Effect.provide(SqlitePersistenceMemory)),
+);
+
+it.effect("reports a permanent controller as not needing this host online", () =>
+  Effect.gen(function* () {
+    const controller = yield* make({ enabled: true, mode: "permanent" });
+    const snapshot = yield* controller.snapshot;
+
+    expect(snapshot.controller.mode).toBe("permanent");
+    expect(snapshot.controller.requiresHostOnline).toBe(false);
+    expect(snapshot.usage).toEqual([]);
+  }).pipe(Effect.provide(SqlitePersistenceMemory)),
+);
+
+it.effect("refuses every write once its state directory is fenced", () =>
+  Effect.gen(function* () {
+    const settings = yield* ControllerSettings.make();
+    yield* settings.writeFence({
+      fencedAt: "2026-09-19T10:00:00.000Z",
+      reason: "Moved to the permanent controller.",
+    });
+
+    const controller = yield* make({ enabled: true });
+    const snapshot = yield* controller.snapshot;
+    expect(snapshot.controller.writability).toEqual({
+      status: "fenced",
+      fencedAt: "2026-09-19T10:00:00.000Z",
+      reason: "Moved to the permanent controller.",
+    });
+
+    const launchError = yield* controller.dispatch(launch).pipe(Effect.flip);
+    expect(launchError.reason).toBe("controller-fenced");
+    const admissionError = yield* controller
+      .setAdmission({ admissionOpen: true, occurredAt: "2026-09-19T10:01:00.000Z" })
+      .pipe(Effect.flip);
+    expect(admissionError.reason).toBe("controller-fenced");
+
+    // Adoption clears the fence but deliberately leaves admission stopped, so
+    // a restored copy cannot take work between starting up and being checked.
+    yield* settings.clearFence({});
+    const stillStopped = yield* controller.dispatch(launch).pipe(Effect.flip);
+    expect(stillStopped.reason).toBe("admission-stopped");
+
+    yield* controller.setAdmission({
+      admissionOpen: true,
+      occurredAt: "2026-09-19T10:02:00.000Z",
+    });
+    const adopted = yield* controller.dispatch(launch);
+    expect(adopted.allocationState.status).toBe("queued");
   }).pipe(Effect.provide(SqlitePersistenceMemory)),
 );

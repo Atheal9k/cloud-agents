@@ -12,10 +12,13 @@ the workers:
 - fixed SSM recovery diagnostics that cannot launch agent jobs; and
 - a scheduled cleanup function that terminates expired tagged workers even when the controller is unavailable.
 
-The EC2 controller uses the configurable controller AMI. Local-controller mode omits its instance,
-Elastic IP, data volume, subnet, security group, and IAM role. Workers require the versioned image
-built from `image/worker.pkr.hcl`; there is no generic Amazon Linux fallback. Normal startup does
-not call SSM.
+The EC2 controller runs the container image the repository Dockerfile builds, the same one the
+[Docker controller guide](../../docs/user/docker-controller.md) uses locally. Cloud-init installs
+Docker, mounts the retained volume at `/var/lib/t3`, joins the tailnet, and enables a
+`t3-controller.service` unit that pulls `controller_image_ref` and starts the container on every
+boot. Local-controller mode omits the instance, Elastic IP, data volume, subnet, security group,
+and IAM role. Workers require the versioned image built from `image/worker.pkr.hcl`; there is no
+generic Amazon Linux fallback. Normal startup does not call SSM.
 
 ## Worker image
 
@@ -127,7 +130,18 @@ Set `worker_tailscale_auth_key_secret_arn` when routes use a tailnet. The key sh
 because every allocation creates a new node, ephemeral so terminated workers disappear from the
 tailnet, and pre-approved so startup does not wait for an administrator.
 
-The controller starts with no public ingress. CA-04 owns the authenticated application route and TLS setup. Until then, add only a trusted owner CIDR if you need to test port 443.
+The permanent controller has no public ingress. Clients and workers reach it through the tailnet,
+which gives it a stable MagicDNS name and renews its TLS certificate without an ACME port open to
+the internet. Set `controller_tailscale_auth_key_secret_arn`, `controller_tailscale_hostname`, and
+`controller_tailnet_domain`; the stack derives `T3CODE_CLOUD_CONTROLLER_URL` from the last two and
+exposes it as the `controller.url` output. Add a `controller_ingress_cidrs` entry only when you
+also run your own proxy in front of the instance.
+
+Pin `controller_image_ref` to a digest. The service pulls it on every start, so changing this
+value and restarting the unit is both the upgrade and the rollback. The controller role may pull
+from ECR in the same account; publish the image there or to a registry the instance can read
+anonymously. Cutover, backup, restore, and outage procedures live in
+[the permanent controller runbook](../../docs/operations/permanent-controller.md).
 
 ```powershell
 tofu plan

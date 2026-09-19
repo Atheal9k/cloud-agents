@@ -63,7 +63,14 @@ run "protected_plan" {
   }
 
   variables {
-    controller_mode = "ec2"
+    controller_mode                          = "ec2"
+    controller_image_ref                     = "123456789012.dkr.ecr.us-west-1.amazonaws.com/t3-controller@sha256:0123456789abcdef"
+    controller_tailnet_domain                = "example-tailnet.ts.net"
+    controller_tailscale_auth_key_secret_arn = "arn:aws:secretsmanager:us-west-1:123456789012:secret:cloud-agent-controller-tailscale-AbCdEf"
+    controller_runtime_environment = {
+      T3CODE_CLOUD_WORKER_ROUTE_URL        = "https://{workerHostname}.example-tailnet.ts.net"
+      T3CODE_CLOUD_GITHUB_TOKEN_SECRET_REF = "cloud-agent-github-token"
+    }
     controller_credential_secret_arns = [
       "arn:aws:secretsmanager:us-west-1:123456789012:secret:cloud-agent-victor-key-AbCdEf",
       "arn:aws:secretsmanager:us-west-1:123456789012:secret:cloud-agent-github-token-AbCdEf",
@@ -149,6 +156,33 @@ run "protected_plan" {
       strcontains(base64decode(aws_launch_template.worker["linux-web"].user_data), "CloudAgentWorkerRouteUrl"),
     ])
     error_message = "Configured Codex and Claude subscriptions must be fetched by the disposable worker without embedding credential values."
+  }
+
+  assert {
+    condition = alltrue([
+      strcontains(aws_instance.controller[0].user_data, "T3CODE_CLOUD_CONTROLLER_MODE=permanent"),
+      strcontains(aws_instance.controller[0].user_data, "T3CODE_CLOUD_CONTROLLER_URL=https://t3-controller.example-tailnet.ts.net"),
+      strcontains(aws_instance.controller[0].user_data, "T3CODE_CLOUD_WORKER_ROUTE_URL=https://{workerHostname}.example-tailnet.ts.net"),
+      strcontains(aws_instance.controller[0].user_data, "123456789012.dkr.ecr.us-west-1.amazonaws.com/t3-controller@sha256:0123456789abcdef"),
+      strcontains(aws_instance.controller[0].user_data, "systemctl enable --now t3-controller.service"),
+      strcontains(aws_instance.controller[0].user_data, "tailscale serve --bg --yes --https=443"),
+      strcontains(aws_instance.controller[0].user_data, "cloud-agent-controller-tailscale-AbCdEf"),
+      output.controller.url == "https://t3-controller.example-tailnet.ts.net",
+    ])
+    error_message = "The permanent controller must boot the published image as a permanent-mode controller on a stable tailnet name."
+  }
+
+  assert {
+    condition = alltrue([
+      !strcontains(aws_instance.controller[0].user_data, "--auth-key=tskey-"),
+      !strcontains(aws_instance.controller[0].user_data, "/opt/t3/bin/t3-controller"),
+    ])
+    error_message = "Controller bootstrap must fetch credentials at boot and must not resurrect the pre-image placeholder service."
+  }
+
+  assert {
+    condition     = length(aws_iam_role_policy.controller_image_pull) == 1
+    error_message = "Only the controller role may pull the published controller image."
   }
 
   assert {
@@ -273,6 +307,7 @@ run "local_controller_plan" {
       length(aws_iam_role.controller) == 0,
       length(aws_iam_instance_profile.controller) == 0,
       length(aws_iam_role_policy.controller_credentials) == 0,
+      length(aws_iam_role_policy.controller_image_pull) == 0,
       length(aws_iam_role_policy.controller_worker_allocation) == 0,
     ])
     error_message = "Local-controller mode must not provision permanent EC2 controller resources."
@@ -366,16 +401,19 @@ run "sandbox_apply" {
   }
 
   variables {
-    allow_retained_data_destroy          = true
-    controller_mode                      = "ec2"
-    controller_termination_protection    = false
-    name_prefix                          = "t3-ca03-test"
-    worker_claude_oauth_token_secret_arn = null
-    worker_codex_api_key_secret_arn      = null
-    worker_codex_auth_json_secret_arn    = null
-    worker_git_ssh_secret_arn            = null
-    worker_github_token_secret_arn       = null
-    worker_tailscale_auth_key_secret_arn = null
+    allow_retained_data_destroy              = true
+    controller_mode                          = "ec2"
+    controller_image_ref                     = "123456789012.dkr.ecr.us-west-1.amazonaws.com/t3-controller@sha256:0123456789abcdef"
+    controller_tailnet_domain                = "example-tailnet.ts.net"
+    controller_tailscale_auth_key_secret_arn = "arn:aws:secretsmanager:us-west-1:123456789012:secret:cloud-agent-controller-tailscale-AbCdEf"
+    controller_termination_protection        = false
+    name_prefix                              = "t3-ca03-test"
+    worker_claude_oauth_token_secret_arn     = null
+    worker_codex_api_key_secret_arn          = null
+    worker_codex_auth_json_secret_arn        = null
+    worker_git_ssh_secret_arn                = null
+    worker_github_token_secret_arn           = null
+    worker_tailscale_auth_key_secret_arn     = null
     worker_profiles = {
       linux-web = {
         ami_id               = "ami-0123456789abcdef0"

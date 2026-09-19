@@ -16,6 +16,7 @@ import * as Path from "effect/Path";
 import type * as Redacted from "effect/Redacted";
 import * as Schema from "effect/Schema";
 
+import type { CloudAllocationControllerMode } from "@t3tools/contracts";
 import { sweepStalePendingAttachments } from "./attachmentStore.ts";
 import { OtlpProtocol } from "@t3tools/shared/observability";
 
@@ -95,8 +96,10 @@ export class ServerConfig extends Context.Service<
     readonly logWebSocketEvents: boolean;
     readonly tailscaleServeEnabled: boolean;
     readonly tailscaleServePort: number;
-    /** Enables this T3 environment as the single local cloud-allocation controller. */
+    /** Enables this T3 environment as the single cloud-allocation controller. */
     readonly cloudControllerEnabled?: boolean;
+    /** Which deployment the controller claims to be. Defaults to `local`. */
+    readonly cloudControllerMode?: CloudAllocationControllerMode;
   }
 >()("t3/config/ServerConfig") {
   /** @deprecated Import and use `layerTest` from this module. */
@@ -213,6 +216,7 @@ const makeTest = Effect.fn("ServerConfig.makeTest")(function* (
     tailscaleServeEnabled: false,
     tailscaleServePort: 443,
     cloudControllerEnabled: false,
+    cloudControllerMode: "local",
     port: 0,
     host: undefined,
     desktopBootstrapToken: undefined,

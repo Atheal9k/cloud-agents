@@ -1,6 +1,7 @@
 import {
-  CloudAdmissionControlInput,
+  type CloudAdmissionControlInput,
   CloudAllocationControllerError,
+  type CloudAllocationControllerMode,
   CloudAllocationLimits,
   type CloudAllocationSnapshot,
   type CloudEnvironment,
@@ -32,6 +33,7 @@ import * as ServerConfig from "../config.ts";
 import { subscribeBeforeSnapshot } from "../utils/subscribeBeforeSnapshot.ts";
 import { projectCloudControlPlane } from "./cloudControlPlane.ts";
 import * as CloudEnvironmentCatalog from "./CloudEnvironmentCatalog.ts";
+import * as ControllerSettings from "./controllerSettings.ts";
 import {
   decideRunAllocationCommand,
   projectRunAllocationEvent,
@@ -43,11 +45,6 @@ const EmptyRequest = Schema.Struct({});
 const PersistedEventRow = Schema.Struct({
   event: Schema.fromJsonString(RunAllocationEvent),
 });
-const AdmissionRow = Schema.Struct({
-  admissionOpen: Schema.Int,
-  updatedAt: Schema.NullOr(Schema.String),
-});
-
 const DEFAULT_LIMITS = {
   maxConcurrentWorkers: 1,
   maxQueueDepth: 8,
@@ -107,9 +104,9 @@ function persistenceError(cause: unknown): CloudAllocationControllerError {
   return Schema.isSchemaError(cause)
     ? controllerError(
         "invalid-persisted-event",
-        "The local cloud allocation catalog contains an invalid event.",
+        "The cloud allocation catalog contains an invalid event.",
       )
-    : controllerError("persistence-failed", "The local cloud allocation catalog is unavailable.");
+    : controllerError("persistence-failed", "The cloud allocation catalog is unavailable.");
 }
 
 function replayEvents(
@@ -120,7 +117,7 @@ function replayEvents(
     catch: () =>
       controllerError(
         "invalid-persisted-event",
-        "The local cloud allocation catalog contains an inconsistent event sequence.",
+        "The cloud allocation catalog contains an inconsistent event sequence.",
       ),
   });
 }
@@ -141,11 +138,14 @@ function allocationInstanceId(allocation: RunAllocation): string | undefined {
 
 export const make = Effect.fn("CloudAllocationController.make")(function* (input: {
   readonly enabled: boolean;
+  readonly mode?: CloudAllocationControllerMode;
   readonly limits?: CloudAllocationLimits;
   readonly workerPriceAssumptions?: ReadonlyArray<CloudWorkerPriceAssumption>;
 }) {
   const sql = yield* SqlClient.SqlClient;
   const environments = yield* CloudEnvironmentCatalog.make();
+  const settings = yield* ControllerSettings.make();
+  const mode = input.mode ?? "local";
   const changes = yield* PubSub.unbounded<CloudAllocationSnapshot>();
   const mutex = yield* Semaphore.make(1);
   const limits = input.limits ?? DEFAULT_LIMITS;
@@ -193,37 +193,28 @@ export const make = Effect.fn("CloudAllocationController.make")(function* (input
     `,
   });
 
-  const readAdmission = SqlSchema.findOne({
-    Request: EmptyRequest,
-    Result: AdmissionRow,
-    execute: () => sql`
-      SELECT
-        admission_open AS "admissionOpen",
-        admission_updated_at AS "updatedAt"
-      FROM cloud_controller_settings
-      WHERE singleton_id = 1
-    `,
-  });
-
-  const writeAdmission = SqlSchema.void({
-    Request: CloudAdmissionControlInput,
-    execute: ({ admissionOpen, occurredAt }) => sql`
-      UPDATE cloud_controller_settings
-      SET
-        admission_open = ${admissionOpen ? 1 : 0},
-        admission_updated_at = ${occurredAt}
-      WHERE singleton_id = 1
-    `,
-  });
-
   const requireEnabled = input.enabled
     ? Effect.void
     : Effect.fail(
         controllerError(
           "controller-disabled",
-          "Cloud allocations are disabled. Start T3 with --cloud-controller to use this server as the local controller.",
+          "Cloud allocations are disabled. Start T3 with --cloud-controller to use this server as the controller.",
         ),
       );
+
+  /** Every write goes through here, so a fenced state directory cannot become
+      a second writer after a cutover copied it to another host. */
+  const requireWritable = Effect.gen(function* () {
+    yield* requireEnabled;
+    const row = yield* settings.read({}).pipe(Effect.mapError(persistenceError));
+    const writability = ControllerSettings.writabilityFromRow(row);
+    if (writability.status === "fenced") {
+      return yield* controllerError(
+        "controller-fenced",
+        `${writability.reason} Adopt it with \`t3 cloud adopt\` on the controller that should own it.`,
+      );
+    }
+  });
 
   const readAllocation = Effect.fn("CloudAllocationController.readAllocation")(function* (
     allocationId: RunAllocationId,
@@ -283,7 +274,9 @@ export const make = Effect.fn("CloudAllocationController.make")(function* (input
         controllerHost: {
           status: "not-attributed",
           reason:
-            "This allocation uses the local T3 controller, so no EC2 host charge is attributed.",
+            mode === "local"
+              ? "This allocation uses the local T3 controller, so no EC2 host charge is attributed."
+              : "The permanent controller host is billed continuously, not per allocation.",
         },
         workerCompute,
         storage: {
@@ -304,9 +297,9 @@ export const make = Effect.fn("CloudAllocationController.make")(function* (input
 
   const readSnapshot = Effect.gen(function* () {
     yield* requireEnabled;
-    const [rows, admission, now, environmentCatalog] = yield* Effect.all([
+    const [rows, controllerSettings, now, environmentCatalog] = yield* Effect.all([
       readAllEventRows({}),
-      readAdmission({}),
+      settings.read({}),
       DateTime.now,
       environments.list,
     ]).pipe(Effect.mapError(persistenceError));
@@ -324,17 +317,21 @@ export const make = Effect.fn("CloudAllocationController.make")(function* (input
       catch: () =>
         controllerError(
           "invalid-persisted-event",
-          "The local cloud allocation catalog cannot rebuild its agent and run records.",
+          "The cloud allocation catalog cannot rebuild its agent and run records.",
         ),
     });
     return {
       controller: {
-        mode: "local",
-        requiresHostOnline: true,
+        mode,
+        requiresHostOnline: mode === "local",
         admission:
-          admission.admissionOpen === 1
+          controllerSettings.admissionOpen === 1
             ? { status: "open" }
-            : { status: "stopped", stoppedAt: admission.updatedAt ?? DateTime.formatIso(now) },
+            : {
+                status: "stopped",
+                stoppedAt: controllerSettings.admissionUpdatedAt ?? DateTime.formatIso(now),
+              },
+        writability: ControllerSettings.writabilityFromRow(controllerSettings),
       },
       limits,
       workerPriceAssumptions,
@@ -422,7 +419,7 @@ export const make = Effect.fn("CloudAllocationController.make")(function* (input
   const dispatch: CloudAllocationController["Service"]["dispatch"] = (command) =>
     mutex.withPermits(1)(
       Effect.gen(function* () {
-        yield* requireEnabled;
+        yield* requireWritable;
         const current = yield* readAllocation(command.allocationId);
         if (command.type === "allocation.launch" && current === undefined) {
           const snapshot = yield* readSnapshot;
@@ -599,8 +596,8 @@ export const make = Effect.fn("CloudAllocationController.make")(function* (input
   const setAdmission: CloudAllocationController["Service"]["setAdmission"] = (control) =>
     mutex.withPermits(1)(
       Effect.gen(function* () {
-        yield* requireEnabled;
-        yield* writeAdmission(control).pipe(Effect.mapError(persistenceError));
+        yield* requireWritable;
+        yield* settings.writeAdmission(control).pipe(Effect.mapError(persistenceError));
         const snapshot = yield* readSnapshot;
         yield* PubSub.publish(changes, snapshot);
         yield* Effect.logInfo("Cloud allocation admission changed.", {
@@ -613,7 +610,7 @@ export const make = Effect.fn("CloudAllocationController.make")(function* (input
   const publishEnvironmentChange = <A>(effect: Effect.Effect<A, CloudEnvironmentError>) =>
     mutex.withPermits(1)(
       Effect.gen(function* () {
-        yield* requireEnabled;
+        yield* requireWritable;
         const result = yield* effect;
         yield* PubSub.publish(changes, yield* readSnapshot);
         return result;
@@ -688,6 +685,7 @@ export const layer = Layer.effect(
     });
     return yield* make({
       enabled: serverConfig.cloudControllerEnabled === true,
+      mode: serverConfig.cloudControllerMode ?? "local",
       limits,
       workerPriceAssumptions,
     });

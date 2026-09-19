@@ -8,9 +8,25 @@ controller_mode = "ec2"
 # to local mode, then restore false.
 allow_controller_data_destroy = false
 
-# Keep this empty until CA-04 configures application authentication and TLS.
-# Then add only the trusted networks that should reach the controller.
+# The permanent controller reaches clients over the tailnet, which supplies its
+# stable name and renews its certificate. Leave controller_ingress_cidrs empty
+# unless you also front the instance with a proxy you operate.
 controller_ingress_cidrs = []
+
+# The published CA-04C image. Pin a digest, not a moving tag: the host pulls it
+# on every service start, so this value is what a rollback changes.
+controller_image_ref = "123456789012.dkr.ecr.us-west-1.amazonaws.com/t3-controller@sha256:replace-me"
+
+# Raw reusable, pre-approved Tailscale auth key for the permanent controller.
+controller_tailscale_auth_key_secret_arn = null
+controller_tailscale_hostname            = "t3-controller"
+controller_tailnet_domain                = "example-tailnet.ts.net"
+
+# Extra T3CODE_* settings for the controller container. Secret values belong in
+# Secrets Manager; pass their names through a *_SECRET_REF entry.
+controller_runtime_environment = {
+  T3CODE_CLOUD_WORKER_ROUTE_URL = "https://{workerHostname}.example-tailnet.ts.net"
+}
 
 controller_instance_type        = "t3.small"
 controller_root_volume_size_gib = 20

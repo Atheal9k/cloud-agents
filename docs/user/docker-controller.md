@@ -24,13 +24,20 @@ but stopping Docker, sleeping the host, or losing its network connection interru
 finalization, publication, and normal cleanup. The independent AWS expiry cleanup remains a
 backstop, not a replacement for the controller.
 
+The same image also runs on an always-on host, where your own computer may be off. That deployment
+sets `T3CODE_CLOUD_CONTROLLER_MODE=permanent`, and the cloud dialog stops promising that this
+machine has to stay up. Maintainers move an existing controller there with the
+[permanent controller runbook](../operations/permanent-controller.md); everything below applies to
+both modes unless it says otherwise.
+
 ## Prepare the release
 
 1. Build a pinned `linux-web` worker image. Build `linux-web-browser` as well if you need the
    shared Agent browser. Record each AMI ID and image version in
    `infra/cloud-agents/terraform.tfvars`.
 2. Create the remote OpenTofu state and apply `infra/cloud-agents` as described in its README.
-   Set `controller_mode = "local"` so the stack does not create a second controller on EC2.
+   Set `controller_mode = "local"` so the stack does not create a second controller on EC2, or
+   `ec2` with `controller_image_ref` and the tailnet variables for a permanent host.
    Configure at least one provider credential using [Provider subscriptions](#provider-subscriptions).
 3. Store the Git SSH key and GitHub API token in Secrets Manager. Set
    `worker_git_ssh_secret_arn` to a repository-scoped read key so worker bootstrap can clone before
@@ -304,6 +311,10 @@ than silently starting from a different revision.
 
 Admission is separate from the controller capability. The authorized
 `cloud.allocations.setAdmission` operation can close admission without disabling the controller.
+Fencing is stronger and separate: `t3 cloud fence` marks a stopped controller's state directory so
+neither it nor a copy of it writes again, which is how a move to another host keeps exactly one
+writable controller. `t3 cloud status` shows the current mode, fence, admission, and anything still
+awaiting cleanup; `t3 cloud adopt` clears a fence on the host that should own the state.
 Closing admission rejects new launches and retries, persists across controller restarts, and keeps
 accepted runs, cancellation, cleanup, and saved results manageable. Reopen admission through the
 same operation after maintenance. Removing `T3CODE_CLOUD_CONTROLLER` is a full capability shutdown,
