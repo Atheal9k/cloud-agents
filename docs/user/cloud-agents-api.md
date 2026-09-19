@@ -81,6 +81,59 @@ Schedules run inside the controller process. With a local controller, the host
 and Docker engine must be online. `run_once` can admit one missed occurrence when
 the controller returns; it does not make a local controller an always-on service.
 
+## GitHub triggers
+
+`POST /v1/integrations/github/triggers` opts one durable agent into GitHub work.
+The request fixes the repository, allowed GitHub actors, event types, and repair
+limits. The webhook payload cannot replace those values.
+
+```json
+{
+  "repository": "acme/app",
+  "agentId": "bc-existing-agent",
+  "authorizedActors": ["octocat", "github-actions[bot]"],
+  "events": ["issues", "pull_request_review", "pull_request_review_comment", "check_run"],
+  "limits": {
+    "maxAttempts": 3,
+    "runSeconds": 3600,
+    "inputWaitSeconds": 300,
+    "maxComputeSeconds": 7200
+  }
+}
+```
+
+The create response returns a `webhookUrl` and a `secret`. GitHub needs both when
+you create the repository webhook. The controller shows the secret only in that
+response. Select the configured events and use `application/json` payloads.
+Every delivery must include GitHub's `X-Hub-Signature-256`, `X-GitHub-Delivery`,
+and `X-GitHub-Event` headers.
+
+For a local CA-04A controller, the webhook URL must use an authenticated route
+that GitHub can reach, such as the configured T3 Connect route. The controller
+machine must be online when GitHub sends the delivery. Moving the controller to
+an always-on host is a separate deployment choice.
+
+Review comments and failed checks run against the exact pull request head SHA
+from the delivery. Issue comments attached to pull requests are ignored because
+that GitHub payload does not carry the head SHA. Bot-authored comments and
+reviews are always ignored, which prevents agent-comment loops. Check-run bots
+must be named in `authorizedActors`. A repeated delivery ID returns the recorded
+result instead of starting another run.
+
+Use these authenticated controls:
+
+- `GET /v1/integrations/github/triggers`
+- `GET /v1/integrations/github/triggers/{id}`
+- `POST /v1/integrations/github/triggers/{id}/disable|enable`
+- `DELETE /v1/integrations/github/triggers/{id}` to revoke it and remove its secret
+- `GET /v1/integrations/github/trigger-activities?triggerId={id}` to read ignored,
+  triggered, resolved, and unresolved deliveries
+
+Attempts and worst-case run seconds are reserved per issue or pull request.
+Work stops when either configured limit is reached, even when a repair pushes a
+new head commit. Failed, cancelled, or expired runs appear as unresolved
+activities. Triggers never merge changes automatically.
+
 Self-hosted machines and team pools use the older `/v0/private-workers` paths. See
 [Self-hosted machines and team pools](./cloud-agents-self-hosted.md).
 
@@ -95,10 +148,11 @@ including OAuth, stay on the controller. stdio MCP runs in the guest. Custom sub
 inherit the parent run's permissions and cannot widen them. New branches use the `cursor/`
 prefix unless the request stays on the current branch, starting ref, or an existing PR.
 
-Web, desktop Cloud destination, API, Slack, GitHub/Bitbucket mentions, and Linear create
-or follow up through one idempotent path: `POST /v1/integrations/runs` or
-`/v1/integrations/{slack,github,bitbucket,linear}`. A repeated `deliveryId` returns the
-original agent and run. Connect GitHub, GHES, GitLab, Bitbucket, or Azure DevOps with
+Web, desktop Cloud destination, API, Slack, Bitbucket mentions, and Linear create
+or follow up through one idempotent path: `POST /v1/integrations/runs` or the
+matching integration route. GitHub repository webhooks use the trigger flow above.
+A repeated `deliveryId` returns the original agent and run. Connect GitHub, GHES,
+GitLab, Bitbucket, or Azure DevOps with
 `POST /v1/integrations/scm`. Access is the intersection of that installation, the
 triggering principal, and the agent's `repos`. Shared `/cloud-agents/{id}` URLs require
 same-team membership and the viewer's own SCM access; viewing is read-only unless team

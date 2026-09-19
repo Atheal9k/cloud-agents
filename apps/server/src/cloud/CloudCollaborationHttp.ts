@@ -1,5 +1,6 @@
 import {
   CloudCollaborationError,
+  CloudGithubTriggerDefinition,
   type CloudRunEntryPoint,
   type CloudScmConnectionInput,
 } from "@t3tools/contracts";
@@ -11,7 +12,12 @@ import { HttpRouter, HttpServerRequest, HttpServerResponse } from "effect/unstab
 import * as CloudAgentsApi from "./CloudAgentsApi.ts";
 import * as CloudAgentsApiKeys from "./CloudAgentsApiKeys.ts";
 import * as CloudCollaboration from "./CloudCollaboration.ts";
-import { CloudAgentsApiFailure, parseCloudAgentsApiAuthorization } from "./cloudAgentsApiModel.ts";
+import * as CloudGithubTriggers from "./CloudGithubTriggers.ts";
+import {
+  CloudAgentsApiFailure,
+  parseCloudAgentsApiAuthorization,
+  parseLimitParam,
+} from "./cloudAgentsApiModel.ts";
 import { admitCloudRun } from "./cloudCollaborationAdmit.ts";
 import { parseIntegrationDelivery } from "./cloudCollaborationPolicy.ts";
 
@@ -30,6 +36,8 @@ const decodeConnection = Schema.decodeUnknownEffect(
     installedRepositories: Schema.Array(Schema.String),
   }),
 );
+
+const decodeGithubTrigger = Schema.decodeUnknownEffect(CloudGithubTriggerDefinition);
 
 const decodeAdmit = Schema.decodeUnknownEffect(
   Schema.Struct({
@@ -75,12 +83,35 @@ const ENTRY_BY_PATH: Record<string, CloudRunEntryPoint> = {
 const handleIntegrations = (deps: {
   readonly keys: CloudAgentsApiKeys.CloudAgentsApiKeys["Service"];
   readonly collaboration: CloudCollaboration.CloudCollaboration["Service"];
+  readonly githubTriggers: CloudGithubTriggers.CloudGithubTriggers["Service"];
 }) =>
   Effect.gen(function* () {
     const request = yield* HttpServerRequest.HttpServerRequest;
     const url = new URL(request.url, "http://localhost");
     const path = url.pathname.replace(/\/$/u, "") || "/";
     const method = request.method.toUpperCase();
+    const webhookPrefix = "/v1/integrations/github/webhooks/";
+    if (method === "POST" && path.startsWith(webhookPrefix)) {
+      const triggerId = path.slice(webhookPrefix.length);
+      if (triggerId.length === 0) {
+        return errorResponse(
+          new CloudAgentsApiFailure("invalid_request", "GitHub trigger id is required.", 400),
+        );
+      }
+      const body = yield* request.text.pipe(
+        Effect.mapError(
+          () => new CloudAgentsApiFailure("invalid_request", "Webhook body is required.", 400),
+        ),
+      );
+      const result = yield* deps.githubTriggers.receive({
+        triggerId,
+        deliveryId: request.headers["x-github-delivery"] ?? "",
+        event: request.headers["x-github-event"] ?? "",
+        signature: request.headers["x-hub-signature-256"],
+        body,
+      });
+      return jsonResponse(result.reused ? 200 : 202, result);
+    }
     const authorization = parseCloudAgentsApiAuthorization(request.headers.authorization);
     if (authorization instanceof CloudAgentsApiFailure) return errorResponse(authorization);
     const principal = yield* deps.keys.authenticate(authorization);
@@ -112,6 +143,53 @@ const handleIntegrations = (deps: {
       const id = path.slice("/v1/integrations/scm/".length);
       yield* deps.collaboration.disconnect(id);
       return jsonResponse(200, { id });
+    }
+
+    if (method === "POST" && path === "/v1/integrations/github/triggers") {
+      const definition = yield* decodeGithubTrigger(yield* jsonBody).pipe(
+        Effect.mapError(
+          () => new CloudAgentsApiFailure("invalid_request", "Invalid GitHub trigger.", 400),
+        ),
+      );
+      return jsonResponse(
+        201,
+        yield* deps.githubTriggers.create({ principal, definition, urlOrigin: origin }),
+      );
+    }
+    if (method === "GET" && path === "/v1/integrations/github/triggers") {
+      return jsonResponse(200, yield* deps.githubTriggers.list({ principal }));
+    }
+    if (method === "GET" && path === "/v1/integrations/github/trigger-activities") {
+      const limit = parseLimitParam(url.searchParams.get("limit"));
+      if (limit instanceof CloudAgentsApiFailure) return errorResponse(limit);
+      const triggerId = url.searchParams.get("triggerId");
+      return jsonResponse(
+        200,
+        yield* deps.githubTriggers.listActivities({
+          principal,
+          limit,
+          ...(triggerId === null ? {} : { triggerId }),
+        }),
+      );
+    }
+    const githubTriggerPrefix = "/v1/integrations/github/triggers/";
+    if (path.startsWith(githubTriggerPrefix)) {
+      const suffix = path.slice(githubTriggerPrefix.length);
+      const [triggerId, action] = suffix.split("/");
+      if (triggerId !== undefined && triggerId.length > 0) {
+        if (method === "GET" && action === undefined) {
+          return jsonResponse(200, yield* deps.githubTriggers.get({ principal, triggerId }));
+        }
+        if (method === "DELETE" && action === undefined) {
+          return jsonResponse(200, yield* deps.githubTriggers.remove({ principal, triggerId }));
+        }
+        if (method === "POST" && action === "disable") {
+          return jsonResponse(200, yield* deps.githubTriggers.disable({ principal, triggerId }));
+        }
+        if (method === "POST" && action === "enable") {
+          return jsonResponse(200, yield* deps.githubTriggers.enable({ principal, triggerId }));
+        }
+      }
     }
 
     const webhookEntry = ENTRY_BY_PATH[path];
@@ -189,7 +267,12 @@ export const cloudCollaborationRouteLayer = Layer.unwrap(
   Effect.gen(function* () {
     const keys = yield* CloudAgentsApiKeys.CloudAgentsApiKeys;
     const collaboration = yield* CloudCollaboration.CloudCollaboration;
+    const githubTriggers = yield* CloudGithubTriggers.CloudGithubTriggers;
     yield* CloudAgentsApi.CloudAgentsApi;
-    return HttpRouter.add("*", "/v1/integrations*", handleIntegrations({ keys, collaboration }));
+    return HttpRouter.add(
+      "*",
+      "/v1/integrations*",
+      handleIntegrations({ keys, collaboration, githubTriggers }),
+    );
   }),
 );
