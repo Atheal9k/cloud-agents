@@ -132,6 +132,11 @@ function resultIdFor(allocationId: string, attempt: number): CloudRunResultId {
   );
 }
 
+/** Lets a reader locate one attempt's retained result without capturing it. */
+export function cloudResultIdFor(allocationId: string, attempt: number): CloudRunResultId {
+  return resultIdFor(allocationId, attempt);
+}
+
 function runDirectory(path: Path.Path, root: string, resultId: CloudRunResultId) {
   return path.join(root, resultId);
 }

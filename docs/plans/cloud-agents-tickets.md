@@ -707,6 +707,8 @@ Acceptance criteria:
 
 ### CA-21: Integrate retained results into the full review UI
 
+Status: Done on 19 September 2026 in [PR #35](https://github.com/Atheal9k/cloud-agents/pull/35).
+
 Dependencies: CA-14, CA-16, CA-19, CA-24, CA-40, CA-43, CA-46, CA-48.
 
 Description: Make the durable agent page useful while its runtime is absent.
@@ -941,6 +943,9 @@ Acceptance criteria:
 ### CA-45: Pre-warm active Builds and scale runtime capacity
 
 Dependencies: CA-27, CA-42, CA-44.
+
+Status: Done on 19 September 2026 in
+[PR #33](https://github.com/Atheal9k/cloud-agents/pull/33).
 
 Description: Keep bounded warm copies of popular active Builds and scale host
 capacity from measured queue and slot demand.

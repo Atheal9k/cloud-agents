@@ -1,6 +1,8 @@
 import {
   CloudMacHostId,
+  CloudWarmGuestId,
   RunAllocationCommand,
+  type CloudAllocationSnapshot,
   type RunAllocation,
   type RunRuntimeFlush,
   type RunRuntimeSnapshot,
@@ -9,6 +11,7 @@ import {
   placeMacIosJob,
   simulatorWakeResumption,
 } from "@t3tools/contracts";
+import * as NodeCrypto from "node:crypto";
 import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
@@ -26,6 +29,13 @@ import {
   runDeadlineApplies,
 } from "./cloudHibernationPolicy.ts";
 import * as CloudMacHostCatalog from "./CloudMacHostCatalog.ts";
+import * as CloudWarmPoolCatalog from "./CloudWarmPoolCatalog.ts";
+import {
+  planWarmPoolCapacity,
+  placementForClaim,
+  warmPoolInventories,
+  warmPoolSupportsProfile,
+} from "./cloudWarmPoolPolicy.ts";
 import * as CloudWorkerRegistration from "./CloudWorkerRegistration.ts";
 import * as CloudWorkerProvider from "./CloudWorkerProvider.ts";
 import * as CloudWorkerRunClient from "./CloudWorkerRunClient.ts";
@@ -125,6 +135,7 @@ export const make = Effect.fn("CloudAllocationReconciler.make")(function* (input
   const registrations = yield* CloudWorkerRegistration.CloudWorkerRegistration;
   const workers = yield* CloudWorkerProvider.CloudWorkerProvider;
   const macHosts = yield* CloudMacHostCatalog.make();
+  const warmPool = yield* CloudWarmPoolCatalog.make();
   const runClient = input?.runClient;
   const dispatch = Effect.fn("CloudAllocationReconciler.dispatch")(function* (
     allocation: RunAllocation,
@@ -182,6 +193,10 @@ export const make = Effect.fn("CloudAllocationReconciler.make")(function* (input
       attempt: allocation.attempt,
     });
     if (resources.length === 0) {
+      yield* warmPool.releaseClaim({
+        allocationId: allocation.id,
+        occurredAt,
+      });
       if (
         allocation.allocationState.status !== "launching" ||
         hasPassed(now, allocation.deadlines.launchBy)
@@ -481,6 +496,14 @@ export const make = Effect.fn("CloudAllocationReconciler.make")(function* (input
             type: "allocation.instance-launched",
             commandId: commandId(allocation, "instance-launched"),
             instanceId: existing.instanceId,
+            placement:
+              allocation.placement ??
+              placementForClaim({
+                claimed: undefined,
+                buildId: allocation.build?.buildId,
+                claimLatencyMs: 0,
+                fallbackReason: "ec2-startup",
+              }),
           });
           return;
         }
@@ -507,6 +530,53 @@ export const make = Effect.fn("CloudAllocationReconciler.make")(function* (input
           return;
         }
 
+        const environment = allocation.environment;
+        const build = allocation.build;
+        // A hibernated run owns its filesystem. Claiming a warm guest for it
+        // would silently restart the agent on an empty disk, so the retained
+        // snapshot always wins over the warm pool.
+        const snapshot = retainedRuntimeSnapshot(allocation);
+        const claimStarted = yield* DateTime.now;
+        const claimed =
+          !warmPoolSupportsProfile(allocation.profile.id) ||
+          snapshot !== undefined ||
+          environment === undefined ||
+          build === undefined
+            ? undefined
+            : yield* warmPool.claim({
+                key: {
+                  environmentId: environment.environmentId,
+                  versionId: environment.versionId,
+                  profileId: allocation.profile.id,
+                  buildId: build.buildId,
+                },
+                allocationId: allocation.id,
+                occurredAt,
+              });
+        const claimLatencyMs = Math.max(
+          0,
+          DateTime.toEpochMillis(yield* DateTime.now) - DateTime.toEpochMillis(claimStarted),
+        );
+        if (claimed !== undefined) {
+          yield* warmPool.recordTiming({
+            kind: "warm-claim",
+            durationMs: claimLatencyMs,
+            occurredAt,
+          });
+          yield* dispatch(allocation, occurredAt, {
+            type: "allocation.instance-launched",
+            commandId: commandId(allocation, "instance-launched"),
+            instanceId: claimed.id,
+            placement: placementForClaim({
+              claimed,
+              buildId: build?.buildId,
+              claimLatencyMs,
+              fallbackReason: "no-warm-guest",
+            }),
+          });
+          return;
+        }
+
         const instanceType = allocation.profile.instanceType;
         if (instanceType === undefined) {
           yield* failLaunch(
@@ -517,9 +587,39 @@ export const make = Effect.fn("CloudAllocationReconciler.make")(function* (input
           return;
         }
         const registrationCredential = yield* registrations.issueCredential(allocation);
-        const snapshot = retainedRuntimeSnapshot(allocation);
         let placementHostId: string | undefined;
-        if (isMacIosWorkerProfile(allocation.profile) && snapshot === undefined) {
+        if (snapshot !== undefined) {
+          const restored = yield* workers
+            .restore({
+              instanceId: snapshot.instanceId,
+              allocationId: allocation.id,
+              attempt: allocation.attempt,
+              selectedRef: allocation.execution?.selectedRef ?? allocation.target.baseCommit,
+              outputBranch: allocation.target.branch,
+              expiresAt: allocation.deadlines.expiresAt,
+              maxInputWaitSeconds,
+              registrationCredential,
+            })
+            .pipe(Effect.result);
+          if (Result.isSuccess(restored)) {
+            yield* dispatch(allocation, occurredAt, {
+              type: "allocation.instance-launched",
+              commandId: commandId(allocation, "instance-launched"),
+              instanceId: restored.success.instanceId,
+            });
+            return;
+          }
+          // The snapshot could not be started. Placing a fresh guest is the
+          // honest fallback; the wake report says the filesystem did not come
+          // back rather than pretending it did.
+          yield* Effect.logWarning("Could not restore a hibernated cloud guest.", {
+            allocationId: allocation.id,
+            attempt: allocation.attempt,
+            instanceId: snapshot.instanceId,
+            error: restored.failure.message,
+          });
+        }
+        if (isMacIosWorkerProfile(allocation.profile)) {
           const capacity = yield* workers.inspectMacCapacity({ instanceType }).pipe(Effect.result);
           if (Result.isFailure(capacity)) {
             yield* failLaunch(allocation, occurredAt, capacity.failure.message);
@@ -535,27 +635,27 @@ export const make = Effect.fn("CloudAllocationReconciler.make")(function* (input
             return;
           }
           const hosts = yield* macHosts.list;
-          const placement = placeMacIosJob({
+          const macPlacement = placeMacIosJob({
             hosts,
             region: capacity.success.region,
             instanceType,
             releaseRequested: hosts.some((host) => host.releaseRequestedAt !== undefined),
           });
-          if (placement.action === "wait") return;
-          if (placement.action === "reject") {
-            yield* failLaunch(allocation, occurredAt, placement.reason);
+          if (macPlacement.action === "wait") return;
+          if (macPlacement.action === "reject") {
+            yield* failLaunch(allocation, occurredAt, macPlacement.reason);
             return;
           }
-          if (placement.action === "occupy") {
+          if (macPlacement.action === "occupy") {
             yield* macHosts.save(
               CloudMacHostCatalog.occupyMacHost({
-                host: placement.host,
+                host: macPlacement.host,
                 allocationId: allocation.id,
                 attempt: allocation.attempt,
                 occurredAt,
               }),
             );
-            placementHostId = placement.host.awsHostId;
+            placementHostId = macPlacement.host.awsHostId;
           } else {
             const availabilityZone = capacity.success.availabilityZones[0];
             if (availabilityZone === undefined) {
@@ -595,37 +695,6 @@ export const make = Effect.fn("CloudAllocationReconciler.make")(function* (input
             placementHostId = allocated.success.hostId;
           }
         }
-        if (snapshot !== undefined) {
-          const restored = yield* workers
-            .restore({
-              instanceId: snapshot.instanceId,
-              allocationId: allocation.id,
-              attempt: allocation.attempt,
-              selectedRef: allocation.execution?.selectedRef ?? allocation.target.baseCommit,
-              outputBranch: allocation.target.branch,
-              expiresAt: allocation.deadlines.expiresAt,
-              maxInputWaitSeconds,
-              registrationCredential,
-            })
-            .pipe(Effect.result);
-          if (Result.isSuccess(restored)) {
-            yield* dispatch(allocation, occurredAt, {
-              type: "allocation.instance-launched",
-              commandId: commandId(allocation, "instance-launched"),
-              instanceId: restored.success.instanceId,
-            });
-            return;
-          }
-          // The snapshot could not be started. Placing a fresh guest is the
-          // honest fallback; the wake report says the filesystem did not come
-          // back rather than pretending it did.
-          yield* Effect.logWarning("Could not restore a hibernated cloud guest.", {
-            allocationId: allocation.id,
-            attempt: allocation.attempt,
-            instanceId: snapshot.instanceId,
-            error: restored.failure.message,
-          });
-        }
         const launched = yield* workers
           .launch({
             allocationId: allocation.id,
@@ -653,10 +722,22 @@ export const make = Effect.fn("CloudAllocationReconciler.make")(function* (input
               });
             }
           }
+          const placement = placementForClaim({
+            claimed: undefined,
+            buildId: allocation.build?.buildId,
+            claimLatencyMs,
+            fallbackReason:
+              placementHostId !== undefined
+                ? "dedicated-host"
+                : allocation.build === undefined
+                  ? "no-fresh-build"
+                  : "no-warm-guest",
+          });
           yield* dispatch(allocation, occurredAt, {
             type: "allocation.instance-launched",
             commandId: commandId(allocation, "instance-launched"),
             instanceId: launched.success.instanceId,
+            placement,
           });
           return;
         }
@@ -683,6 +764,14 @@ export const make = Effect.fn("CloudAllocationReconciler.make")(function* (input
         return;
       }
       case "booting": {
+        if (allocation.placement?.warmFork === "warm") {
+          yield* dispatch(allocation, occurredAt, {
+            type: "allocation.worker-booted",
+            commandId: commandId(allocation, "worker-booted"),
+            placement: allocation.placement,
+          });
+          return;
+        }
         const instanceId = allocation.allocationState.instanceId;
         const findResult = yield* workers
           .findAttemptResources({
@@ -701,9 +790,25 @@ export const make = Effect.fn("CloudAllocationReconciler.make")(function* (input
         }
         const instance = findResult.success.find((resource) => resource.instanceId === instanceId);
         if (instance?.state === "running") {
+          const bootTimeMs = Math.max(
+            0,
+            Date.parse(occurredAt) - Date.parse(allocation.allocationState.launchedAt),
+          );
+          yield* warmPool.recordTiming({
+            kind: "ec2-startup",
+            durationMs: bootTimeMs,
+            occurredAt,
+          });
           yield* dispatch(allocation, occurredAt, {
             type: "allocation.worker-booted",
             commandId: commandId(allocation, "worker-booted"),
+            placement: {
+              warmFork: "cold" as const,
+              ...(allocation.build === undefined ? {} : { buildId: allocation.build.buildId }),
+              claimLatencyMs: allocation.placement?.claimLatencyMs ?? 0,
+              bootTimeMs,
+              fallbackReason: allocation.placement?.fallbackReason ?? "ec2-startup",
+            },
           });
           return;
         }
@@ -828,12 +933,115 @@ export const make = Effect.fn("CloudAllocationReconciler.make")(function* (input
     }
   });
 
+  const reconcileWarmPool = Effect.fn("CloudAllocationReconciler.reconcileWarmPool")(function* (
+    snapshot: CloudAllocationSnapshot,
+    occurredAt: string,
+  ) {
+    const guests = snapshot.warmGuests ?? [];
+    const timings = snapshot.capacity?.timings ?? (yield* warmPool.timings);
+    for (const environment of snapshot.environments ?? []) {
+      const activeBuildId = environment.activeBuildId;
+      if (activeBuildId === undefined) continue;
+      const build = (snapshot.builds ?? []).find((candidate) => candidate.id === activeBuildId);
+      if (build === undefined) continue;
+      const profiles = new Set<string>([
+        ...guests
+          .filter((guest) => guest.environmentId === environment.id)
+          .map((guest) => guest.profileId),
+        ...snapshot.allocations
+          .filter((allocation) => allocation.environment?.environmentId === environment.id)
+          .map((allocation) => allocation.profile.id),
+      ]);
+      yield* Effect.forEach(
+        [...profiles],
+        (profileId) =>
+          warmPool.drainObsolete({
+            environmentId: environment.id,
+            profileId,
+            versionId: build.versionId,
+            buildId: build.id,
+            occurredAt,
+          }),
+        { discard: true },
+      );
+    }
+
+    const currentGuests = yield* warmPool.list;
+    const plan = planWarmPoolCapacity({
+      inventories: warmPoolInventories({
+        guests: currentGuests,
+        allocations: snapshot.allocations,
+      }),
+      timings,
+    });
+    yield* Effect.forEach(
+      plan.pools,
+      (decision) =>
+        Effect.gen(function* () {
+          const inventory = warmPoolInventories({
+            guests: yield* warmPool.list,
+            allocations: snapshot.allocations,
+          }).find(
+            (candidate) =>
+              candidate.key.environmentId === decision.key.environmentId &&
+              candidate.key.versionId === decision.key.versionId &&
+              candidate.key.profileId === decision.key.profileId &&
+              candidate.key.buildId === decision.key.buildId,
+          );
+          const snapshotId = inventory?.snapshotId;
+          if (decision.action === "replenish" && snapshotId !== undefined) {
+            const have = (inventory?.warming ?? 0) + (inventory?.ready ?? 0);
+            const missing = Math.max(0, decision.target - have);
+            yield* Effect.forEach(
+              Array.from({ length: missing }, (_, index) => index),
+              (index) =>
+                Effect.gen(function* () {
+                  const guest = yield* warmPool.start({
+                    id: CloudWarmGuestId.make(
+                      `${decision.key.buildId}-warm-${NodeCrypto.randomUUID()}-${index}`,
+                    ),
+                    key: decision.key,
+                    snapshotId,
+                    startedAt: occurredAt,
+                  });
+                  yield* warmPool.markReady({
+                    guestId: guest.id,
+                    bootTimeMs: timings?.coldBuildRestoreMs ?? 0,
+                    occurredAt,
+                  });
+                  if (timings?.coldBuildRestoreMs !== undefined) {
+                    yield* warmPool.recordTiming({
+                      kind: "cold-build-restore",
+                      durationMs: timings.coldBuildRestoreMs,
+                      occurredAt,
+                    });
+                  }
+                }),
+              { discard: true },
+            );
+            return;
+          }
+          if (decision.action === "drain") {
+            yield* warmPool.evictIdle({
+              key: decision.key,
+              keepReady: decision.target,
+              occurredAt,
+            });
+          }
+        }),
+      { discard: true },
+    );
+  });
+
   const reconcileOnce = Effect.fn("CloudAllocationReconciler.reconcileOnce")(function* () {
     const snapshot = yield* controller.snapshot;
     // A fenced controller has handed its state to another host. Launching or
     // terminating AWS workers from here would make two controllers act on the
     // same allocations.
     if (snapshot.controller.writability?.status === "fenced") return;
+    const now = yield* DateTime.now;
+    const occurredAt = DateTime.formatIso(now);
+    yield* reconcileWarmPool(snapshot, occurredAt);
     const pending = orderedAllocations(snapshot.allocations).filter(
       (allocation) => allocation.cleanupState.status !== "succeeded",
     );

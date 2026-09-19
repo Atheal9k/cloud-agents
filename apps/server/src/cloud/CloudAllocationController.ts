@@ -50,6 +50,8 @@ import * as CloudEnvironmentBuildCatalog from "./CloudEnvironmentBuildCatalog.ts
 import { isCloudEnvironmentBuildStale } from "./cloudEnvironmentBuildPolicy.ts";
 import * as CloudEnvironmentCatalog from "./CloudEnvironmentCatalog.ts";
 import * as CloudMacHostCatalog from "./CloudMacHostCatalog.ts";
+import * as CloudWarmPoolCatalog from "./CloudWarmPoolCatalog.ts";
+import { planWarmPoolCapacity, warmPoolInventories } from "./cloudWarmPoolPolicy.ts";
 import * as ControllerSettings from "./controllerSettings.ts";
 import {
   decideRunAllocationCommand,
@@ -211,6 +213,7 @@ export const make = Effect.fn("CloudAllocationController.make")(function* (input
   const environments = yield* CloudEnvironmentCatalog.make();
   const builds = yield* CloudEnvironmentBuildCatalog.make();
   const macHosts = yield* CloudMacHostCatalog.make();
+  const warmPool = yield* CloudWarmPoolCatalog.make();
   const settings = yield* ControllerSettings.make();
   const mode = input.mode ?? "local";
   const region = input.region ?? "us-west-1";
@@ -420,6 +423,8 @@ export const make = Effect.fn("CloudAllocationController.make")(function* (input
       environmentCatalog,
       buildCatalog,
       macHostCatalog,
+      warmGuests,
+      timings,
     ] = yield* Effect.all([
       readAllEventRows({}),
       readDeletionRows({}),
@@ -428,6 +433,8 @@ export const make = Effect.fn("CloudAllocationController.make")(function* (input
       environments.list,
       builds.list,
       macHosts.list,
+      warmPool.list,
+      warmPool.timings,
     ]).pipe(Effect.mapError(persistenceError));
     const grouped = new Map<RunAllocationId, Array<RunAllocationEvent>>();
     for (const row of rows) {
@@ -469,6 +476,11 @@ export const make = Effect.fn("CloudAllocationController.make")(function* (input
       environments: environmentCatalog,
       builds: buildCatalog,
       macHosts: macHostCatalog,
+      warmGuests,
+      capacity: planWarmPoolCapacity({
+        inventories: warmPoolInventories({ guests: warmGuests, allocations }),
+        timings,
+      }),
       deletions: deletionRows.map((row) => row.deletion),
       usage: allocations.map((allocation) =>
         usageForAllocation(allocation, grouped.get(allocation.id) ?? [], now, macHostCatalog),

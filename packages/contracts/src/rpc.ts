@@ -284,6 +284,14 @@ import {
   CloudResultError,
 } from "./cloudResults.ts";
 import {
+  CloudAgentReview,
+  CloudAgentReviewActInput,
+  CloudAgentReviewError,
+  CloudAgentReviewInspectInput,
+  CloudAgentReviewShareGrant,
+  CloudAgentReviewShareInput,
+} from "./cloudReview.ts";
+import {
   CloudEnvironment,
   CloudEnvironmentError,
   CloudEnvironmentResolution,
@@ -299,6 +307,7 @@ import {
   CloudEnvironmentBuildStaleThresholdInput,
   CloudEnvironmentBuildStartInput,
 } from "./cloudEnvironmentBuild.ts";
+import { CloudRunPublicationError } from "./cloudPublication.ts";
 import {
   SharedBrowserError,
   SharedBrowserGrant,
@@ -433,6 +442,9 @@ export const WS_METHODS = {
   cloudEnvironmentBuildSave: "cloud.environments.builds.save",
   cloudEnvironmentBuildStaleThreshold: "cloud.environments.builds.staleThreshold",
   cloudArtifactsGrant: "cloud.artifacts.grant",
+  cloudAgentReviewInspect: "cloud.agents.inspect",
+  cloudAgentReviewAct: "cloud.agents.act",
+  cloudAgentReviewShare: "cloud.agents.share",
   sharedBrowserIssue: "sharedBrowser.issue",
   sharedBrowserKeepAlive: "sharedBrowser.keepAlive",
   sharedBrowserTakeControl: "sharedBrowser.takeControl",
@@ -799,6 +811,37 @@ const WsCloudArtifactsGrantRpc = Rpc.make(WS_METHODS.cloudArtifactsGrant, {
   payload: CloudArtifactAccessInput,
   success: CloudArtifactAccessGrant,
   error: Schema.Union([CloudResultError, EnvironmentAuthorizationError]),
+});
+
+const WsCloudAgentReviewInspectRpc = Rpc.make(WS_METHODS.cloudAgentReviewInspect, {
+  payload: CloudAgentReviewInspectInput,
+  success: CloudAgentReview,
+  error: Schema.Union([
+    CloudAgentReviewError,
+    CloudAllocationControllerError,
+    EnvironmentAuthorizationError,
+  ]),
+});
+
+const WsCloudAgentReviewActRpc = Rpc.make(WS_METHODS.cloudAgentReviewAct, {
+  payload: CloudAgentReviewActInput,
+  success: CloudAgentReview,
+  error: Schema.Union([
+    CloudAgentReviewError,
+    CloudAllocationControllerError,
+    CloudRunPublicationError,
+    EnvironmentAuthorizationError,
+  ]),
+});
+
+const WsCloudAgentReviewShareRpc = Rpc.make(WS_METHODS.cloudAgentReviewShare, {
+  payload: CloudAgentReviewShareInput,
+  success: CloudAgentReviewShareGrant,
+  error: Schema.Union([
+    CloudAgentReviewError,
+    CloudAllocationControllerError,
+    EnvironmentAuthorizationError,
+  ]),
 });
 
 const WsSharedBrowserIssueRpc = Rpc.make(WS_METHODS.sharedBrowserIssue, {
@@ -1591,6 +1634,9 @@ export const WsRpcGroup = RpcGroup.make(
   WsCloudEnvironmentBuildSaveRpc,
   WsCloudEnvironmentBuildStaleThresholdRpc,
   WsCloudArtifactsGrantRpc,
+  WsCloudAgentReviewInspectRpc,
+  WsCloudAgentReviewActRpc,
+  WsCloudAgentReviewShareRpc,
   WsSharedBrowserIssueRpc,
   WsSharedBrowserKeepAliveRpc,
   WsSharedBrowserTakeControlRpc,

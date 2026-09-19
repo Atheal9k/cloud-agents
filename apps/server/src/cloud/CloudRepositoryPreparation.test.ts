@@ -119,6 +119,7 @@ it.layer(NodeServices.layer)("CloudRepositoryPreparation", (it) => {
       readBranch: () => Effect.die("branch inspection should not run during preparation"),
       findPullRequest: () => Effect.die("PR inspection should not run during preparation"),
       createDraftPullRequest: () => Effect.die("PR creation should not run during preparation"),
+      closePullRequest: () => Effect.die("PR deletion should not run during preparation"),
     });
     const preparation = yield* make({
       workspaceRoot,

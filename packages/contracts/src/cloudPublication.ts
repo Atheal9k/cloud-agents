@@ -65,6 +65,12 @@ export const CloudRunPublicationOutcome = Schema.Union([
     pullRequestUrl: TrimmedNonEmptyString,
     publishedAt: IsoDateTime,
   }),
+  Schema.Struct({
+    status: Schema.Literal("pr-deleted"),
+    commit: TrimmedNonEmptyString,
+    pullRequestNumber: Schema.Int,
+    deletedAt: IsoDateTime,
+  }),
 ]);
 export type CloudRunPublicationOutcome = typeof CloudRunPublicationOutcome.Type;
 
@@ -91,6 +97,8 @@ export class CloudRunPublicationError extends Schema.TaggedError<CloudRunPublica
       "recorded-intent-mismatch",
       "invalid-workspace",
       "publication-not-found",
+      "pr-not-published",
+      "github-failed",
       "persistence-failed",
     ]),
     message: TrimmedNonEmptyString,

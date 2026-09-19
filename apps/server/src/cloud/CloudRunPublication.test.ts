@@ -194,6 +194,11 @@ it.layer(NodeServices.layer)("CloudRunPublication", (it) => {
           }
           return pullRequest;
         }),
+      closePullRequest: () =>
+        Effect.sync(() => {
+          calls.push("close-pr");
+          state.pullRequest = null;
+        }),
     });
     const publicationService = yield* make({
       publicationRoot: path.join(root, "publications"),
@@ -228,6 +233,24 @@ it.layer(NodeServices.layer)("CloudRunPublication", (it) => {
           request.preparation.attempt,
         ),
       ).toEqual(record);
+    }),
+  );
+
+  it.effect("closes a published pull request without rewriting the commit", () =>
+    Effect.gen(function* () {
+      const { calls, fs, git, path, publicationService, request, workspace } = yield* fixture();
+      yield* fs.writeFileString(path.join(workspace, "tracked.txt"), "published\n");
+      yield* publicationService.finalize(request);
+      calls.length = 0;
+
+      const deleted = yield* publicationService.deletePullRequest(
+        request.preparation.allocationId,
+        request.preparation.attempt,
+      );
+
+      expect(deleted.outcome.status).toBe("pr-deleted");
+      expect(calls).toEqual(["close-pr"]);
+      expect(yield* git(["log", "-1", "--pretty=%s"])).toBe("feat(cloud): publish retained work");
     }),
   );
 

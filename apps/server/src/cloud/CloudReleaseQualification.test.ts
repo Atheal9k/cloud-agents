@@ -160,6 +160,10 @@ it.layer(TestLayer)("cloud release qualification", (it) => {
               };
               return pullRequest;
             }),
+          closePullRequest: () =>
+            Effect.sync(() => {
+              pullRequest = null;
+            }),
         });
 
         const recipe: CloudRepositoryRecipe = {

@@ -169,6 +169,10 @@ it.effect("reuses a Mac Dedicated Host after job cleanup without terminating it"
 
     const launched = (yield* controller.snapshot).allocations[0];
     expect(launched?.allocationState.status).toBe("booting");
+    expect(launched?.placement).toMatchObject({
+      warmFork: "cold",
+      fallbackReason: "dedicated-host",
+    });
     expect(state.allocateCalls).toBe(1);
     expect(state.launchHostIds).toEqual(["h-mac"]);
 

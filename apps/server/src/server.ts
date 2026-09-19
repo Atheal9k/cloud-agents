@@ -29,6 +29,7 @@ import {
   staticAndDevRouteLayer,
   browserApiCorsLayer,
   cloudResultRouteLayer,
+  cloudAgentReviewRouteLayer,
   httpCompressionLayer,
 } from "./http.ts";
 import { guardHttpResponseWriteErrors } from "./httpResponseErrorGuard.ts";
@@ -155,6 +156,7 @@ import {
   sharedBrowserProxyMiddlewareLayer,
 } from "./cloud/SharedBrowserProxy.ts";
 import * as CloudArtifactAccess from "./cloud/CloudArtifactAccess.ts";
+import * as CloudAgentReview from "./cloud/CloudAgentReview.ts";
 import * as CloudRunControl from "./cloud/CloudRunControl.ts";
 import * as CloudRunPublication from "./cloud/CloudRunPublication.ts";
 import * as CloudRunResults from "./cloud/CloudRunResults.ts";
@@ -618,7 +620,10 @@ const RuntimeCoreDependenciesBaseLive = ReactorLayerLive.pipe(
   ),
 );
 
-const RuntimeCoreDependenciesLive = CloudRunControl.layer.pipe(
+const RuntimeCoreDependenciesLive = Layer.mergeAll(
+  CloudRunControl.layer,
+  CloudAgentReview.layer,
+).pipe(
   Layer.provideMerge(CloudArtifactAccess.layer),
   Layer.provideMerge(CloudRunResultsLayerLive),
   Layer.provideMerge(CloudProviderExecution.layer),
@@ -671,6 +676,7 @@ export const makeRoutesLayer = Layer.mergeAll(
     assetRouteLayer,
     attachmentUploadRouteLayer,
     cloudResultRouteLayer,
+    cloudAgentReviewRouteLayer,
     deviceHubProxyRouteLayer,
     previewGatewayBootstrapRouteLayer,
     sharedBrowserBootstrapRouteLayer,
