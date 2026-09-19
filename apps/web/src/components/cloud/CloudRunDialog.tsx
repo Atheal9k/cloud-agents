@@ -22,6 +22,7 @@ import {
   buildCloudRunLaunchCommand,
   cloudRunDisplayState,
   cloudRunProjectOptions,
+  controllerSummary,
   createInitialCloudRunDraft,
   reconcileCloudRunLaunchInstanceType,
   type CloudRunLaunchDraft,
@@ -316,6 +317,8 @@ function CloudRunDialogForEnvironment(props: {
     cloudAllocations.snapshot({ environmentId: props.environmentId, input: {} }),
   );
   const snapshot = Option.getOrNull(AsyncResult.value(snapshotResult));
+  const writability = snapshot?.controller.writability;
+  const fence = writability?.status === "fenced" ? writability : null;
   const projectOptions = useMemo(() => cloudRunProjectOptions(projects), [projects]);
   const dispatch = useAtomCommand(cloudAllocations.dispatch, { reportFailure: false });
   const registerEnvironment = useAtomCommand(environmentCatalog.register, { reportFailure: false });
@@ -468,12 +471,19 @@ function CloudRunDialogForEnvironment(props: {
               <CloudIcon className="size-5" />
               <DialogTitle>New cloud thread</DialogTitle>
             </div>
-            <DialogDescription>
-              The local T3 controller stays responsible for this worker after the browser or desktop
-              app disconnects.
-            </DialogDescription>
+            <DialogDescription>{controllerSummary(snapshot)}</DialogDescription>
           </DialogHeader>
           <DialogPanel className="space-y-5" scrollAreaClassName="flex-1">
+            {fence === null ? null : (
+              <p
+                role="alert"
+                className="rounded-lg border bg-muted/24 p-3 text-sm text-destructive"
+              >
+                This controller is fenced and accepts no new work: {fence.reason} Saved results stay
+                readable here.
+              </p>
+            )}
+
             {snapshot === null ? (
               <div className="rounded-lg border bg-muted/24 p-3 text-sm text-muted-foreground">
                 Connecting to the cloud controller...
@@ -697,6 +707,7 @@ function CloudRunDialogForEnvironment(props: {
               type="submit"
               disabled={
                 snapshot === null ||
+                fence !== null ||
                 draft.repository.length === 0 ||
                 providers.length === 0 ||
                 busyAllocationId !== null ||

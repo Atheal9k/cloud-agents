@@ -4,6 +4,7 @@ import {
   buildCloudRunLaunchCommand,
   cloudRunDisplayState,
   cloudRunProjectOptions,
+  controllerSummary,
   createInitialCloudRunDraft,
   reconcileCloudRunLaunchInstanceType,
   type CloudRunLaunchDraft,
@@ -111,6 +112,26 @@ describe("cloud run launch", () => {
         [],
       ).runMinutes,
     ).toBe("120");
+  });
+
+  it("promises a permanent controller outlives this computer, and a local one does not", () => {
+    const snapshot = (requiresHostOnline: boolean) => ({
+      controller: {
+        mode: requiresHostOnline ? ("local" as const) : ("permanent" as const),
+        requiresHostOnline,
+        admission: { status: "open" as const },
+        writability: { status: "writable" as const },
+      },
+      limits,
+      workerPriceAssumptions: [],
+      spendingControl: "estimate-only" as const,
+      allocations: [],
+      usage: [],
+    });
+
+    expect(controllerSummary(snapshot(true))).toContain("as long as its machine stays online");
+    expect(controllerSummary(snapshot(false))).toContain("with this computer switched off");
+    expect(controllerSummary(null)).toContain("Connecting");
   });
 
   it("selects an allowed worker when controller limits arrive after the draft", () => {

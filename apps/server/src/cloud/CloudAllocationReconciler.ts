@@ -475,6 +475,10 @@ export const make = Effect.fn("CloudAllocationReconciler.make")(function* (input
 
   const reconcileOnce = Effect.fn("CloudAllocationReconciler.reconcileOnce")(function* () {
     const snapshot = yield* controller.snapshot;
+    // A fenced controller has handed its state to another host. Launching or
+    // terminating AWS workers from here would make two controllers act on the
+    // same allocations.
+    if (snapshot.controller.writability?.status === "fenced") return;
     const pending = orderedAllocations(snapshot.allocations).filter(
       (allocation) => allocation.cleanupState.status !== "succeeded",
     );
@@ -504,7 +508,9 @@ export const make = Effect.fn("CloudAllocationReconciler.make")(function* (input
 
   const reconcileWorkersOnce = Effect.fn("CloudAllocationReconciler.reconcileWorkersOnce")(
     function* () {
-      const [snapshot, resources] = yield* Effect.all([controller.snapshot, workers.listWorkers()]);
+      const snapshot = yield* controller.snapshot;
+      if (snapshot.controller.writability?.status === "fenced") return;
+      const resources = yield* workers.listWorkers();
       const allocations = new Map(
         snapshot.allocations.map((allocation) => [allocation.id, allocation]),
       );

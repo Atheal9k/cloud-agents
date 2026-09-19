@@ -1,7 +1,11 @@
 import * as NetService from "@t3tools/shared/Net";
 import { OtlpHeadersFromString, OtlpProtocol } from "@t3tools/shared/observability";
 import { parsePersistedServerObservabilitySettings } from "@t3tools/shared/serverSettings";
-import { DesktopBackendBootstrap, PortSchema } from "@t3tools/contracts";
+import {
+  CloudAllocationControllerMode,
+  DesktopBackendBootstrap,
+  PortSchema,
+} from "@t3tools/contracts";
 import * as Config from "effect/Config";
 import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
@@ -78,7 +82,16 @@ const tailscaleServePortFlag = Flag.integer("tailscale-serve-port").pipe(
 );
 const cloudControllerFlag = Flag.boolean("cloud-controller").pipe(
   Flag.withDescription(
-    "Use this T3 environment as the local cloud-agent controller. The process and host must remain online.",
+    "Use this T3 environment as the single cloud-agent controller for its state directory.",
+  ),
+  Flag.optional,
+);
+const cloudControllerModeFlag = Flag.choice(
+  "cloud-controller-mode",
+  CloudAllocationControllerMode.literals,
+).pipe(
+  Flag.withDescription(
+    "Controller deployment. `local` needs this machine online; `permanent` runs on an always-on host.",
   ),
   Flag.optional,
 );
@@ -158,6 +171,10 @@ const EnvServerConfig = Config.all({
     Config.option,
     Config.map(Option.getOrUndefined),
   ),
+  cloudControllerMode: Config.schema(
+    CloudAllocationControllerMode,
+    "T3CODE_CLOUD_CONTROLLER_MODE",
+  ).pipe(Config.option, Config.map(Option.getOrUndefined)),
 });
 
 const DevAuthTokenConfig = Config.redacted("T3CODE_DEV_AUTH_TOKEN").pipe(
@@ -194,6 +211,7 @@ export interface CliServerFlags {
   readonly tailscaleServeEnabled: Option.Option<boolean>;
   readonly tailscaleServePort: Option.Option<number>;
   readonly cloudControllerEnabled?: Option.Option<boolean>;
+  readonly cloudControllerMode?: Option.Option<CloudAllocationControllerMode>;
 }
 
 export interface CliAuthLocationFlags {
@@ -229,6 +247,7 @@ export const sharedServerCommandFlags = {
   tailscaleServeEnabled: tailscaleServeFlag,
   tailscaleServePort: tailscaleServePortFlag,
   cloudControllerEnabled: cloudControllerFlag,
+  cloudControllerMode: cloudControllerModeFlag,
 } as const;
 
 const resolveOptionPrecedence = <Value>(
@@ -273,6 +292,7 @@ export const resolveServerConfig = (
       tailscaleServeEnabled: flags.tailscaleServeEnabled ?? Option.none(),
       tailscaleServePort: flags.tailscaleServePort ?? Option.none(),
       cloudControllerEnabled: flags.cloudControllerEnabled ?? Option.none(),
+      cloudControllerMode: flags.cloudControllerMode ?? Option.none(),
     } satisfies CliServerFlags;
     const bootstrapFd = Option.getOrUndefined(normalizedFlags.bootstrapFd) ?? env.bootstrapFd;
     const bootstrapEnvelope =
@@ -387,6 +407,13 @@ export const resolveServerConfig = (
       ),
       () => false,
     );
+    const cloudControllerMode = Option.getOrElse(
+      resolveOptionPrecedence(
+        normalizedFlags.cloudControllerMode,
+        Option.fromUndefinedOr(env.cloudControllerMode),
+      ),
+      () => "local" as const,
+    );
     const staticDir = devUrl ? undefined : yield* ServerConfig.resolveStaticDir();
     const host = Option.getOrElse(
       resolveOptionPrecedence(
@@ -439,6 +466,7 @@ export const resolveServerConfig = (
       tailscaleServeEnabled,
       tailscaleServePort,
       cloudControllerEnabled,
+      cloudControllerMode,
     };
 
     return config;
@@ -463,6 +491,7 @@ export const resolveCliAuthConfig = (
       tailscaleServeEnabled: Option.none(),
       tailscaleServePort: Option.none(),
       cloudControllerEnabled: Option.none(),
+      cloudControllerMode: Option.none(),
     },
     cliLogLevel,
   );

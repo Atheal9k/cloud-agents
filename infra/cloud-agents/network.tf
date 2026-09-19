@@ -106,6 +106,17 @@ resource "aws_vpc_security_group_egress_rule" "controller_https" {
   ip_protocol       = "tcp"
 }
 
+resource "aws_vpc_security_group_egress_rule" "controller_tailscale" {
+  count = var.controller_mode == "ec2" ? 1 : 0
+
+  security_group_id = aws_security_group.controller[0].id
+  description       = "Direct Tailscale connections; without it the tailnet falls back to relays over 443"
+  cidr_ipv4         = "0.0.0.0/0"
+  from_port         = 41641
+  to_port           = 41641
+  ip_protocol       = "udp"
+}
+
 resource "aws_vpc_security_group_egress_rule" "controller_worker_control" {
   count = var.controller_mode == "ec2" ? 1 : 0
 

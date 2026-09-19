@@ -1,5 +1,12 @@
 locals {
   controller_image_id = coalesce(var.controller_ami_id, data.aws_ami.amazon_linux_2023.id)
+  # The container listens on T3's own port; the tailnet publishes the HTTPS one.
+  controller_container_port = 3777
+  controller_hostname       = "${var.controller_tailscale_hostname}.${coalesce(var.controller_tailnet_domain, "invalid")}"
+  controller_extra_environment = join(
+    "\n",
+    [for name in sort(keys(var.controller_runtime_environment)) : "${name}=${var.controller_runtime_environment[name]}"],
+  )
 }
 
 resource "aws_instance" "controller" {
@@ -35,10 +42,17 @@ resource "aws_instance" "controller" {
   }
 
   user_data = templatefile("${path.module}/templates/controller-cloud-init.sh.tftpl", {
-    artifact_bucket = aws_s3_bucket.artifacts.id
-    aws_region      = var.aws_region
-    project_name    = var.name_prefix
-    data_device     = "/dev/sdf"
+    artifact_bucket               = aws_s3_bucket.artifacts.id
+    aws_region                    = var.aws_region
+    project_name                  = var.name_prefix
+    data_device                   = "/dev/sdf"
+    container_port                = local.controller_container_port
+    controller_hostname           = local.controller_hostname
+    controller_image_ref          = var.controller_image_ref
+    extra_environment             = local.controller_extra_environment
+    service_port                  = var.controller_service_port
+    tailscale_auth_key_secret_arn = coalesce(var.controller_tailscale_auth_key_secret_arn, "")
+    tailscale_hostname            = var.controller_tailscale_hostname
   })
 
   tags = {

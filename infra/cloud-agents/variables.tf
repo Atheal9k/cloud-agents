@@ -333,6 +333,94 @@ variable "worker_tailscale_auth_key_secret_arn" {
   }
 }
 
+variable "controller_image_ref" {
+  description = "Container image reference for the permanent controller, built by the repository Dockerfile and published for CA-04B. Pin a digest or an immutable tag."
+  type        = string
+  default     = null
+  nullable    = true
+
+  validation {
+    condition = (
+      var.controller_mode != "ec2" ||
+      (var.controller_image_ref != null && length(trimspace(var.controller_image_ref)) > 0)
+    )
+    error_message = "controller_image_ref is required when controller_mode is ec2."
+  }
+}
+
+variable "controller_tailscale_auth_key_secret_arn" {
+  description = "Secrets Manager ARN containing the raw Tailscale auth key that enrolls the permanent controller. The tailnet supplies its stable name and renewed TLS certificate."
+  type        = string
+  default     = null
+  nullable    = true
+
+  validation {
+    condition = (
+      var.controller_tailscale_auth_key_secret_arn == null ||
+      can(regex("^arn:[A-Za-z0-9-]+:secretsmanager:[a-z0-9-]+:[0-9]{12}:secret:[A-Za-z0-9/_+=.@-]+$", var.controller_tailscale_auth_key_secret_arn))
+    )
+    error_message = "controller_tailscale_auth_key_secret_arn must be a full AWS Secrets Manager ARN."
+  }
+
+  validation {
+    condition = (
+      var.controller_mode != "ec2" ||
+      var.controller_tailscale_auth_key_secret_arn != null
+    )
+    error_message = "controller_tailscale_auth_key_secret_arn is required when controller_mode is ec2; the tailnet is the controller's entry point."
+  }
+}
+
+variable "controller_tailnet_domain" {
+  description = "MagicDNS domain of the tailnet the controller joins, such as example-tailnet.ts.net. With the hostname it forms the stable controller URL."
+  type        = string
+  default     = null
+  nullable    = true
+
+  validation {
+    condition = (
+      var.controller_tailnet_domain == null ||
+      can(regex("^[a-z0-9]([a-z0-9-]*[a-z0-9])?([.][a-z0-9]([a-z0-9-]*[a-z0-9])?)+$", var.controller_tailnet_domain))
+    )
+    error_message = "controller_tailnet_domain must be a lowercase DNS name such as example-tailnet.ts.net."
+  }
+
+  validation {
+    condition     = var.controller_mode != "ec2" || var.controller_tailnet_domain != null
+    error_message = "controller_tailnet_domain is required when controller_mode is ec2."
+  }
+}
+
+variable "controller_tailscale_hostname" {
+  description = "MagicDNS hostname for the permanent controller. This is the stable name clients and workers use."
+  type        = string
+  default     = "t3-controller"
+
+  validation {
+    condition     = can(regex("^[a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?$", var.controller_tailscale_hostname))
+    error_message = "controller_tailscale_hostname must be a lowercase DNS label."
+  }
+}
+
+variable "controller_runtime_environment" {
+  description = "Extra T3CODE_* settings passed to the controller container. Secret values belong in Secrets Manager and are referenced by name, never set here."
+  type        = map(string)
+  default     = {}
+
+  validation {
+    condition     = alltrue([for name in keys(var.controller_runtime_environment) : can(regex("^T3CODE_[A-Z0-9_]+$", name))])
+    error_message = "controller_runtime_environment keys must look like T3CODE_EXAMPLE_NAME."
+  }
+
+  validation {
+    condition = alltrue([
+      for name in keys(var.controller_runtime_environment) :
+      !can(regex("(TOKEN|SECRET|PASSWORD|_KEY)$", name)) || can(regex("_SECRET_REF$", name))
+    ])
+    error_message = "Pass credentials as Secrets Manager references (a T3CODE_*_SECRET_REF name), not as controller_runtime_environment values."
+  }
+}
+
 variable "allow_retained_data_destroy" {
   description = "Allow OpenTofu to delete retained controller data and artifact objects. Set only for an isolated sandbox teardown."
   type        = bool
