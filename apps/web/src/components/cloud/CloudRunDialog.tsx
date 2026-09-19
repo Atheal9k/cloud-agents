@@ -9,6 +9,7 @@ import {
   type CloudEnvironmentBase,
   type CloudEnvironmentBuild,
   CloudEnvironmentBuildId,
+  CloudAgentId,
   type CloudEnvironmentVersion,
   ProviderDriverKind,
   type RunAllocation,
@@ -137,6 +138,7 @@ function CloudRunRow(props: {
   readonly busy: boolean;
   readonly onCancel: (allocation: RunAllocation) => void;
   readonly onOpen: (allocation: RunAllocation) => void;
+  readonly onReview: (allocation: RunAllocation) => void;
 }) {
   const displayState = cloudRunDisplayState(props.allocation);
   const error = failureMessage(props.allocation);
@@ -174,6 +176,9 @@ function CloudRunRow(props: {
           ) : null}
         </div>
         <div className="flex shrink-0 gap-1.5">
+          <Button size="sm" variant="outline" onClick={() => props.onReview(props.allocation)}>
+            Review
+          </Button>
           {canOpen ? (
             <Button size="sm" variant="outline" onClick={() => props.onOpen(props.allocation)}>
               <ExternalLinkIcon className="size-3.5" />
@@ -612,6 +617,15 @@ function CloudRunDialogForEnvironment(props: {
     }
   };
 
+  const openReview = (allocation: RunAllocation) => {
+    const agentId = allocation.control?.agentId ?? CloudAgentId.make(`agent:${allocation.id}`);
+    setOpen(false);
+    void navigate({
+      to: "/cloud-agents/$agentId",
+      params: { agentId },
+    });
+  };
+
   const openRun = async (allocation: RunAllocation) => {
     const registration = cloudWorkerConnectionRegistration(allocation);
     if (registration === null || allocation.allocationState.status !== "ready") return;
@@ -876,6 +890,7 @@ function CloudRunDialogForEnvironment(props: {
                     busy={busyAllocationId === allocation.id}
                     onCancel={(candidate) => void cancel(candidate)}
                     onOpen={(candidate) => void openRun(candidate)}
+                    onReview={openReview}
                   />
                 ))}
               </section>

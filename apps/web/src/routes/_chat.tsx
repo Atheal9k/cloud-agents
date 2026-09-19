@@ -1,4 +1,4 @@
-import { Outlet, createFileRoute, redirect, useParams } from "@tanstack/react-router";
+import { Outlet, createFileRoute, redirect, useNavigate, useParams } from "@tanstack/react-router";
 import { useAtomValue } from "@effect/atom-react";
 import { useEffect, useMemo } from "react";
 
@@ -26,6 +26,7 @@ import { stackedThreadToast, toastManager } from "~/components/ui/toast";
 import { primaryServerKeybindingsAtom } from "~/state/server";
 
 function ChatRouteGlobalShortcuts() {
+  const navigate = useNavigate();
   const clearSelection = useThreadSelectionStore((state) => state.clearSelection);
   const selectedThreadKeysSize = useThreadSelectionStore((state) => state.selectedThreadKeys.size);
   const { activeDraftThread, activeThread, defaultProjectRef, handleNewThread, routeThreadRef } =
@@ -118,6 +119,13 @@ function ChatRouteGlobalShortcuts() {
         return;
       }
 
+      if (command === "cloud.reviewAgents") {
+        event.preventDefault();
+        event.stopPropagation();
+        void navigate({ to: "/cloud-agents" });
+        return;
+      }
+
       if (command === "preview.toggle") {
         event.preventDefault();
         event.stopPropagation();
@@ -172,6 +180,7 @@ function ChatRouteGlobalShortcuts() {
     clearSelection,
     handleNewThread,
     keybindings,
+    navigate,
     defaultProjectRef,
     previewOpen,
     projectGroupCount,

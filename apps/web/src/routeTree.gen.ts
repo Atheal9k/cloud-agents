@@ -30,7 +30,9 @@ import { Route as SettingsArchivedRouteImport } from './routes/settings.archived
 import { Route as SettingsAppearanceRouteImport } from './routes/settings.appearance'
 import { Route as ProjectsProjectKeyRouteImport } from './routes/projects.$projectKey'
 import { Route as ChatPullRequestsRouteImport } from './routes/_chat.pull-requests'
+import { Route as ChatCloudAgentsIndexRouteImport } from './routes/_chat.cloud-agents.index'
 import { Route as ChatDraftDraftIdRouteImport } from './routes/_chat.draft.$draftId'
+import { Route as ChatCloudAgentsAgentIdRouteImport } from './routes/_chat.cloud-agents.$agentId'
 import { Route as ChatEnvironmentIdThreadIdRouteImport } from './routes/_chat.$environmentId.$threadId'
 
 const WelcomeRoute = WelcomeRouteImport.update({
@@ -138,9 +140,19 @@ const ChatPullRequestsRoute = ChatPullRequestsRouteImport.update({
   path: '/pull-requests',
   getParentRoute: () => ChatRoute,
 } as any)
+const ChatCloudAgentsIndexRoute = ChatCloudAgentsIndexRouteImport.update({
+  id: '/cloud-agents/',
+  path: '/cloud-agents/',
+  getParentRoute: () => ChatRoute,
+} as any)
 const ChatDraftDraftIdRoute = ChatDraftDraftIdRouteImport.update({
   id: '/draft/$draftId',
   path: '/draft/$draftId',
+  getParentRoute: () => ChatRoute,
+} as any)
+const ChatCloudAgentsAgentIdRoute = ChatCloudAgentsAgentIdRouteImport.update({
+  id: '/cloud-agents/$agentId',
+  path: '/cloud-agents/$agentId',
   getParentRoute: () => ChatRoute,
 } as any)
 const ChatEnvironmentIdThreadIdRoute =
@@ -172,7 +184,9 @@ export interface FileRoutesByFullPath {
   '/settings/snap-shot': typeof SettingsSnapShotRoute
   '/settings/source-control': typeof SettingsSourceControlRoute
   '/$environmentId/$threadId': typeof ChatEnvironmentIdThreadIdRoute
+  '/cloud-agents/$agentId': typeof ChatCloudAgentsAgentIdRoute
   '/draft/$draftId': typeof ChatDraftDraftIdRoute
+  '/cloud-agents/': typeof ChatCloudAgentsIndexRoute
 }
 export interface FileRoutesByTo {
   '/connect': typeof ConnectRoute
@@ -196,7 +210,9 @@ export interface FileRoutesByTo {
   '/settings/source-control': typeof SettingsSourceControlRoute
   '/': typeof ChatIndexRoute
   '/$environmentId/$threadId': typeof ChatEnvironmentIdThreadIdRoute
+  '/cloud-agents/$agentId': typeof ChatCloudAgentsAgentIdRoute
   '/draft/$draftId': typeof ChatDraftDraftIdRoute
+  '/cloud-agents': typeof ChatCloudAgentsIndexRoute
 }
 export interface FileRoutesById {
   __root__: typeof rootRouteImport
@@ -222,7 +238,9 @@ export interface FileRoutesById {
   '/settings/source-control': typeof SettingsSourceControlRoute
   '/_chat/': typeof ChatIndexRoute
   '/_chat/$environmentId/$threadId': typeof ChatEnvironmentIdThreadIdRoute
+  '/_chat/cloud-agents/$agentId': typeof ChatCloudAgentsAgentIdRoute
   '/_chat/draft/$draftId': typeof ChatDraftDraftIdRoute
+  '/_chat/cloud-agents/': typeof ChatCloudAgentsIndexRoute
 }
 export interface FileRouteTypes {
   fileRoutesByFullPath: FileRoutesByFullPath
@@ -248,7 +266,9 @@ export interface FileRouteTypes {
     | '/settings/snap-shot'
     | '/settings/source-control'
     | '/$environmentId/$threadId'
+    | '/cloud-agents/$agentId'
     | '/draft/$draftId'
+    | '/cloud-agents/'
   fileRoutesByTo: FileRoutesByTo
   to:
     | '/connect'
@@ -272,7 +292,9 @@ export interface FileRouteTypes {
     | '/settings/source-control'
     | '/'
     | '/$environmentId/$threadId'
+    | '/cloud-agents/$agentId'
     | '/draft/$draftId'
+    | '/cloud-agents'
   id:
     | '__root__'
     | '/_chat'
@@ -297,7 +319,9 @@ export interface FileRouteTypes {
     | '/settings/source-control'
     | '/_chat/'
     | '/_chat/$environmentId/$threadId'
+    | '/_chat/cloud-agents/$agentId'
     | '/_chat/draft/$draftId'
+    | '/_chat/cloud-agents/'
   fileRoutesById: FileRoutesById
 }
 export interface RootRouteChildren {
@@ -459,11 +483,25 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof ChatPullRequestsRouteImport
       parentRoute: typeof ChatRoute
     }
+    '/_chat/cloud-agents/': {
+      id: '/_chat/cloud-agents/'
+      path: '/cloud-agents'
+      fullPath: '/cloud-agents/'
+      preLoaderRoute: typeof ChatCloudAgentsIndexRouteImport
+      parentRoute: typeof ChatRoute
+    }
     '/_chat/draft/$draftId': {
       id: '/_chat/draft/$draftId'
       path: '/draft/$draftId'
       fullPath: '/draft/$draftId'
       preLoaderRoute: typeof ChatDraftDraftIdRouteImport
+      parentRoute: typeof ChatRoute
+    }
+    '/_chat/cloud-agents/$agentId': {
+      id: '/_chat/cloud-agents/$agentId'
+      path: '/cloud-agents/$agentId'
+      fullPath: '/cloud-agents/$agentId'
+      preLoaderRoute: typeof ChatCloudAgentsAgentIdRouteImport
       parentRoute: typeof ChatRoute
     }
     '/_chat/$environmentId/$threadId': {
@@ -480,14 +518,18 @@ interface ChatRouteChildren {
   ChatPullRequestsRoute: typeof ChatPullRequestsRoute
   ChatIndexRoute: typeof ChatIndexRoute
   ChatEnvironmentIdThreadIdRoute: typeof ChatEnvironmentIdThreadIdRoute
+  ChatCloudAgentsAgentIdRoute: typeof ChatCloudAgentsAgentIdRoute
   ChatDraftDraftIdRoute: typeof ChatDraftDraftIdRoute
+  ChatCloudAgentsIndexRoute: typeof ChatCloudAgentsIndexRoute
 }
 
 const ChatRouteChildren: ChatRouteChildren = {
   ChatPullRequestsRoute: ChatPullRequestsRoute,
   ChatIndexRoute: ChatIndexRoute,
   ChatEnvironmentIdThreadIdRoute: ChatEnvironmentIdThreadIdRoute,
+  ChatCloudAgentsAgentIdRoute: ChatCloudAgentsAgentIdRoute,
   ChatDraftDraftIdRoute: ChatDraftDraftIdRoute,
+  ChatCloudAgentsIndexRoute: ChatCloudAgentsIndexRoute,
 }
 
 const ChatRouteWithChildren = ChatRoute._addFileChildren(ChatRouteChildren)

@@ -707,6 +707,8 @@ Acceptance criteria:
 
 ### CA-21: Integrate retained results into the full review UI
 
+Status: Done on 19 September 2026 in [PR #35](https://github.com/Atheal9k/cloud-agents/pull/35).
+
 Dependencies: CA-14, CA-16, CA-19, CA-24, CA-40, CA-43, CA-46, CA-48.
 
 Description: Make the durable agent page useful while its runtime is absent.

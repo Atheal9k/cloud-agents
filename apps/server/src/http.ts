@@ -2,7 +2,10 @@ import Mime from "@effect/platform-node/Mime";
 import {
   AuthOrchestrationOperateScope,
   AuthOrchestrationReadScope,
+  CloudAgentId,
   CloudRunResultId,
+  CLOUD_AGENT_REVIEW_PAGE_PREFIX,
+  CLOUD_AGENT_REVIEW_SHARE_PREFIX,
   type CloudResultRetentionStatus,
   EnvironmentHttpApi,
 } from "@t3tools/contracts";
@@ -42,6 +45,8 @@ import * as BrowserTraceCollector from "./observability/BrowserTraceCollector.ts
 import * as EnvironmentAuth from "./auth/EnvironmentAuth.ts";
 import { traceRelayRequest } from "./cloud/traceRelayRequest.ts";
 import * as CloudArtifactAccess from "./cloud/CloudArtifactAccess.ts";
+import * as CloudAgentReview from "./cloud/CloudAgentReview.ts";
+import { renderCloudAgentReviewPage } from "./cloud/cloudAgentReviewPage.ts";
 import * as CloudRunResults from "./cloud/CloudRunResults.ts";
 import {
   annotateEnvironmentRequest,
@@ -66,6 +71,8 @@ const CLOUD_ARTIFACT_ACCESS_PREFIX = CloudArtifactAccess.CLOUD_ARTIFACT_ACCESS_P
 const CLOUD_ARTIFACT_TOKEN_PATTERN = /^[A-Za-z0-9_-]{43}$/;
 const CLOUD_RESULT_INLINE_TEXT_LIMIT = 512 * 1024;
 const decodeCloudResultId = Schema.decodeUnknownOption(CloudRunResultId);
+const decodeCloudAgentId = Schema.decodeUnknownOption(CloudAgentId);
+const CLOUD_REVIEW_TOKEN_PATTERN = /^[A-Za-z0-9_-]{43}$/;
 
 // Types a browser may render as a document if a proxy strips the disposition
 // header. Downloads of these fall back to octet-stream.
@@ -459,10 +466,71 @@ const handleCloudResultDownload = Effect.gen(function* () {
   }),
 );
 
+function cloudAgentReviewResponse(review: Parameters<typeof renderCloudAgentReviewPage>[0]) {
+  return HttpServerResponse.text(renderCloudAgentReviewPage(review), {
+    contentType: "text/html; charset=utf-8",
+    headers: {
+      "cache-control": "private, no-store",
+      "content-security-policy": "default-src 'none'; style-src 'none'; base-uri 'none'",
+      "x-content-type-options": "nosniff",
+    },
+  });
+}
+
+function parseCloudAgentReviewPageId(pathname: string): CloudAgentId | undefined {
+  const suffix = pathname.slice(CLOUD_AGENT_REVIEW_PAGE_PREFIX.length);
+  if (suffix.includes("/")) return undefined;
+  return Option.getOrUndefined(decodeCloudAgentId(decodeURIComponent(suffix)));
+}
+
+const handleCloudAgentReviewPage = Effect.gen(function* () {
+  yield* authenticateRawRouteWithScope(AuthOrchestrationReadScope);
+  const request = yield* HttpServerRequest.HttpServerRequest;
+  const url = HttpServerRequest.toURL(request);
+  if (Option.isNone(url)) return HttpServerResponse.text("Bad Request", { status: 400 });
+  const agentId = parseCloudAgentReviewPageId(url.value.pathname);
+  if (agentId === undefined) return HttpServerResponse.text("Not Found", { status: 404 });
+  const reviews = yield* CloudAgentReview.CloudAgentReviewService;
+  const review = yield* reviews.inspect({ agentId }).pipe(Effect.option);
+  if (Option.isNone(review)) return HttpServerResponse.text("Not Found", { status: 404 });
+  return cloudAgentReviewResponse(review.value);
+}).pipe(
+  Effect.catchTags({
+    EnvironmentAuthInvalidError: HttpServerRespondable.toResponse,
+    EnvironmentInternalError: HttpServerRespondable.toResponse,
+    EnvironmentScopeRequiredError: HttpServerRespondable.toResponse,
+  }),
+);
+
+function parseCloudAgentReviewShareToken(pathname: string): string | undefined {
+  const suffix = pathname.slice(CLOUD_AGENT_REVIEW_SHARE_PREFIX.length);
+  if (suffix.includes("/") || !CLOUD_REVIEW_TOKEN_PATTERN.test(suffix)) return undefined;
+  return suffix;
+}
+
+const handleCloudAgentReviewSharePage = Effect.gen(function* () {
+  const request = yield* HttpServerRequest.HttpServerRequest;
+  const url = HttpServerRequest.toURL(request);
+  if (Option.isNone(url)) return HttpServerResponse.text("Bad Request", { status: 400 });
+  const token = parseCloudAgentReviewShareToken(url.value.pathname);
+  if (token === undefined) return HttpServerResponse.text("Not Found", { status: 404 });
+  const reviews = yield* CloudAgentReview.CloudAgentReviewService;
+  const agentId = yield* reviews.resolveShare(token);
+  if (agentId === null) return HttpServerResponse.text("Not Found", { status: 404 });
+  const review = yield* reviews.inspect({ agentId }).pipe(Effect.option);
+  if (Option.isNone(review)) return HttpServerResponse.text("Not Found", { status: 404 });
+  return cloudAgentReviewResponse(review.value);
+});
+
 export const cloudResultRouteLayer = Layer.mergeAll(
   HttpRouter.add("GET", `${CLOUD_RESULT_PAGE_PREFIX}*`, handleCloudResultPage),
   HttpRouter.add("GET", `${CLOUD_RESULT_DOWNLOAD_PREFIX}*`, handleCloudResultDownload),
   HttpRouter.add("GET", `${CLOUD_ARTIFACT_ACCESS_PREFIX}*`, handleCloudArtifactDownload),
+);
+
+export const cloudAgentReviewRouteLayer = Layer.mergeAll(
+  HttpRouter.add("GET", `${CLOUD_AGENT_REVIEW_PAGE_PREFIX}*`, handleCloudAgentReviewPage),
+  HttpRouter.add("GET", `${CLOUD_AGENT_REVIEW_SHARE_PREFIX}*`, handleCloudAgentReviewSharePage),
 );
 
 export const serverEnvironmentHttpApiLayer = HttpApiBuilder.group(

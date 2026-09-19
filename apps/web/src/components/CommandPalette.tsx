@@ -1677,6 +1677,18 @@ function OpenCommandPaletteDialog(props: {
         openCloudLaunchDialog();
       },
     });
+    actionItems.push({
+      kind: "action",
+      value: "action:review-cloud-agents",
+      searchTerms: ["cloud", "review", "retained", "archive", "agent"],
+      title: "Review cloud agents",
+      description: "Inspect transcripts, diffs, artifacts, and PRs without waking compute",
+      icon: <CloudIcon className={ITEM_ICON_CLASS} />,
+      shortcutCommand: "cloud.reviewAgents",
+      run: async () => {
+        await navigate({ to: "/cloud-agents" });
+      },
+    });
   }
 
   if (projects.length > 0) {
