@@ -7,6 +7,7 @@ import {
 import { describe, expect, it } from "vite-plus/test";
 import {
   buildCloudRunLaunchCommand,
+  cloudEnvSetupLaunchDraft,
   cloudRunDisplayState,
   cloudRunProjectOptions,
   controllerSummary,
@@ -180,6 +181,21 @@ describe("cloud run launch", () => {
         [],
       ).runMinutes,
     ).toBe("120");
+  });
+
+  it("starts the env-setup skill from every launcher with the same user request", () => {
+    const setup = cloudEnvSetupLaunchDraft(draft);
+    const result = buildCloudRunLaunchCommand({
+      draft: setup,
+      limits,
+      now: new Date("2026-09-17T10:00:00.000Z"),
+      requestId: "request-setup",
+    });
+
+    expect(setup.task).toContain("env-setup");
+    expect(result.status).toBe("valid");
+    if (result.status !== "valid" || result.command.type !== "allocation.launch") return;
+    expect(result.command.execution.turn.prompt).toBe(setup.task);
   });
 
   it("promises a permanent controller outlives this computer, and a local one does not", () => {

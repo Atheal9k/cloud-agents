@@ -86,6 +86,7 @@ export const STATIC_KEYBINDING_COMMANDS = [
   "chat.new",
   "chat.newLocal",
   "chat.newCloud",
+  "cloud.setupEnvironment",
   "cloud.reviewAgents",
   "cloud.handoff",
   "editor.openFavorite",

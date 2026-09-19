@@ -1679,6 +1679,27 @@ function OpenCommandPaletteDialog(props: {
     });
     actionItems.push({
       kind: "action",
+      value: "action:setup-cloud-environment",
+      searchTerms: [
+        "environment",
+        "setup",
+        "env-setup",
+        "cloud",
+        "build",
+        "snapshot",
+        "install",
+        "repository",
+      ],
+      title: "Set up cloud environment",
+      description: "Start the repository-owned env-setup skill, not a dashboard form",
+      icon: <CloudIcon className={ITEM_ICON_CLASS} />,
+      shortcutCommand: "cloud.setupEnvironment",
+      run: async () => {
+        openCloudLaunchDialog({ kind: "env-setup" });
+      },
+    });
+    actionItems.push({
+      kind: "action",
       value: "action:review-cloud-agents",
       searchTerms: ["cloud", "review", "retained", "archive", "agent"],
       title: "Review cloud agents",

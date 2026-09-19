@@ -78,6 +78,7 @@ import * as CloudWarmPoolCatalog from "./CloudWarmPoolCatalog.ts";
 import { evaluateCloudScmAccess } from "./cloudSecurityPolicy.ts";
 import { planWarmPoolCapacity, warmPoolInventories } from "./cloudWarmPoolPolicy.ts";
 import * as ControllerSettings from "./controllerSettings.ts";
+import { attachCloudEnvSetupTurn } from "./cloudEnvSetupSkill.ts";
 import {
   decideRunAllocationCommand,
   projectRunAllocationEvent,
@@ -888,9 +889,34 @@ export const make = Effect.fn("CloudAllocationController.make")(function* (input
                 }
                 return cloudEnvironmentBuildReference(activeBuild);
               });
+        const launchCommand =
+          command.type === "allocation.launch"
+            ? {
+                ...command,
+                execution: {
+                  ...command.execution,
+                  turn: {
+                    ...command.execution.turn,
+                    prompt: attachCloudEnvSetupTurn({
+                      prompt: command.execution.turn.prompt,
+                      environmentInfo:
+                        resolved === null
+                          ? {}
+                          : {
+                              environmentId: resolved.version.environmentId,
+                              environmentJsonPath:
+                                resolved.version.source.type === "repository"
+                                  ? resolved.version.source.path
+                                  : null,
+                            },
+                    }).prompt,
+                  },
+                },
+              }
+            : command;
         const events = decideRunAllocationCommand(
           current,
-          command,
+          launchCommand,
           resolved === null ? undefined : resolved.reference,
           pinnedBuild,
         );

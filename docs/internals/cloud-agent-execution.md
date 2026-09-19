@@ -337,7 +337,11 @@ set that is never wider than the parent, and emit usage on the run.
 
 The built-in diagnostics MCP is always admitted. T3 names are canonical; the
 `cursor-cloud-` prefixes are aliases with the same arguments so the env-setup
-skill can call either.
+skill can call either. First-time create and later environment edits run that
+repository-owned skill (`.agents/skills/env-setup`), not a dashboard form or a
+copied prompt. Settings, the command palette, and `cloud.setupEnvironment`
+open the same launch path. `environment-info` then selects the create,
+repository-managed, DB-managed, or migrate reference.
 
 ## Preview leases and reopen
 
