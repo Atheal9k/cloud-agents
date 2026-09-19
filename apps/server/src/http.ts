@@ -41,6 +41,7 @@ import {
 import * as BrowserTraceCollector from "./observability/BrowserTraceCollector.ts";
 import * as EnvironmentAuth from "./auth/EnvironmentAuth.ts";
 import { traceRelayRequest } from "./cloud/traceRelayRequest.ts";
+import * as CloudArtifactAccess from "./cloud/CloudArtifactAccess.ts";
 import * as CloudRunResults from "./cloud/CloudRunResults.ts";
 import {
   annotateEnvironmentRequest,
@@ -61,6 +62,8 @@ const SVG_CONTENT_SECURITY_POLICY = "default-src 'none'; style-src 'unsafe-inlin
 const HTML_CONTENT_SECURITY_POLICY = "sandbox allow-scripts allow-forms allow-popups allow-modals";
 const CLOUD_RESULT_PAGE_PREFIX = "/cloud/results/";
 const CLOUD_RESULT_DOWNLOAD_PREFIX = "/api/cloud/results/";
+const CLOUD_ARTIFACT_ACCESS_PREFIX = CloudArtifactAccess.CLOUD_ARTIFACT_ACCESS_PREFIX;
+const CLOUD_ARTIFACT_TOKEN_PATTERN = /^[A-Za-z0-9_-]{43}$/;
 const CLOUD_RESULT_INLINE_TEXT_LIMIT = 512 * 1024;
 const decodeCloudResultId = Schema.decodeUnknownOption(CloudRunResultId);
 
@@ -390,6 +393,42 @@ const handleCloudResultPage = Effect.gen(function* () {
   }),
 );
 
+function parseCloudArtifactDownload(pathname: string) {
+  const suffix = pathname.slice(CLOUD_ARTIFACT_ACCESS_PREFIX.length);
+  const [token, fileId, ...rest] = suffix.split("/");
+  if (!token || !fileId || rest.length > 0) return undefined;
+  if (!CLOUD_ARTIFACT_TOKEN_PATTERN.test(token) || !/^[a-z0-9-]+$/.test(fileId)) return undefined;
+  return { token, fileId };
+}
+
+// Downloads authorized by a short-lived grant token instead of an environment
+// session. The token is the bearer credential, so a granted URL can be embedded
+// or attached without exposing session scopes; it stops resolving when the grant
+// expires.
+const handleCloudArtifactDownload = Effect.gen(function* () {
+  const request = yield* HttpServerRequest.HttpServerRequest;
+  const url = HttpServerRequest.toURL(request);
+  if (Option.isNone(url)) return HttpServerResponse.text("Bad Request", { status: 400 });
+  const target = parseCloudArtifactDownload(url.value.pathname);
+  if (target === undefined) return HttpServerResponse.text("Not Found", { status: 404 });
+  const access = yield* CloudArtifactAccess.CloudArtifactAccess;
+  const resultId = yield* access.resolve(target.token);
+  if (resultId === null) return HttpServerResponse.text("Not Found", { status: 404 });
+  const results = yield* CloudRunResults.CloudRunResults;
+  const download = yield* results.resolveDownload(resultId, target.fileId).pipe(Effect.option);
+  if (Option.isNone(download)) return HttpServerResponse.text("Not Found", { status: 404 });
+  return yield* HttpServerResponse.file(download.value.path, {
+    headers: {
+      ...assetResponseHeaders(download.value.path, {
+        download: true,
+        fileName: download.value.fileName,
+        mimeType: download.value.mediaType,
+      }),
+      "Cache-Control": "private, no-store",
+    },
+  }).pipe(Effect.orElseSucceed(() => HttpServerResponse.text("Not Found", { status: 404 })));
+});
+
 const handleCloudResultDownload = Effect.gen(function* () {
   yield* authenticateRawRouteWithScope(AuthOrchestrationReadScope);
   const request = yield* HttpServerRequest.HttpServerRequest;
@@ -423,6 +462,7 @@ const handleCloudResultDownload = Effect.gen(function* () {
 export const cloudResultRouteLayer = Layer.mergeAll(
   HttpRouter.add("GET", `${CLOUD_RESULT_PAGE_PREFIX}*`, handleCloudResultPage),
   HttpRouter.add("GET", `${CLOUD_RESULT_DOWNLOAD_PREFIX}*`, handleCloudResultDownload),
+  HttpRouter.add("GET", `${CLOUD_ARTIFACT_ACCESS_PREFIX}*`, handleCloudArtifactDownload),
 );
 
 export const serverEnvironmentHttpApiLayer = HttpApiBuilder.group(

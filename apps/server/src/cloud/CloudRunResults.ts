@@ -423,6 +423,7 @@ export const make = Effect.fn("CloudRunResults.make")(function* (input: CloudRun
       artifacts.push({
         id,
         name: artifact.name,
+        relativePath: artifact.relativePath,
         ...(artifact.mediaType === undefined ? {} : { mediaType: artifact.mediaType }),
         sizeBytes,
         sha256: NodeCrypto.createHash("sha256").update(bytes).digest("hex"),

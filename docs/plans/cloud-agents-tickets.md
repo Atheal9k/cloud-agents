@@ -996,6 +996,9 @@ Acceptance criteria:
 
 ### CA-48: Serve artifacts, computer use, and remote desktop
 
+Status: Done on 19 September 2026 in
+[PR #29](https://github.com/Atheal9k/cloud-agents/pull/29).
+
 Dependencies: CA-34, CA-35, CA-40.
 
 Description: Complete Cursor's verification loop while retaining T3's direct

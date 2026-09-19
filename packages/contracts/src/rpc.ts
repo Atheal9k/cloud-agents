@@ -279,6 +279,11 @@ import {
   RunAllocationCommand,
 } from "./cloudAllocation.ts";
 import {
+  CloudArtifactAccessGrant,
+  CloudArtifactAccessInput,
+  CloudResultError,
+} from "./cloudResults.ts";
+import {
   CloudEnvironment,
   CloudEnvironmentError,
   CloudEnvironmentResolution,
@@ -415,6 +420,7 @@ export const WS_METHODS = {
   cloudEnvironmentSave: "cloud.environments.save",
   cloudEnvironmentRestore: "cloud.environments.restore",
   cloudEnvironmentResolve: "cloud.environments.resolve",
+  cloudArtifactsGrant: "cloud.artifacts.grant",
   sharedBrowserIssue: "sharedBrowser.issue",
   sharedBrowserKeepAlive: "sharedBrowser.keepAlive",
   sharedBrowserTakeControl: "sharedBrowser.takeControl",
@@ -742,6 +748,12 @@ const WsCloudEnvironmentResolveRpc = Rpc.make(WS_METHODS.cloudEnvironmentResolve
     CloudEnvironmentError,
     EnvironmentAuthorizationError,
   ]),
+});
+
+const WsCloudArtifactsGrantRpc = Rpc.make(WS_METHODS.cloudArtifactsGrant, {
+  payload: CloudArtifactAccessInput,
+  success: CloudArtifactAccessGrant,
+  error: Schema.Union([CloudResultError, EnvironmentAuthorizationError]),
 });
 
 const WsSharedBrowserIssueRpc = Rpc.make(WS_METHODS.sharedBrowserIssue, {
@@ -1529,6 +1541,7 @@ export const WsRpcGroup = RpcGroup.make(
   WsCloudEnvironmentSaveRpc,
   WsCloudEnvironmentRestoreRpc,
   WsCloudEnvironmentResolveRpc,
+  WsCloudArtifactsGrantRpc,
   WsSharedBrowserIssueRpc,
   WsSharedBrowserKeepAliveRpc,
   WsSharedBrowserTakeControlRpc,

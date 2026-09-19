@@ -71,6 +71,7 @@ export const RPC_REQUIRED_SCOPES = {
   [WS_METHODS.cloudEnvironmentSave]: AuthOrchestrationOperateScope,
   [WS_METHODS.cloudEnvironmentRestore]: AuthOrchestrationOperateScope,
   [WS_METHODS.cloudEnvironmentResolve]: AuthOrchestrationReadScope,
+  [WS_METHODS.cloudArtifactsGrant]: AuthOrchestrationReadScope,
   [WS_METHODS.sharedBrowserIssue]: AuthOrchestrationReadScope,
   [WS_METHODS.sharedBrowserKeepAlive]: AuthOrchestrationReadScope,
   [WS_METHODS.sharedBrowserTakeControl]: AuthOrchestrationOperateScope,

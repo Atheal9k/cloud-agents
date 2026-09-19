@@ -1,4 +1,5 @@
 import {
+  type CloudArtifactAccessInput,
   type CloudEnvironmentResolutionInput,
   type CloudEnvironmentRestoreInput,
   type CloudEnvironmentSaveInput,
@@ -64,6 +65,23 @@ export function createCloudAllocationAtoms<R, E>(
     execute: (input: CloudEnvironmentResolutionInput) =>
       request(WS_METHODS.cloudEnvironmentResolve, input),
   });
+  const grantArtifactAccess = createEnvironmentRpcCommand(runtime, {
+    label: "environment-data:cloud-allocations:grant-artifact-access",
+    tag: WS_METHODS.cloudArtifactsGrant,
+    scheduler,
+    concurrency: {
+      mode: "singleFlight",
+      key: ({ environmentId, input }) => `${environmentId}:${input.resultId}`,
+    },
+    execute: (input: CloudArtifactAccessInput) => request(WS_METHODS.cloudArtifactsGrant, input),
+  });
 
-  return { snapshot, dispatch, saveEnvironment, restoreEnvironment, resolveEnvironment };
+  return {
+    snapshot,
+    dispatch,
+    saveEnvironment,
+    restoreEnvironment,
+    resolveEnvironment,
+    grantArtifactAccess,
+  };
 }
