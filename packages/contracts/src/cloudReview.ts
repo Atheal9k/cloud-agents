@@ -19,6 +19,12 @@ import {
   RunPreviewState,
 } from "./cloudAllocation.ts";
 import { CloudEnvironment, CloudEnvironmentVersionReference } from "./cloudEnvironment.ts";
+import {
+  CloudRuntimeReopen,
+  CloudSessionEdits,
+  CloudSessionLeaseKind,
+  CloudSessionLeases,
+} from "./cloudPreview.ts";
 import { CloudEnvironmentBuild } from "./cloudEnvironmentBuild.ts";
 import { CloudRunPublicationOutcome } from "./cloudPublication.ts";
 import { CloudArtifactEntry } from "./cloudResults.ts";
@@ -31,7 +37,10 @@ export const CloudAgentReviewAction = Schema.Literals([
   "archive",
   "unarchive",
   "cancel",
-  "wake",
+  /** Restores the snapshot and runs environment `start`. It submits no turn. */
+  "reopen",
+  /** Ends every session on the guest, snapshots it, and releases it. */
+  "stop",
   "delete",
   "delete-pr",
 ]);
@@ -49,6 +58,19 @@ export const CloudAgentReviewActInput = Schema.Struct({
   occurredAt: IsoDateTime,
 });
 export type CloudAgentReviewActInput = typeof CloudAgentReviewActInput.Type;
+
+/** Opening takes a bounded lease; a heartbeat buys another term up to its cap. */
+export const CloudAgentReviewLeaseOperation = Schema.Literals(["open", "heartbeat", "release"]);
+export type CloudAgentReviewLeaseOperation = typeof CloudAgentReviewLeaseOperation.Type;
+
+export const CloudAgentReviewLeaseInput = Schema.Struct({
+  agentId: CloudAgentId,
+  kind: CloudSessionLeaseKind,
+  operation: CloudAgentReviewLeaseOperation,
+  commandId: CommandId,
+  occurredAt: IsoDateTime,
+});
+export type CloudAgentReviewLeaseInput = typeof CloudAgentReviewLeaseInput.Type;
 
 export const CloudAgentReviewShareInput = Schema.Struct({
   agentId: CloudAgentId,
@@ -144,6 +166,12 @@ export const CloudAgentReview = Schema.Struct({
   previewAvailability: CloudSessionAvailability,
   terminalAvailability: CloudSessionAvailability,
   previewState: RunPreviewState,
+  /** What is held open right now, each with its own deadline. */
+  leases: CloudSessionLeases,
+  /** Present once the agent has been reopened for viewing. */
+  reopen: Schema.optionalKey(CloudRuntimeReopen),
+  /** What the person changed by hand during the last reopened session. */
+  sessionEdits: Schema.optionalKey(CloudSessionEdits),
   idleState: RunIdleState,
   usage: Schema.optionalKey(CloudRunUsage),
   environment: Schema.optionalKey(CloudEnvironment),
@@ -179,6 +207,7 @@ export class CloudAgentReviewError extends Schema.TaggedError<CloudAgentReviewEr
       "agent-archived",
       "agent-deleted",
       "snapshot-unavailable",
+      "lease-unavailable",
       "publication-not-found",
       "github-failed",
       "controller-failed",

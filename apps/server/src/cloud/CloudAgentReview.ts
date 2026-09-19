@@ -6,12 +6,12 @@ import {
   CLOUD_REVIEW_DIFF_PREVIEW_CHARS,
   CloudAgentReviewError,
   CloudAllocationControllerError,
-  CloudRunId,
-  MessageId,
+  RunAllocationAttempt,
   type CloudAgentId,
   type CloudAgentReview,
   type CloudAgentReviewActInput,
   type CloudAgentReviewInspectInput,
+  type CloudAgentReviewLeaseInput,
   type CloudAgentReviewShareGrant,
   type CloudAgentReviewShareInput,
   type CloudArtifactAccessGrant,
@@ -32,6 +32,7 @@ import * as CloudArtifactAccess from "./CloudArtifactAccess.ts";
 import * as CloudRunPublication from "./CloudRunPublication.ts";
 import * as CloudRunResults from "./CloudRunResults.ts";
 import { assembleCloudAgentReview } from "./cloudAgentReviewModel.ts";
+import { openedLeaseDeadlines } from "./cloudPreviewLeasePolicy.ts";
 
 const SHARE_TTL_MILLIS = 5 * 60 * 1000;
 const TOKEN_PATTERN = /^[A-Za-z0-9_-]{43}$/;
@@ -44,6 +45,10 @@ export class CloudAgentReviewService extends Context.Service<
     ) => Effect.Effect<CloudAgentReview, CloudAgentReviewError>;
     readonly act: (
       input: CloudAgentReviewActInput,
+    ) => Effect.Effect<CloudAgentReview, CloudAgentReviewError>;
+    /** Opens, renews, or releases one viewing session on the agent's runtime. */
+    readonly lease: (
+      input: CloudAgentReviewLeaseInput,
     ) => Effect.Effect<CloudAgentReview, CloudAgentReviewError>;
     readonly share: (
       input: CloudAgentReviewShareInput,
@@ -257,11 +262,17 @@ export const make = Effect.fn("CloudAgentReview.make")(function* () {
             ),
           );
         break;
-      case "wake": {
+      /**
+       * Reopen restores the snapshot and runs the environment's `start`. It
+       * deliberately does not submit a turn: looking at the app again is not a
+       * reason to spend a provider run, and a synthetic prompt would put a run
+       * the person never asked for into their history.
+       */
+      case "reopen": {
         if (agent.status === "ARCHIVED") {
           return yield* reviewError(
             "agent-archived",
-            `Unarchive cloud agent '${agent.id}' before waking it.`,
+            `Unarchive cloud agent '${agent.id}' before reopening it.`,
           );
         }
         if (agent.status === "ACTIVE") {
@@ -270,50 +281,95 @@ export const make = Effect.fn("CloudAgentReview.make")(function* () {
             `Cloud agent '${agent.id}' already has an active run.`,
           );
         }
-        if (allocation.idleState.status !== "hibernated") {
+        if (
+          allocation.idleState.status !== "hibernated" &&
+          allocation.cleanupState.status !== "succeeded"
+        ) {
           return yield* reviewError(
             "snapshot-unavailable",
             allocation.idleState.status === "idle"
-              ? "The guest is still idle. Follow-up reuses it without a snapshot restore."
-              : "No hibernated snapshot is available. Review does not start compute.",
-          );
-        }
-        const execution = allocation.execution;
-        if (execution === undefined) {
-          return yield* reviewError(
-            "controller-failed",
-            "This agent has no recorded execution to resume after wake.",
+              ? "The guest is still running. Open a preview lease instead of reopening it."
+              : "No hibernated snapshot is available to reopen.",
           );
         }
         yield* allocations
           .dispatch({
-            type: "allocation.follow-up",
+            type: "allocation.reopen",
             commandId: input.commandId,
             allocationId: allocation.id,
             attempt: allocation.attempt,
             occurredAt: input.occurredAt,
-            runId: CloudRunId.make(`run:${allocation.id}:wake:${input.commandId}`),
-            execution: {
-              ...execution,
-              turn: {
-                ...execution.turn,
-                commandId: input.commandId,
-                messageId: MessageId.make(`wake-${input.commandId}`),
-                prompt:
-                  "The owner woke this agent from review. Restore the snapshot and wait; do not start a new coding task.",
-                createdAt: input.occurredAt,
-              },
-            },
+            nextAttempt: RunAllocationAttempt.make(allocation.attempt + 1),
             deadlines: allocation.deadlines,
           })
           .pipe(Effect.mapError(mapControllerError));
         break;
       }
+      case "stop":
+        yield* allocations
+          .dispatch({
+            type: "allocation.session-stop",
+            commandId: input.commandId,
+            allocationId: allocation.id,
+            attempt: allocation.attempt,
+            occurredAt: input.occurredAt,
+          })
+          .pipe(Effect.mapError(mapControllerError));
+        break;
       default: {
         const _never: never = input.action;
         return _never;
       }
     }
+    const next = yield* locate(input.agentId);
+    return yield* loadReview(next.allocation, input.agentId);
+  });
+
+  const lease = Effect.fn("CloudAgentReview.lease")(function* (input: CloudAgentReviewLeaseInput) {
+    const located = yield* locate(input.agentId);
+    const { allocation } = located;
+    const limits = located.snapshot.limits;
+    if (input.operation === "open" && allocation.allocationState.status !== "ready") {
+      return yield* reviewError(
+        "lease-unavailable",
+        "This agent has no running runtime to open a session on. Reopen it first.",
+      );
+    }
+    const command =
+      input.operation === "release"
+        ? ({
+            type: "allocation.session-lease-release",
+            kind: input.kind,
+            reason: "The person closed this session.",
+          } as const)
+        : input.operation === "open"
+          ? ({
+              type: "allocation.session-lease-open",
+              kind: input.kind,
+              ...openedLeaseDeadlines({
+                openedAt: input.occurredAt,
+                leaseSeconds: limits.previewLeaseSeconds,
+                maxLeaseSeconds: limits.previewLeaseMaxSeconds,
+              }),
+            } as const)
+          : ({
+              type: "allocation.session-lease-renew",
+              kind: input.kind,
+              expiresAt: openedLeaseDeadlines({
+                openedAt: input.occurredAt,
+                leaseSeconds: limits.previewLeaseSeconds,
+                maxLeaseSeconds: limits.previewLeaseMaxSeconds,
+              }).expiresAt,
+            } as const);
+    yield* allocations
+      .dispatch({
+        ...command,
+        commandId: input.commandId,
+        allocationId: allocation.id,
+        attempt: allocation.attempt,
+        occurredAt: input.occurredAt,
+      })
+      .pipe(Effect.mapError(mapControllerError));
     const next = yield* locate(input.agentId);
     return yield* loadReview(next.allocation, input.agentId);
   });
@@ -346,7 +402,7 @@ export const make = Effect.fn("CloudAgentReview.make")(function* () {
     return found === undefined || found.expiresAtMillis <= nowMillis ? null : found.agentId;
   });
 
-  return CloudAgentReviewService.of({ inspect, act, share, resolveShare });
+  return CloudAgentReviewService.of({ inspect, act, lease, share, resolveShare });
 });
 
 export const layer = Layer.effect(CloudAgentReviewService, make());

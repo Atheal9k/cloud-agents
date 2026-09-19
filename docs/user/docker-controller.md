@@ -140,10 +140,18 @@ per-thread `RunInstances` path. Instances launched that way are tagged
 The personal controller admits `T3CODE_CLOUD_MAX_CONCURRENT_WORKERS` active guests, default 1 for
 the EC2 fallback. Configure its waiting queue and time limits with
 `T3CODE_CLOUD_MAX_QUEUE_DEPTH`, `T3CODE_CLOUD_MAX_RUN_SECONDS`,
-`T3CODE_CLOUD_MAX_INPUT_WAIT_SECONDS`, `T3CODE_CLOUD_PREVIEW_GRACE_SECONDS`, and
-`T3CODE_CLOUD_IDLE_RELEASE_SECONDS`. The defaults are 8 waiting jobs, a 3-day run, a 15-minute
-unanswered input request, a 15-minute preview grace period, and a 1-hour idle release. Requests
-with a longer run or an unapproved instance type fail before a guest is placed.
+`T3CODE_CLOUD_MAX_INPUT_WAIT_SECONDS`, `T3CODE_CLOUD_PREVIEW_LEASE_SECONDS`,
+`T3CODE_CLOUD_PREVIEW_LEASE_MAX_SECONDS`, and `T3CODE_CLOUD_IDLE_RELEASE_SECONDS`. The defaults
+are 8 waiting jobs, a 3-day run, a 15-minute unanswered input request, a 15-minute preview lease
+that can be renewed for up to 4 hours, and a 1-hour idle release. Requests with a longer run or an
+unapproved instance type fail before a guest is placed.
+
+Watching a preview or a desktop takes a lease on the guest, which keeps it running past the idle
+release for as long as the lease is renewed, and no longer than the renewal ceiling. Stopping a
+session snapshots the guest and releases it straight away instead of waiting out the idle window.
+Reopening an agent restores that snapshot and runs the environment's `start` again; it does not
+start a run, so it costs no provider usage, and anything you change by hand in a reopened preview
+is kept as a checkpoint and a diff rather than pushed to the branch the run published.
 
 An idle agent keeps its stopped disk for 90 days, and every start or resume gives it a fresh 90
 days. After that the disk is released, and the next follow-up starts the agent on a new worker

@@ -1,5 +1,9 @@
 import * as NodeServices from "@effect/platform-node/NodeServices";
-import { CloudRunPublicationInput, RunAllocation } from "@t3tools/contracts";
+import {
+  CloudRunPublicationInput,
+  RunAllocation,
+  emptyCloudSessionLeases,
+} from "@t3tools/contracts";
 import { expect, it } from "@effect/vitest";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
@@ -94,6 +98,8 @@ it.layer(NodeServices.layer)("CloudRunPublication", (it) => {
       allocationState: { status: "queued" },
       agentOutcome: { status: "not-started" },
       previewState: { status: "unavailable" },
+      leases: emptyCloudSessionLeases(),
+      attemptPurpose: "run",
       idleState: { status: "busy" },
       cleanupState: { status: "not-requested" },
       handledCommandIds: [],

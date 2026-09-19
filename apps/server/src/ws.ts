@@ -2797,17 +2797,13 @@ const makeWsRpcLayer = (
             { "rpc.aggregate": "cloud-accounting" },
           ),
         [WS_METHODS.cloudAccountingExport]: (input) =>
-          observeRpcEffect(
-            WS_METHODS.cloudAccountingExport,
-            cloudAllocations.exportUsage(input),
-            { "rpc.aggregate": "cloud-accounting" },
-          ),
+          observeRpcEffect(WS_METHODS.cloudAccountingExport, cloudAllocations.exportUsage(input), {
+            "rpc.aggregate": "cloud-accounting",
+          }),
         [WS_METHODS.cloudAccountingListAudit]: (input) =>
-          observeRpcEffect(
-            WS_METHODS.cloudAccountingListAudit,
-            cloudAllocations.listAudit(input),
-            { "rpc.aggregate": "cloud-accounting" },
-          ),
+          observeRpcEffect(WS_METHODS.cloudAccountingListAudit, cloudAllocations.listAudit(input), {
+            "rpc.aggregate": "cloud-accounting",
+          }),
         [WS_METHODS.cloudReadinessGet]: (_input) =>
           observeRpcEffect(WS_METHODS.cloudReadinessGet, cloudReadiness.report, {
             "rpc.aggregate": "cloud-readiness",
@@ -3643,6 +3639,10 @@ const makeWsRpcLayer = (
           }),
         [WS_METHODS.cloudAgentReviewAct]: (input) =>
           observeRpcEffect(WS_METHODS.cloudAgentReviewAct, cloudAgentReview.act(input), {
+            "rpc.aggregate": "cloud-review",
+          }),
+        [WS_METHODS.cloudAgentReviewLease]: (input) =>
+          observeRpcEffect(WS_METHODS.cloudAgentReviewLease, cloudAgentReview.lease(input), {
             "rpc.aggregate": "cloud-review",
           }),
         [WS_METHODS.cloudAgentReviewShare]: (input) =>
