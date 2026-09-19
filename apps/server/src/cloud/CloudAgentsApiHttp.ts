@@ -112,7 +112,10 @@ const handleV1 = (deps: {
     const nowMs = DateTime.toEpochMillis(DateTime.nowUnsafe());
     const token = parseCloudAgentsApiAuthorization(request.headers.authorization);
     if (token instanceof CloudAgentsApiFailure) {
-      return errorResponse(token, limitHeaders(requestId, { remaining: 0, limit: 60, resetAtMs: nowMs }));
+      return errorResponse(
+        token,
+        limitHeaders(requestId, { remaining: 0, limit: 60, resetAtMs: nowMs }),
+      );
     }
     const principal = yield* deps.keys.authenticate(token);
     if (principal === null) {
@@ -130,7 +133,10 @@ const handleV1 = (deps: {
     );
     const meta = limitHeaders(requestId, decision);
     if (!decision.allowed) {
-      return errorResponse(new CloudAgentsApiFailure("rate_limited", "Rate limit exceeded.", 429), meta);
+      return errorResponse(
+        new CloudAgentsApiFailure("rate_limited", "Rate limit exceeded.", 429),
+        meta,
+      );
     }
     return yield* dispatchV1({
       api: deps.api,
@@ -199,7 +205,11 @@ const dispatchV1 = (input: {
           () => new CloudAgentsApiFailure("invalid_request", "Invalid create agent request.", 400),
         ),
       );
-      return jsonResponse(200, yield* api.createAgent({ principal, body, urlOrigin: origin }), meta);
+      return jsonResponse(
+        200,
+        yield* api.createAgent({ principal, body, urlOrigin: origin }),
+        meta,
+      );
     }
     if (method === "GET" && path === "/v1/agents") {
       const limit = parseLimitParam(url.searchParams.get("limit"));
@@ -225,7 +235,11 @@ const dispatchV1 = (input: {
     }
     const agentId = parts[2];
     if (method === "GET" && parts.length === 3) {
-      return jsonResponse(200, yield* api.getAgent({ principal, agentId, urlOrigin: origin }), meta);
+      return jsonResponse(
+        200,
+        yield* api.getAgent({ principal, agentId, urlOrigin: origin }),
+        meta,
+      );
     }
     if (method === "DELETE" && parts.length === 3) {
       return jsonResponse(200, yield* api.deleteAgent({ principal, agentId }), meta);

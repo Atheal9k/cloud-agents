@@ -56,55 +56,55 @@ const agent = (status: CloudAgent["status"]): CloudAgent => {
 
 const allocation = (idle: RunAllocation["idleState"]["status"]): RunAllocation =>
   ({
-  id: RunAllocationId.make("allocation-1"),
-  attempt: RunAllocationAttempt.make(1),
-  target: { repository: "acme/app", baseCommit: "main", branch: "cloud/agent-1" },
-  profile: { id: "linux-web", os: "linux", arch: "x64", instanceType: "t3.medium" },
-  deadlines: {
-    launchBy: NOW,
-    bootBy: NOW,
-    registerBy: NOW,
-    expiresAt: NOW,
-    cleanupBy: NOW,
-  },
-  allocationState: {
-    status: "ready",
-    instanceId: "i-live",
-    references: {
-      workerId: "worker-1",
-      environmentId: "environment-1",
-      threadId: "thread-1",
+    id: RunAllocationId.make("allocation-1"),
+    attempt: RunAllocationAttempt.make(1),
+    target: { repository: "acme/app", baseCommit: "main", branch: "cloud/agent-1" },
+    profile: { id: "linux-web", os: "linux", arch: "x64", instanceType: "t3.medium" },
+    deadlines: {
+      launchBy: NOW,
+      bootBy: NOW,
+      registerBy: NOW,
+      expiresAt: NOW,
+      cleanupBy: NOW,
     },
-    ...(idle === "hibernated"
-      ? {}
-      : {
-          route: {
-            httpBaseUrl: "https://worker.example.test/",
-            wsBaseUrl: "wss://worker.example.test/",
-            accessToken: "token",
-          },
-        }),
-    readyAt: NOW,
-  },
-  agentOutcome:
-    idle === "hibernated"
-      ? { status: "succeeded", resultLocation: { uri: "/cloud/results/x" }, completedAt: NOW }
-      : { status: "running", startedAt: NOW },
-  previewState: { status: "unavailable" },
-  idleState:
-    idle === "hibernated"
-      ? {
-          status: "hibernated",
-          hibernatedAt: NOW,
-          snapshot: { instanceId: "i-stopped", capturedAt: NOW },
-        }
-      : { status: "busy" },
-  cleanupState: { status: "not-requested" },
-  handledCommandIds: [],
-  sequence: 1,
-  createdAt: NOW,
-  updatedAt: NOW,
-}) as unknown as RunAllocation;
+    allocationState: {
+      status: "ready",
+      instanceId: "i-live",
+      references: {
+        workerId: "worker-1",
+        environmentId: "environment-1",
+        threadId: "thread-1",
+      },
+      ...(idle === "hibernated"
+        ? {}
+        : {
+            route: {
+              httpBaseUrl: "https://worker.example.test/",
+              wsBaseUrl: "wss://worker.example.test/",
+              accessToken: "token",
+            },
+          }),
+      readyAt: NOW,
+    },
+    agentOutcome:
+      idle === "hibernated"
+        ? { status: "succeeded", resultLocation: { uri: "/cloud/results/x" }, completedAt: NOW }
+        : { status: "running", startedAt: NOW },
+    previewState: { status: "unavailable" },
+    idleState:
+      idle === "hibernated"
+        ? {
+            status: "hibernated",
+            hibernatedAt: NOW,
+            snapshot: { instanceId: "i-stopped", capturedAt: NOW },
+          }
+        : { status: "busy" },
+    cleanupState: { status: "not-requested" },
+    handledCommandIds: [],
+    sequence: 1,
+    createdAt: NOW,
+    updatedAt: NOW,
+  }) as unknown as RunAllocation;
 
 const run: CloudRun = {
   id: CloudRunId.make("run-1"),
@@ -162,7 +162,10 @@ const snapshot = (messages: number): OrchestrationThreadDetailSnapshot => ({
   },
 });
 
-function event(index: number, extra: Partial<CloudAgentsApiStreamEvent> = {}): CloudAgentsApiStreamEvent {
+function event(
+  index: number,
+  extra: Partial<CloudAgentsApiStreamEvent> = {},
+): CloudAgentsApiStreamEvent {
   return {
     id: `${NOW_MS}-${index}`,
     event: "assistant",
@@ -197,9 +200,10 @@ describe("cloud agent event stream", () => {
         nowMs: NOW_MS + (CLOUD_AGENTS_API_STREAM_RETENTION_SECONDS + 1) * 1_000,
       }),
     ).toMatchObject({ ok: false, error: { code: "stream_expired" } });
-    expect(
-      resumeBoundedStream({ buffer, lastEventId: "not-an-id", nowMs: NOW_MS }),
-    ).toMatchObject({ ok: false, error: { code: "invalid_last_event_id" } });
+    expect(resumeBoundedStream({ buffer, lastEventId: "not-an-id", nowMs: NOW_MS })).toMatchObject({
+      ok: false,
+      error: { code: "invalid_last_event_id" },
+    });
   });
 
   it("reconnects live workers with T3 cursors and reads hibernated transcripts without waking", () => {

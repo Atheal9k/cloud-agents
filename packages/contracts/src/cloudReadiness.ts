@@ -11,6 +11,7 @@ import {
 } from "./baseSchemas.ts";
 import { CloudAllocationControllerStatus, CloudControllerDefaults } from "./cloudAllocation.ts";
 import { CloudEnvironmentSecretReference, CloudEnvironmentSource } from "./cloudEnvironment.ts";
+import { CloudSecurityReport } from "./cloudSecurity.ts";
 
 /**
  * Each check probes one thing an operator can fix on its own, so a failing
@@ -196,6 +197,8 @@ export const CloudReadinessReport = Schema.Struct({
   snapshotPolicy: CloudReadinessSnapshotPolicy,
   health: CloudReadinessHealth,
   settings: CloudReadinessSettings,
+  /** Absent when decoding a report from a controller older than CA-49. */
+  security: Schema.optionalKey(CloudSecurityReport),
   checks: Schema.Array(CloudReadinessCheck),
 });
 export type CloudReadinessReport = typeof CloudReadinessReport.Type;

@@ -187,7 +187,8 @@ export const make = Effect.fn("CloudWorkerRunClient.make")(function* () {
       `/api/orchestration/threads/${encodeURIComponent(run.execution.threadId)}`,
       run.route.httpBaseUrl,
     );
-    if (window?.turnLimit !== undefined) url.searchParams.set("turnLimit", String(window.turnLimit));
+    if (window?.turnLimit !== undefined)
+      url.searchParams.set("turnLimit", String(window.turnLimit));
     if (window?.beforeCursor !== undefined) {
       url.searchParams.set("beforeCursor", window.beforeCursor);
     }
