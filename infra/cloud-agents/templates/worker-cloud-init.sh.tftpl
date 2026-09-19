@@ -94,11 +94,20 @@ T3CODE_CLOUD_MAX_INPUT_WAIT_SECONDS=$${max_input_wait_seconds}
 T3CODE_PORT=${service_port}
 T3CODE_SHARED_BROWSER_THREAD_ID=thread-$${allocation_id}-$${attempt}
 T3CODE_SHARED_BROWSER_ATTEMPT_KEY=$${allocation_id}:$${attempt}
+T3CODE_DEVICE_DISPLAY_THREAD_ID=thread-$${allocation_id}-$${attempt}
+T3CODE_DEVICE_DISPLAY_ATTEMPT_KEY=$${allocation_id}:$${attempt}
 ENV
 if jq --exit-status '.capabilities.desktopStreamService == true' "$manifest" >/dev/null; then
   echo 'T3CODE_SHARED_BROWSER_COMMAND=/opt/t3/bin/cloud-agent-shared-browser' \
     >>/etc/t3/worker.env.pending
   echo 'T3CODE_SHARED_BROWSER_PERMISSION_COMMAND=/opt/t3/bin/cloud-agent-shared-browser-permissions' \
+    >>/etc/t3/worker.env.pending
+fi
+if jq --exit-status '.capabilities.deviceDisplayService == "android"' "$manifest" >/dev/null; then
+  echo 'T3CODE_DEVICE_DISPLAY_PLATFORM=android' >>/etc/t3/worker.env.pending
+  echo 'T3CODE_DEVICE_DISPLAY_COMMAND=/opt/t3/bin/cloud-agent-device-display' \
+    >>/etc/t3/worker.env.pending
+  echo 'T3CODE_DEVICE_DISPLAY_PERMISSION_COMMAND=/opt/t3/bin/cloud-agent-device-display-permissions' \
     >>/etc/t3/worker.env.pending
 fi
 chown root:cloudagent /etc/t3/worker.env.pending

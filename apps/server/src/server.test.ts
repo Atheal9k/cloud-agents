@@ -161,6 +161,8 @@ import * as CloudHandoff from "./cloud/CloudHandoff.ts";
 import * as CloudReadiness from "./cloud/CloudReadiness.ts";
 import * as SharedBrowserAgentHandoff from "./cloud/SharedBrowserAgentHandoff.ts";
 import * as SharedBrowserHost from "./cloud/SharedBrowserHost.ts";
+import * as DeviceDisplayGateway from "./cloud/DeviceDisplayGateway.ts";
+import * as DeviceDisplayHost from "./cloud/DeviceDisplayHost.ts";
 import * as ServerSettings from "./serverSettings.ts";
 import * as TerminalManager from "./terminal/Manager.ts";
 import * as ProjectCloneTracker from "./project/ProjectCloneTracker.ts";
@@ -787,6 +789,22 @@ const buildAppUnderTest = (options?: {
             Layer.succeed(SharedBrowserAgentHandoff.SharedBrowserAgentHandoff, {
               pause: () => Effect.die("Shared browser handoff not stubbed in this test"),
               resume: () => Effect.die("Shared browser handoff not stubbed in this test"),
+            }),
+          ),
+        ),
+      ),
+      DeviceDisplayGateway.layer.pipe(
+        Layer.provide(
+          Layer.mergeAll(
+            Layer.succeed(DeviceDisplayHost.DeviceDisplayHost, {
+              available: false,
+              prepare: () => Effect.die("Device display host not stubbed in this test"),
+              setInputEnabled: () => Effect.die("Device display host not stubbed in this test"),
+              reset: () => Effect.void,
+            }),
+            Layer.succeed(SharedBrowserAgentHandoff.SharedBrowserAgentHandoff, {
+              pause: () => Effect.die("Device display handoff not stubbed in this test"),
+              resume: () => Effect.die("Device display handoff not stubbed in this test"),
             }),
           ),
         ),

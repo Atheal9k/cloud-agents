@@ -1,0 +1,116 @@
+#!/bin/bash
+set -euo pipefail
+
+fail() {
+  echo "device display lifecycle failed: $*" >&2
+  exit 1
+}
+
+[[ -r /etc/t3/worker.env ]] || fail "worker environment is unavailable"
+# shellcheck disable=SC1091
+source /etc/t3/worker.env
+if [[ -r /run/t3-worker/device-display.env ]]; then
+  # shellcheck disable=SC1091
+  source /run/t3-worker/device-display.env
+fi
+
+: "${T3CODE_DEVICE_DISPLAY_ATTEMPT_KEY:?attempt key is required}"
+: "${T3CODE_DEVICE_DISPLAY_PLATFORM:?platform is required}"
+thread_id="${1:-${T3CODE_DEVICE_DISPLAY_THREAD_ID:-}}"
+[[ -n "${thread_id}" ]] || fail "thread id is required"
+
+platform="${T3CODE_DEVICE_DISPLAY_PLATFORM}"
+[[ "${platform}" == "android" || "${platform}" == "ios" ]] \
+  || fail "device display platform must be android or ios"
+
+install -d -m 0700 /run/t3-worker
+exec 9>/run/t3-worker/device-display.lock
+flock 9
+
+identity=""
+runtime=""
+device_name=""
+build_revision="${T3CODE_DEVICE_DISPLAY_BUILD_REVISION:-unknown}"
+connection_state="${T3CODE_DEVICE_DISPLAY_CONNECTION_STATE:-connecting}"
+for _ in {1..30}; do
+  if [[ -r /run/t3-worker/device-display.env ]]; then
+    # shellcheck disable=SC1091
+    source /run/t3-worker/device-display.env
+  fi
+  if [[ "${platform}" == "android" && -n "${T3CODE_DEVICE_DISPLAY_SERIAL:-}" ]]; then
+    identity="${T3CODE_DEVICE_DISPLAY_SERIAL}"
+    runtime="${T3CODE_DEVICE_DISPLAY_RUNTIME:-Android}"
+    device_name="${T3CODE_DEVICE_DISPLAY_DEVICE_NAME:-android}"
+    break
+  fi
+  if [[ "${platform}" == "ios" && -n "${T3CODE_DEVICE_DISPLAY_UDID:-}" ]]; then
+    identity="${T3CODE_DEVICE_DISPLAY_UDID}"
+    runtime="${T3CODE_DEVICE_DISPLAY_RUNTIME:-iOS}"
+    device_name="${T3CODE_DEVICE_DISPLAY_DEVICE_NAME:-ios}"
+    break
+  fi
+  sleep 1
+done
+[[ -n "${identity}" ]] || fail "the job has not published a device serial or UDID yet"
+
+upstream_url="http://127.0.0.1:3401"
+hub_entry="${T3CODE_DEVICE_DISPLAY_HUB_ENTRY:-/opt/t3/device-hub/node_modules/expo-device-hub/dist/server/cli.mjs}"
+node_bin=""
+if [[ -x /usr/local/bin/node ]]; then
+  node_bin=/usr/local/bin/node
+elif command -v node >/dev/null 2>&1; then
+  node_bin="$(command -v node)"
+fi
+if [[ -n "${node_bin}" && -f "${hub_entry}" ]]; then
+  if ! curl --silent --fail --max-time 1 "${upstream_url}/vendor/serve-emu/health" >/dev/null 2>&1 \
+    && ! curl --silent --fail --max-time 1 "${upstream_url}/vendor/serve-sim/helper/${identity}/health" >/dev/null 2>&1; then
+    nohup "${node_bin}" "${hub_entry}" --port 3401 --host 127.0.0.1 --hide-sidebar --hide-boot-device \
+      >/run/t3-worker/device-display-hub.log 2>&1 &
+    echo $! >/run/t3-worker/device-display-hub.pid
+    for _ in {1..20}; do
+      curl --silent --fail --max-time 1 "${upstream_url}/vendor/serve-emu/health" >/dev/null 2>&1 && break
+      curl --silent --fail --max-time 1 "${upstream_url}/vendor/serve-sim/api" >/dev/null 2>&1 && break
+      sleep 0.5
+    done
+  fi
+fi
+
+transport="serve-emu"
+serial_json="null"
+udid_json="null"
+if [[ "${platform}" == "ios" ]]; then
+  transport="serve-sim"
+  udid_json="$(jq --null-input --arg id "${identity}" '$id')"
+else
+  serial_json="$(jq --null-input --arg id "${identity}" '$id')"
+fi
+
+jq --null-input --compact-output \
+  --arg upstream_url "${upstream_url}" \
+  --arg attempt_key "${T3CODE_DEVICE_DISPLAY_ATTEMPT_KEY}" \
+  --arg thread_id "${thread_id}" \
+  --arg platform "${platform}" \
+  --arg transport "${transport}" \
+  --arg device_name "${device_name}" \
+  --arg runtime "${runtime}" \
+  --argjson serial "${serial_json}" \
+  --argjson udid "${udid_json}" \
+  --arg build_revision "${build_revision}" \
+  --arg connection_state "${connection_state}" \
+  '{
+    upstreamUrl: $upstream_url,
+    attemptKey: $attempt_key,
+    threadId: $thread_id,
+    session: (
+      {
+        platform: $platform,
+        transport: $transport,
+        deviceName: $device_name,
+        runtime: $runtime,
+        buildRevision: $build_revision,
+        connectionState: $connection_state
+      }
+      + (if $serial != null then {serial: $serial} else {} end)
+      + (if $udid != null then {udid: $udid} else {} end)
+    )
+  }'

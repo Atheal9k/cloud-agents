@@ -43,9 +43,21 @@ cat > /opt/t3/worker-image-manifest.json <<JSON
   "xcode": "${XCODE_VERSION}",
   "simulatorRuntime": "${SIMULATOR_RUNTIME}",
   "t3Version": "${T3_VERSION}",
-  "architecture": "arm64"
+  "architecture": "arm64",
+  "capabilities": {
+    "coding": true,
+    "iosSimulator": true,
+    "deviceDisplayService": "ios",
+    "desktopStreamTransport": null
+  }
 }
 JSON
 
 install -m 0755 "$(dirname "$0")/cloud-agent-ios-simulator-job" /opt/t3/bin/cloud-agent-ios-simulator-job
 install -m 0755 "$(dirname "$0")/cloud-agent-ios-job-cleanup" /opt/t3/bin/cloud-agent-ios-job-cleanup
+install -m 0755 "$(dirname "$0")/cloud-agent-device-display" /opt/t3/bin/cloud-agent-device-display
+install -m 0755 "$(dirname "$0")/cloud-agent-device-display-permissions" \
+  /opt/t3/bin/cloud-agent-device-display-permissions
+install -d -m 0755 /opt/t3/device-hub
+npm install --omit=dev --no-audit --no-fund --prefix /opt/t3/device-hub expo-device-hub@0.9.0
+chown -R cloudagent:staff /opt/t3/device-hub

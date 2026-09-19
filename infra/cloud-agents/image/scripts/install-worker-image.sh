@@ -165,12 +165,19 @@ if [[ "${INSTALL_ANDROID_SDK}" == "true" ]]; then
   install -m 0755 /tmp/prove-android-acceleration /opt/t3/bin/prove-android-acceleration
   install -m 0755 /tmp/cloud-agent-android-session /opt/t3/bin/cloud-agent-android-session
   install -m 0755 /tmp/cloud-agent-android-job-cleanup /opt/t3/bin/cloud-agent-android-job-cleanup
+  install -d -m 0755 /opt/t3/device-hub
+  npm install --omit=dev --no-audit --no-fund --prefix /opt/t3/device-hub expo-device-hub@0.9.0
+  chown -R cloudagent:cloudagent /opt/t3/device-hub
+  install -m 0755 /tmp/cloud-agent-device-display /opt/t3/bin/cloud-agent-device-display
+  install -m 0755 /tmp/cloud-agent-device-display-permissions \
+    /opt/t3/bin/cloud-agent-device-display-permissions
 fi
 rm -f \
   /tmp/install-android-sdk.sh \
   /tmp/prove-android-acceleration \
   /tmp/cloud-agent-android-session \
   /tmp/cloud-agent-android-job-cleanup
+rm -f /tmp/cloud-agent-device-display /tmp/cloud-agent-device-display-permissions
 systemctl enable docker.service
 
 install -d -o cloudagent -g cloudagent -m 0700 /var/lib/t3-worker/t3
@@ -231,7 +238,8 @@ jq --null-input \
       androidEmulator: $android_sdk,
       desktopStreamService: $shared_browser,
       browserAutomation: $shared_browser,
-      desktopStreamTransport: (if $shared_browser then "dcv" else null end)
+      desktopStreamTransport: (if $shared_browser then "dcv" else null end),
+      deviceDisplayService: (if $android_sdk then "android" else null end)
     }
   }' >/opt/t3/worker-image-manifest.json
 chmod 0644 /opt/t3/worker-image-manifest.json

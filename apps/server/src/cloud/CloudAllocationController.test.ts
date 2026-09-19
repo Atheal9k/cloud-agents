@@ -603,6 +603,7 @@ it.effect("keeps one durable agent across runs and rejects active-run races", ()
       execution: {
         ...launchInput.execution,
         title: "Review the result",
+        selectedRef: "pull-request-head-sha",
         turn: {
           ...launchInput.execution.turn,
           commandId: "command-follow-up",
@@ -629,6 +630,7 @@ it.effect("keeps one durable agent across runs and rejects active-run races", ()
       ["run-1", "FINISHED"],
       ["run-2", "CREATING"],
     ]);
+    expect(activeSnapshot.allocations[0]?.execution?.selectedRef).toBe("pull-request-head-sha");
 
     const busyFollowUp = yield* dispatch({
       type: "allocation.follow-up",

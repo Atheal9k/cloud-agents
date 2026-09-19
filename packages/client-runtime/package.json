@@ -155,6 +155,10 @@
       "types": "./src/state/sharedBrowser.ts",
       "default": "./src/state/sharedBrowser.ts"
     },
+    "./state/device-display": {
+      "types": "./src/state/deviceDisplay.ts",
+      "default": "./src/state/deviceDisplay.ts"
+    },
     "./state/projects": {
       "types": "./src/state/projects.ts",
       "default": "./src/state/projects.ts"

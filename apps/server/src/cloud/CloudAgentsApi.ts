@@ -177,6 +177,8 @@ export class CloudAgentsApi extends Context.Service<
       readonly body: CloudAgentsApiCreateRunRequest;
       /** Stable internal key used by scheduled admission retries. */
       readonly requestId?: string;
+      /** Trusted controller override for webhook or schedule source revisions. */
+      readonly selectedRef?: string;
       readonly limits?: {
         readonly runSeconds: number;
         readonly inputWaitSeconds: number;
@@ -880,7 +882,7 @@ export const make = Effect.fn("CloudAgentsApi.make")(function* () {
           execution: {
             threadId: previous?.threadId ?? ThreadId.make(`thread-${input.agentId}`),
             title,
-            selectedRef: previous?.selectedRef ?? located.agent.baseCommit,
+            selectedRef: input.selectedRef ?? previous?.selectedRef ?? located.agent.baseCommit,
             unansweredRequestSeconds: CloudProviderUnansweredRequestSeconds.make(
               controller === undefined || requestedLimits === undefined
                 ? (previous?.unansweredRequestSeconds ?? 900)

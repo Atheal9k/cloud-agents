@@ -3,6 +3,7 @@ import { useEffect, useMemo, useRef, useState } from "react";
 
 import { cn } from "~/lib/utils";
 import { refreshDeviceHubAccess, useDeviceHubAccess } from "~/state/device";
+import type { DeviceHubAccess } from "@t3tools/client-runtime/state/deviceHubAccess";
 import { DeviceLoadingView } from "./DeviceLoadingView";
 import { type DeviceAxElement, fetchDeviceAxTree } from "./deviceHubApi";
 import {
@@ -38,10 +39,15 @@ export function DeviceStreamView(props: {
   readonly hostId: string;
   /** Draw accessibility element frames over the screen. */
   readonly axOverlay?: boolean;
+  /** When set, skip Device panel hub tickets and use this stream origin. */
+  readonly access?: DeviceHubAccess;
+  /** When false, the surface is watch-only. */
+  readonly interactive?: boolean;
   readonly onHandle?: (handle: DeviceStreamHandle | null) => void;
   readonly onScreen?: (screen: DeviceScreenSize | null) => void;
 }) {
-  const access = useDeviceHubAccess(props.environmentId, props.hostId);
+  const hubAccess = useDeviceHubAccess(props.environmentId, props.hostId);
+  const access = props.access ?? hubAccess;
   const canvasRef = useRef<HTMLCanvasElement | null>(null);
   const clientRef = useRef<DeviceStreamClient | null>(null);
   const [status, setStatus] = useState<DeviceStreamStatus>("connecting");
@@ -62,7 +68,12 @@ export function DeviceStreamView(props: {
       return;
     }
     const client = createDeviceStreamClient(
-      { platform: props.platform, deviceId: props.deviceId, access },
+      {
+        platform: props.platform,
+        deviceId: props.deviceId,
+        access,
+        interactive: props.interactive !== false,
+      },
       canvas,
       {
         onStatus: (next, nextDetail) => {
@@ -109,6 +120,7 @@ export function DeviceStreamView(props: {
     onScreen,
     props.deviceId,
     props.environmentId,
+    props.interactive,
     props.platform,
     props.visible,
   ]);
@@ -235,11 +247,13 @@ export function DeviceStreamView(props: {
       role="application"
       aria-label={`${props.platform === "ios" ? "iOS Simulator" : "Android Emulator"} screen`}
       onKeyDown={(event) => {
+        if (props.interactive === false) return;
         if (event.metaKey && !["r", "R"].includes(event.key)) return;
         event.preventDefault();
         clientRef.current?.sendKey(event.nativeEvent, "down");
       }}
       onKeyUp={(event) => {
+        if (props.interactive === false) return;
         clientRef.current?.sendKey(event.nativeEvent, "up");
       }}
     >
@@ -247,6 +261,7 @@ export function DeviceStreamView(props: {
         className="relative select-none"
         style={{ width: frame.width, height: frame.height }}
         onPointerDown={(event) => {
+          if (props.interactive === false) return;
           event.currentTarget.setPointerCapture(event.pointerId);
           (event.currentTarget.parentElement as HTMLElement | null)?.focus();
           pointerActive.current = true;
