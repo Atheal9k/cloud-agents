@@ -33,6 +33,7 @@ export * from "./cloudAgentsApi.ts";
 export * from "./cloudAgentSchedules.ts";
 export * from "./cloudAssistants.ts";
 export * from "./cloudAgentSubscriptions.ts";
+export * from "./cloudAgentAutomations.ts";
 export * from "./cloudGithubTriggers.ts";
 export * from "./cloudMacIos.ts";
 export * from "./cloudLinuxAndroid.ts";
