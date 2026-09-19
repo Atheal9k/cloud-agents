@@ -60,6 +60,8 @@ function withAccess(status: CloudResultRetentionStatus) {
         readText: () => Effect.die("unused"),
         resolveDownload: () => Effect.die("unused"),
         startContinuation: () => Effect.die("unused"),
+        purgeAllocation: () => Effect.die("unused"),
+        purgeExpired: Effect.die("unused"),
       }),
     ),
   );

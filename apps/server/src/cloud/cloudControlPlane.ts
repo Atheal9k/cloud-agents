@@ -113,6 +113,11 @@ export function projectCloudControlPlane(
         case "allocation.cleanup-failed":
         case "allocation.went-idle":
         case "allocation.runtime-restored":
+        // A stopped guest stays HIBERNATED until cleanup terminates it, so an
+        // expired or deleting agent releases its runtime through the same
+        // cleanup receipt as every other release.
+        case "allocation.snapshot-expired":
+        case "allocation.agent-deletion-requested":
           if (runtime !== undefined) {
             runtimes.set(event.attempt, { ...runtime, updatedAt: event.occurredAt });
           }
