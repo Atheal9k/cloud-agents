@@ -47,6 +47,7 @@ systemctl is-active --quiet tailscaled.service && fail "Tailscale is active in t
 
 systemd-analyze verify /etc/systemd/system/cloud-agent-worker.service
 systemd-analyze verify /etc/systemd/system/cloud-agent-worker-registration.service
+systemd-analyze verify /etc/systemd/system/cloud-agent-worker-credentials.service
 systemd-analyze verify /etc/systemd/system/cloud-agent-codex-auth-sync.service
 systemd-analyze verify /etc/systemd/system/cloud-agent-codex-auth-sync.path
 systemd-analyze verify /etc/systemd/system/cloud-agent-codex-auth-sync.timer

@@ -30,7 +30,12 @@ import {
   ThreadId,
   TrimmedNonEmptyString,
 } from "./baseSchemas.ts";
-import { RunAllocation, RunWorkerRegistrationInput } from "./cloudAllocation.ts";
+import {
+  RunAllocation,
+  RunRuntimeFlush,
+  RunRuntimeFlushInput,
+  RunWorkerRegistrationInput,
+} from "./cloudAllocation.ts";
 import { ExecutionEnvironmentDescriptor } from "./environment.ts";
 import {
   ClientOrchestrationCommand,
@@ -96,6 +101,7 @@ export const EnvironmentInternalErrorReason = Schema.Literals([
   "orchestration_snapshot_failed",
   "orchestration_thread_snapshot_failed",
   "orchestration_dispatch_failed",
+  "cloud_runtime_flush_failed",
   "internal_error",
 ]);
 export type EnvironmentInternalErrorReason = typeof EnvironmentInternalErrorReason.Type;
@@ -616,20 +622,31 @@ class EnvironmentConnectHttpApi extends HttpApiGroup.make("connect")
     }),
   ) {}
 
-class EnvironmentCloudWorkersHttpApi extends HttpApiGroup.make("cloudWorkers").add(
-  HttpApiEndpoint.post("register", "/api/cloud/workers/register", {
-    headers: OptionalBearerHeaders,
-    payload: RunWorkerRegistrationInput,
-    success: RunAllocation,
-    error: [
-      EnvironmentHttpBadRequestError,
-      EnvironmentHttpUnauthorizedError,
-      EnvironmentHttpConflictError,
-      EnvironmentCloudEndpointUnavailableError,
-      EnvironmentHttpInternalServerError,
-    ],
-  }),
-) {}
+class EnvironmentCloudWorkersHttpApi extends HttpApiGroup.make("cloudWorkers")
+  .add(
+    HttpApiEndpoint.post("register", "/api/cloud/workers/register", {
+      headers: OptionalBearerHeaders,
+      payload: RunWorkerRegistrationInput,
+      success: RunAllocation,
+      error: [
+        EnvironmentHttpBadRequestError,
+        EnvironmentHttpUnauthorizedError,
+        EnvironmentHttpConflictError,
+        EnvironmentCloudEndpointUnavailableError,
+        EnvironmentHttpInternalServerError,
+      ],
+    }),
+  )
+  // Served by the guest, not the controller: it is the guest that knows where
+  // its database, workspace, and provider home live.
+  .add(
+    HttpApiEndpoint.post("flush", "/api/cloud/workers/flush", {
+      headers: OptionalBearerHeaders,
+      payload: RunRuntimeFlushInput,
+      success: RunRuntimeFlush,
+      error: [EnvironmentScopeRequiredError, EnvironmentInternalError],
+    }).middleware(EnvironmentAuthenticatedAuth),
+  ) {}
 
 export class EnvironmentHttpApi extends HttpApi.make("environment")
   .add(EnvironmentMetadataHttpApi)

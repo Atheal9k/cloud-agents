@@ -74,6 +74,7 @@ it.effect("rejects admission beyond the durable queue bound", () =>
         maxRunSeconds: 7_200,
         maxInputWaitSeconds: 900,
         previewGraceSeconds: 900,
+        idleReleaseSeconds: 3_600,
         allowedInstanceTypes: ["t3.medium"],
       },
     });

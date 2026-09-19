@@ -125,6 +125,7 @@ function fencedAllocation(baseCommit: string): RunAllocation {
       completedAt: NOW,
     },
     previewState: { status: "unavailable" },
+    idleState: { status: "busy" },
     cleanupState: { status: "requested", requestedAt: NOW },
     handledCommandIds: [],
     sequence: 1,

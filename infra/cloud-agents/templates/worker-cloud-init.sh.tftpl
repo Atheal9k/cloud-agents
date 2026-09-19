@@ -117,98 +117,22 @@ if [[ -n "$${codex_api_key_secret_arn}" || -n "$${codex_auth_json_secret_arn}" |
   }
 fi
 
-if [[ -n "$${codex_api_key_secret_arn}" ]]; then
-  install -d -o cloudagent -g cloudagent -m 0700 /run/t3-worker/credentials/codex
-  if ! codex_api_key="$(
-    aws secretsmanager get-secret-value \
-      --region '${aws_region}' \
-      --secret-id "$${codex_api_key_secret_arn}" \
-      --query SecretString \
-      --output text
-  )"; then
-    find /run/t3-worker/credentials/codex -mindepth 1 -delete
-    echo "cloud-agent bootstrap failed: Codex API key secret is unavailable" >&2
-    exit 1
-  fi
-  if [[ -z "$${codex_api_key}" || "$${codex_api_key}" == "None" ]]; then
-    unset codex_api_key
-    find /run/t3-worker/credentials/codex -mindepth 1 -delete
-    echo "cloud-agent bootstrap failed: Codex API key secret is empty or binary" >&2
-    exit 1
-  fi
-  if ! printf '%s' "$${codex_api_key}" | runuser --user cloudagent -- \
-    env HOME=/home/cloudagent CODEX_HOME=/run/t3-worker/credentials/codex \
-    codex login --with-api-key >/dev/null; then
-    unset codex_api_key
-    find /run/t3-worker/credentials/codex -mindepth 1 -delete
-    echo "cloud-agent bootstrap failed: Codex rejected the configured API key" >&2
-    exit 1
-  fi
-  unset codex_api_key
-fi
-
-if [[ -n "$${codex_auth_json_secret_arn}" ]]; then
-  install -d -o cloudagent -g cloudagent -m 0700 /run/t3-worker/credentials/codex
-  codex_auth_json_tmp="$(mktemp /run/t3-worker/credentials/codex/.auth.json.XXXXXX)"
-  if ! aws secretsmanager get-secret-value \
-    --region '${aws_region}' \
-    --secret-id "$${codex_auth_json_secret_arn}" \
-    --query SecretString \
-    --output text >"$${codex_auth_json_tmp}"; then
-    rm -f "$${codex_auth_json_tmp}"
-    find /run/t3-worker/credentials/codex -mindepth 1 -delete
-    echo "cloud-agent bootstrap failed: Codex account secret is unavailable" >&2
-    exit 1
-  fi
-  if ! jq --exit-status \
-    '.auth_mode == "chatgpt" and (.tokens.refresh_token | type == "string" and length > 0)' \
-    "$${codex_auth_json_tmp}" >/dev/null; then
-    rm -f "$${codex_auth_json_tmp}"
-    find /run/t3-worker/credentials/codex -mindepth 1 -delete
-    echo "cloud-agent bootstrap failed: Codex account secret is not a refreshable ChatGPT auth.json" >&2
-    exit 1
-  fi
-  chown cloudagent:cloudagent "$${codex_auth_json_tmp}"
-  chmod 0600 "$${codex_auth_json_tmp}"
-  mv "$${codex_auth_json_tmp}" /run/t3-worker/credentials/codex/auth.json
-  cat >/run/t3-worker/credentials/codex/config.toml <<'CODEX_CONFIG'
-cli_auth_credentials_store = "file"
-CODEX_CONFIG
-  chown cloudagent:cloudagent /run/t3-worker/credentials/codex/config.toml
-  chmod 0600 /run/t3-worker/credentials/codex/config.toml
-
-  install -d -o root -g cloudagent -m 0730 /var/lib/t3-worker/provider-credentials
-  sha256sum /run/t3-worker/credentials/codex/auth.json \
-    | awk '{ print $1 }' >/var/lib/t3-worker/provider-credentials/codex-auth-synced.sha256
-  chmod 0600 /var/lib/t3-worker/provider-credentials/codex-auth-synced.sha256
-  cat >/etc/t3/codex-auth-sync.env <<ENV
+# Provider credentials live in a runtime directory that is empty on every boot,
+# and this script only runs on the first one. Materializing them from a unit
+# instead means a guest that hibernated and was woken comes back able to run a
+# provider turn rather than with an empty provider home.
+cat >/etc/t3/worker-credentials.env <<ENV
 AWS_REGION=${aws_region}
-T3_CODEX_AUTH_SECRET_ARN=$${codex_auth_json_secret_arn}
+T3_CODEX_API_KEY_SECRET_ARN=$${codex_api_key_secret_arn}
+T3_CODEX_AUTH_JSON_SECRET_ARN=$${codex_auth_json_secret_arn}
+T3_CLAUDE_OAUTH_TOKEN_SECRET_ARN=$${claude_oauth_token_secret_arn}
 ENV
-  chmod 0600 /etc/t3/codex-auth-sync.env
-fi
-
-if [[ -n "$${claude_oauth_token_secret_arn}" ]]; then
-  if ! claude_oauth_token="$(
-    aws secretsmanager get-secret-value \
-      --region '${aws_region}' \
-      --secret-id "$${claude_oauth_token_secret_arn}" \
-      --query SecretString \
-      --output text
-  )"; then
-    echo "cloud-agent bootstrap failed: Claude account secret is unavailable" >&2
-    exit 1
-  fi
-  if [[ -z "$${claude_oauth_token}" || "$${claude_oauth_token}" == "None" || "$${claude_oauth_token}" =~ [[:space:]] || "$${claude_oauth_token}" == *"'"* ]]; then
-    unset claude_oauth_token
-    echo "cloud-agent bootstrap failed: Claude account secret is empty, binary, or malformed" >&2
-    exit 1
-  fi
-  install -d -o cloudagent -g cloudagent -m 0700 /run/t3-worker
-  printf "CLAUDE_CODE_OAUTH_TOKEN='%s'\n" "$${claude_oauth_token}" >/run/t3-worker/runtime.env
-  unset claude_oauth_token
-  chown root:cloudagent /run/t3-worker/runtime.env
-  chmod 0640 /run/t3-worker/runtime.env
+chmod 0600 /etc/t3/worker-credentials.env
+if ! systemctl enable --now cloud-agent-worker-credentials.service; then
+  systemctl status --no-pager --full cloud-agent-worker-credentials.service >&2 || true
+  journalctl --no-pager --unit cloud-agent-worker-credentials.service --lines 50 >&2 || true
+  echo "cloud-agent bootstrap failed: worker provider credentials are unavailable" >&2
+  exit 1
 fi
 
 /opt/t3/bin/cloud-agent-prepare-repository \

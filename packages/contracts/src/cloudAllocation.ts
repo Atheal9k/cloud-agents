@@ -95,6 +95,99 @@ export const RunWorkerRegistrationInput = Schema.Struct({
 });
 export type RunWorkerRegistrationInput = typeof RunWorkerRegistrationInput.Type;
 
+/** 1 hour. A settled agent keeps its guest this long before it hibernates. */
+export const DEFAULT_IDLE_RELEASE_SECONDS = 60 * 60;
+
+/**
+ * One part of a guest's durable state. `unavailable` is a real answer: a
+ * provider home on tmpfs cannot be flushed, and saying so is what keeps the
+ * wake report honest about what actually came back.
+ */
+export const RunRuntimeFlushComponent = Schema.Union([
+  Schema.Struct({ status: Schema.Literal("flushed"), detail: TrimmedNonEmptyString }),
+  Schema.Struct({ status: Schema.Literal("unavailable"), reason: TrimmedNonEmptyString }),
+]);
+export type RunRuntimeFlushComponent = typeof RunRuntimeFlushComponent.Type;
+
+/** What the guest brought to a consistent on-disk point when its turn settled. */
+export const RunRuntimeFlush = Schema.Struct({
+  userdata: RunRuntimeFlushComponent,
+  workspace: RunRuntimeFlushComponent,
+  providerHome: RunRuntimeFlushComponent,
+  flushedAt: IsoDateTime,
+});
+export type RunRuntimeFlush = typeof RunRuntimeFlush.Type;
+
+/** Asks a guest to flush the state behind one settled thread. */
+export const RunRuntimeFlushInput = Schema.Struct({
+  allocationId: RunAllocationId,
+  attempt: RunAllocationAttempt,
+  threadId: ThreadId,
+});
+export type RunRuntimeFlushInput = typeof RunRuntimeFlushInput.Type;
+
+/**
+ * The stopped guest that holds an idle agent's disk. On the EC2 fallback the
+ * snapshot is the stopped instance and its encrypted root volume; CA-44
+ * replaces it with a Firecracker block snapshot without changing this record.
+ */
+export const RunRuntimeSnapshot = Schema.Struct({
+  instanceId: TrimmedNonEmptyString,
+  attempt: RunAllocationAttempt,
+  flush: RunRuntimeFlush,
+  capturedAt: IsoDateTime,
+});
+export type RunRuntimeSnapshot = typeof RunRuntimeSnapshot.Type;
+
+export const RunRuntimeResumption = Schema.Union([
+  Schema.Struct({ status: Schema.Literal("resumed"), detail: TrimmedNonEmptyString }),
+  Schema.Struct({ status: Schema.Literal("not-resumed"), reason: TrimmedNonEmptyString }),
+]);
+export type RunRuntimeResumption = typeof RunRuntimeResumption.Type;
+
+/**
+ * A woken runtime reports its disk and its provider session separately,
+ * because they do not come back together: the filesystem restores from the
+ * snapshot while the provider CLI starts a new native session against it.
+ */
+export const RunRuntimeRestore = Schema.Struct({
+  filesystem: RunRuntimeResumption,
+  providerSession: RunRuntimeResumption,
+  restoredAt: IsoDateTime,
+});
+export type RunRuntimeRestore = typeof RunRuntimeRestore.Type;
+
+/**
+ * Idle compute release, independent of the run state machine. A run ends;
+ * the conversation does not, so the guest outlives the run by a timer rather
+ * than by the run's deadline.
+ */
+export const RunIdleState = Schema.Union([
+  /** A run is in flight, or a woken runtime is serving one again. */
+  Schema.Struct({
+    status: Schema.Literal("busy"),
+    restore: Schema.optionalKey(RunRuntimeRestore),
+  }),
+  Schema.Struct({
+    status: Schema.Literal("idle"),
+    settledAt: IsoDateTime,
+    releaseAt: IsoDateTime,
+    flush: RunRuntimeFlush,
+  }),
+  Schema.Struct({
+    status: Schema.Literal("hibernated"),
+    hibernatedAt: IsoDateTime,
+    snapshot: RunRuntimeSnapshot,
+  }),
+  /** A follow-up arrived after release; exactly one runtime restores it. */
+  Schema.Struct({
+    status: Schema.Literal("waking"),
+    requestedAt: IsoDateTime,
+    snapshot: RunRuntimeSnapshot,
+  }),
+]);
+export type RunIdleState = typeof RunIdleState.Type;
+
 export const RunResultLocation = Schema.Struct({
   uri: TrimmedNonEmptyString,
 });
@@ -242,6 +335,8 @@ export const CloudRuntimeAttemptStatus = Schema.Literals([
   "ERROR",
   "RELEASED",
   "FENCED",
+  /** Stopped with its disk intact. A later runtime restores it; it is not released. */
+  "HIBERNATED",
 ]);
 export type CloudRuntimeAttemptStatus = typeof CloudRuntimeAttemptStatus.Type;
 
@@ -259,6 +354,11 @@ export const CloudRuntimeAttempt = Schema.Union([
   }),
   Schema.Struct({ ...CloudRuntimeAttemptBase, status: Schema.Literal("RELEASED") }),
   Schema.Struct({ ...CloudRuntimeAttemptBase, status: Schema.Literal("FENCED") }),
+  Schema.Struct({
+    ...CloudRuntimeAttemptBase,
+    status: Schema.Literal("HIBERNATED"),
+    snapshot: RunRuntimeSnapshot,
+  }),
 ]);
 export type CloudRuntimeAttempt = typeof CloudRuntimeAttempt.Type;
 
@@ -399,6 +499,7 @@ export const RunAllocation = Schema.Struct({
   allocationState: RunAllocationState,
   agentOutcome: RunAgentOutcome,
   previewState: RunPreviewState,
+  idleState: RunIdleState,
   cleanupState: RunCleanupState,
   retry: Schema.optionalKey(RunRetryRecord),
   archivedAt: Schema.optionalKey(IsoDateTime),
@@ -489,6 +590,22 @@ export const RunAllocationCommand = Schema.Union([
     url: TrimmedNonEmptyString,
   }),
   Schema.Struct({ ...AttemptCommandBase, type: Schema.Literal("allocation.preview-withdrawn") }),
+  Schema.Struct({
+    ...AttemptCommandBase,
+    type: Schema.Literal("allocation.idle"),
+    releaseAt: IsoDateTime,
+    flush: RunRuntimeFlush,
+  }),
+  Schema.Struct({
+    ...AttemptCommandBase,
+    type: Schema.Literal("allocation.hibernate"),
+    snapshot: RunRuntimeSnapshot,
+  }),
+  Schema.Struct({
+    ...AttemptCommandBase,
+    type: Schema.Literal("allocation.runtime-restored"),
+    restore: RunRuntimeRestore,
+  }),
   Schema.Struct({ ...AttemptCommandBase, type: Schema.Literal("allocation.cancel") }),
   Schema.Struct({ ...AttemptCommandBase, type: Schema.Literal("allocation.expire") }),
   Schema.Struct({
@@ -606,10 +723,28 @@ export const RunAllocationEvent = Schema.Union([
   Schema.Struct({ ...EventBase, type: Schema.Literal("allocation.expired") }),
   Schema.Struct({
     ...EventBase,
+    type: Schema.Literal("allocation.went-idle"),
+    releaseAt: IsoDateTime,
+    flush: RunRuntimeFlush,
+  }),
+  Schema.Struct({
+    ...EventBase,
+    type: Schema.Literal("allocation.hibernated"),
+    snapshot: RunRuntimeSnapshot,
+  }),
+  Schema.Struct({
+    ...EventBase,
+    type: Schema.Literal("allocation.runtime-restored"),
+    restore: RunRuntimeRestore,
+  }),
+  Schema.Struct({
+    ...EventBase,
     type: Schema.Literal("allocation.follow-up-requested"),
     runId: CloudRunId,
     execution: RunExecutionIntent,
     deadlines: RunDeadlines,
+    /** Present when the follow-up woke a hibernated guest instead of placing a new one. */
+    restoreFrom: Schema.optionalKey(RunRuntimeSnapshot),
   }),
   Schema.Struct({ ...EventBase, type: Schema.Literal("allocation.agent-archived") }),
   Schema.Struct({ ...EventBase, type: Schema.Literal("allocation.agent-unarchived") }),
@@ -662,11 +797,13 @@ export const CloudAllocationControllerStatus = Schema.Struct({
 export type CloudAllocationControllerStatus = typeof CloudAllocationControllerStatus.Type;
 
 export const CloudAllocationLimits = Schema.Struct({
-  maxConcurrentWorkers: Schema.Literal(1),
+  maxConcurrentWorkers: PositiveInt,
   maxQueueDepth: NonNegativeInt,
   maxRunSeconds: PositiveInt,
   maxInputWaitSeconds: PositiveInt,
   previewGraceSeconds: NonNegativeInt,
+  /** How long a settled agent keeps its guest before hibernating it. */
+  idleReleaseSeconds: NonNegativeInt,
   allowedInstanceTypes: Schema.Array(TrimmedNonEmptyString).pipe(
     Schema.check(Schema.isMinLength(1)),
   ),

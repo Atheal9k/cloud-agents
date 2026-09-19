@@ -446,3 +446,71 @@ run "sandbox_apply" {
     error_message = "Workers must not receive secret access unless the corresponding worker feature is configured."
   }
 }
+
+run "firecracker_fleet_plan" {
+  command = plan
+
+  providers = {
+    archive = archive.mock
+    aws     = aws.mock
+  }
+
+  variables {
+    controller_mode       = "local"
+    controller_account_id = "111111111111"
+    execution_account_id  = "123456789012"
+    worker_profiles = {
+      linux-web = {
+        ami_id               = "ami-0123456789abcdef0"
+        image_version        = "0.0.42-ca27.1"
+        instance_type        = "t3.medium"
+        root_volume_size_gib = 30
+      }
+    }
+    hypervisor_profiles = {
+      linux-pack = {
+        ami_id                  = "ami-0123456789abcdef0"
+        image_version           = "0.0.42-ca44.1"
+        instance_type           = "c6i.metal"
+        virtualization          = "metal"
+        root_volume_size_gib    = 80
+        cpu_millis              = 16000
+        memory_mib              = 65536
+        disk_gib                = 1024
+        cpu_oversubscribe_ratio = 2
+        guest_profiles          = ["linux-web"]
+      }
+    }
+  }
+
+  assert {
+    condition = alltrue([
+      length(aws_launch_template.hypervisor) == 1,
+      aws_launch_template.hypervisor["linux-pack"].instance_type == "c6i.metal",
+      aws_launch_template.hypervisor["linux-pack"].block_device_mappings[0].ebs[0].encrypted,
+      aws_launch_template.hypervisor["linux-pack"].metadata_options[0].http_put_response_hop_limit == 1,
+      aws_iam_role.hypervisor[0].name_prefix != aws_iam_role.worker.name_prefix,
+      one([
+        for specification in aws_launch_template.hypervisor["linux-pack"].tag_specifications :
+        specification.tags["CloudAgentRole"]
+        if specification.resource_type == "instance"
+      ]) == "hypervisor",
+      one([
+        for specification in aws_launch_template.hypervisor["linux-pack"].tag_specifications :
+        specification.tags["Ephemeral"]
+        if specification.resource_type == "instance"
+      ]) == "false",
+      strcontains(base64decode(aws_launch_template.hypervisor["linux-pack"].user_data), "169.254.169.254"),
+      strcontains(base64decode(aws_launch_template.hypervisor["linux-pack"].user_data), "/var/lib/t3-hypervisor/credentials"),
+      strcontains(base64decode(aws_launch_template.hypervisor["linux-pack"].user_data), "prove-firecracker"),
+      output.hypervisor.execution_account_id == "123456789012",
+      output.hypervisor.controller_account_id == "111111111111",
+    ])
+    error_message = "Firecracker hypervisors must be packed hosts with encrypted disks, blocked IMDS forwarding, and a separate identity from disposable workers."
+  }
+
+  assert {
+    condition     = length(aws_launch_template.worker) == 1
+    error_message = "The EC2 worker launch template remains available as a documented migration fallback."
+  }
+}

@@ -8,6 +8,8 @@ import {
   type RunAllocationEvent,
 } from "@t3tools/contracts";
 
+import { hasAgentSettled } from "./cloudHibernationPolicy.ts";
+
 function assertNever(value: never): never {
   throw new Error(`Unhandled allocation variant: ${String(value)}`);
 }
@@ -181,6 +183,30 @@ export function decideRunAllocationCommand(
       return allocation.previewState.status === "available"
         ? [{ ...base, type: command.type }]
         : [];
+    case "allocation.idle":
+      return allocation.allocationState.status === "ready" &&
+        hasAgentSettled(allocation) &&
+        allocation.idleState.status === "busy" &&
+        allocation.cleanupState.status === "not-requested"
+        ? [
+            {
+              ...base,
+              type: "allocation.went-idle",
+              releaseAt: command.releaseAt,
+              flush: command.flush,
+            },
+          ]
+        : [];
+    case "allocation.hibernate":
+      return allocation.idleState.status === "idle" &&
+        allocation.cleanupState.status === "not-requested"
+        ? [{ ...base, type: "allocation.hibernated", snapshot: command.snapshot }]
+        : [];
+    case "allocation.runtime-restored":
+      return allocation.idleState.status === "waking" &&
+        allocation.allocationState.status === "ready"
+        ? [{ ...base, type: "allocation.runtime-restored", restore: command.restore }]
+        : [];
     case "allocation.cancel":
       return allocation.cleanupState.status === "not-requested" ||
         allocation.cleanupState.status === "failed"
@@ -198,23 +224,36 @@ export function decideRunAllocationCommand(
         allocation.agentOutcome.status === "failed" ||
         allocation.agentOutcome.status === "cancelled" ||
         allocation.agentOutcome.status === "expired";
+      /**
+       * A hibernated guest is stopped, so its route is gone and its runtime is
+       * finished. Waking it takes a fresh attempt that fences the old runtime
+       * and restores exactly one guest from the recorded snapshot.
+       */
+      const wakeSnapshot =
+        allocation.idleState.status === "hibernated" ? allocation.idleState.snapshot : undefined;
       const reuseRuntime =
+        wakeSnapshot === undefined &&
         allocation.allocationState.status === "ready" &&
         allocation.cleanupState.status === "not-requested";
       const replaceRuntime = allocation.cleanupState.status === "succeeded";
-      if (allocation.archivedAt !== undefined || !terminal || (!reuseRuntime && !replaceRuntime)) {
+      if (
+        allocation.archivedAt !== undefined ||
+        !terminal ||
+        (!reuseRuntime && !replaceRuntime && wakeSnapshot === undefined)
+      ) {
         return [];
       }
       return [
         {
           ...base,
           type: "allocation.follow-up-requested",
-          attempt: replaceRuntime
-            ? RunAllocationAttempt.make(allocation.attempt + 1)
-            : allocation.attempt,
+          attempt: reuseRuntime
+            ? allocation.attempt
+            : RunAllocationAttempt.make(allocation.attempt + 1),
           runId: command.runId,
           execution: command.execution,
           deadlines: command.deadlines,
+          ...(wakeSnapshot === undefined ? {} : { restoreFrom: wakeSnapshot }),
         },
       ];
     }
@@ -315,6 +354,7 @@ export function projectRunAllocationEvent(
       allocationState: { status: "queued" },
       agentOutcome: { status: "not-started" },
       previewState: { status: "unavailable" },
+      idleState: { status: "busy" },
       cleanupState: { status: "not-requested" },
       handledCommandIds: [event.commandId],
       sequence: event.sequence,
@@ -446,6 +486,38 @@ export function projectRunAllocationEvent(
       });
     case "allocation.preview-withdrawn":
       return projectUpdate(allocation, event, { previewState: { status: "unavailable" } });
+    case "allocation.went-idle":
+      return projectUpdate(allocation, event, {
+        idleState: {
+          status: "idle",
+          settledAt: event.occurredAt,
+          releaseAt: event.releaseAt,
+          flush: event.flush,
+        },
+      });
+    case "allocation.hibernated": {
+      if (allocation.allocationState.status !== "ready") {
+        throw new Error("Hibernation requires a ready allocation");
+      }
+      // The guest is stopped, so its route and any preview it served are gone.
+      // Dropping the route here is what stops the controller from dialing a
+      // machine that is not running.
+      const { route, ...stopped } = allocation.allocationState;
+      void route;
+      return projectUpdate(allocation, event, {
+        allocationState: stopped,
+        previewState: { status: "unavailable" },
+        idleState: {
+          status: "hibernated",
+          hibernatedAt: event.occurredAt,
+          snapshot: event.snapshot,
+        },
+      });
+    }
+    case "allocation.runtime-restored":
+      return projectUpdate(allocation, event, {
+        idleState: { status: "busy", restore: event.restore },
+      });
     case "allocation.cancellation-requested":
       return projectUpdate(allocation, event, {
         agentOutcome:
@@ -453,11 +525,15 @@ export function projectRunAllocationEvent(
           allocation.agentOutcome.status === "failed"
             ? allocation.agentOutcome
             : { status: "cancelled", cancelledAt: event.occurredAt },
+        // Cleanup releases the guest, so the allocation stops holding an idle
+        // one. The snapshot it was keeping is no longer restorable.
+        idleState: { status: "busy" },
         cleanupState: { status: "requested", requestedAt: event.occurredAt },
       });
     case "allocation.expired":
       return projectUpdate(allocation, event, {
         agentOutcome: { status: "expired", expiredAt: event.occurredAt },
+        idleState: { status: "busy" },
         cleanupState: { status: "requested", requestedAt: event.occurredAt },
       });
     case "allocation.follow-up-requested": {
@@ -471,6 +547,14 @@ export function projectRunAllocationEvent(
         : {};
       return projectUpdate(allocation, event, {
         attempt: event.attempt,
+        idleState:
+          event.restoreFrom === undefined
+            ? { status: "busy" }
+            : {
+                status: "waking",
+                requestedAt: event.occurredAt,
+                snapshot: event.restoreFrom,
+              },
         execution: event.execution,
         control: {
           agentId: allocation.control?.agentId ?? CloudAgentId.make(`agent:${allocation.id}`),
@@ -526,6 +610,7 @@ export function projectRunAllocationEvent(
         allocationState: { status: "queued" },
         agentOutcome: { status: "not-started" },
         previewState: { status: "unavailable" },
+        idleState: { status: "busy" },
         cleanupState: { status: "not-requested" },
       });
     default:

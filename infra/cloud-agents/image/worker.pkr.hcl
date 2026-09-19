@@ -217,6 +217,16 @@ build {
   }
 
   provisioner "file" {
+    source      = "${path.root}/scripts/cloud-agent-worker-credentials"
+    destination = "/tmp/cloud-agent-worker-credentials"
+  }
+
+  provisioner "file" {
+    source      = "${path.root}/files/cloud-agent-worker-credentials.service"
+    destination = "/tmp/cloud-agent-worker-credentials.service"
+  }
+
+  provisioner "file" {
     source      = "${path.root}/files/cloud-agent-codex-auth-sync.service"
     destination = "/tmp/cloud-agent-codex-auth-sync.service"
   }

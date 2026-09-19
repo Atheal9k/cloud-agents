@@ -1,8 +1,10 @@
 import {
-  CloudAllocationSnapshot,
   CloudWarmGuestId,
   RunAllocationCommand,
+  type CloudAllocationSnapshot,
   type RunAllocation,
+  type RunRuntimeFlush,
+  type RunRuntimeSnapshot,
 } from "@t3tools/contracts";
 import * as NodeCrypto from "node:crypto";
 import * as DateTime from "effect/DateTime";
@@ -14,6 +16,13 @@ import * as Schema from "effect/Schema";
 
 import * as ServerConfig from "../config.ts";
 import * as CloudAllocationController from "./CloudAllocationController.ts";
+import {
+  hasAgentSettled,
+  idleReleaseAt,
+  isIdleReleaseDue,
+  retainedRuntimeSnapshot,
+  runDeadlineApplies,
+} from "./cloudHibernationPolicy.ts";
 import * as CloudWarmPoolCatalog from "./CloudWarmPoolCatalog.ts";
 import {
   planWarmPoolCapacity,
@@ -65,6 +74,21 @@ function orderedAllocations(
   );
 }
 
+/**
+ * A guest that answered nothing about its own state still has to become idle,
+ * or a worker the controller cannot reach would hold compute forever. The
+ * report says so instead of claiming a flush that did not happen.
+ */
+function unflushed(reason: string, flushedAt: string): RunRuntimeFlush {
+  const component = { status: "unavailable", reason } as const;
+  return {
+    userdata: component,
+    workspace: component,
+    providerHome: component,
+    flushedAt,
+  };
+}
+
 function reviewDeadline(allocation: RunAllocation, reviewGraceMillis: number): number | undefined {
   switch (allocation.agentOutcome.status) {
     case "succeeded":
@@ -83,6 +107,7 @@ function reviewDeadline(allocation: RunAllocation, reviewGraceMillis: number): n
 
 export const make = Effect.fn("CloudAllocationReconciler.make")(function* (input?: {
   readonly reviewGraceMillis?: number;
+  readonly idleReleaseSeconds?: number;
   readonly runClient?: CloudWorkerRunClient.CloudWorkerRunClient["Service"];
 }) {
   const controller = yield* CloudAllocationController.CloudAllocationController;
@@ -201,10 +226,100 @@ export const make = Effect.fn("CloudAllocationReconciler.make")(function* (input
     );
   });
 
+  /**
+   * The settle boundary. The guest keeps running, but everything the
+   * conversation needs is made durable first, so releasing it later cannot
+   * lose the turn that just finished.
+   */
+  const settle = Effect.fn("CloudAllocationReconciler.settle")(function* (
+    allocation: RunAllocation,
+    occurredAt: string,
+    idleReleaseSeconds: number,
+  ) {
+    const flushed =
+      runClient === undefined ? undefined : yield* runClient.flush(allocation).pipe(Effect.result);
+    const flush =
+      flushed === undefined
+        ? unflushed("This controller has no run client to flush the guest with.", occurredAt)
+        : Result.isSuccess(flushed)
+          ? flushed.success
+          : unflushed(flushed.failure.message, occurredAt);
+    yield* dispatch(allocation, occurredAt, {
+      type: "allocation.idle",
+      commandId: commandId(allocation, "idle"),
+      releaseAt: idleReleaseAt({ settledAt: occurredAt, idleReleaseSeconds }),
+      flush,
+    });
+    yield* Effect.logInfo("Cloud agent settled and started its idle-release timer.", {
+      allocationId: allocation.id,
+      attempt: allocation.attempt,
+      idleReleaseSeconds,
+      workspaceFlush: flush.workspace.status,
+    });
+  });
+
+  /**
+   * Stopping the guest and recording its snapshot are two steps, and a crash
+   * can land between them. The snapshot is therefore written only once AWS
+   * reports the guest stopped, so a re-run after a crash records the same
+   * snapshot instead of losing it or stopping twice.
+   */
+  const release = Effect.fn("CloudAllocationReconciler.release")(function* (
+    allocation: RunAllocation,
+    occurredAt: string,
+  ) {
+    if (allocation.idleState.status !== "idle") return;
+    const instanceId = recordedInstanceId(allocation);
+    if (instanceId === undefined) return;
+    const resources = yield* workers
+      .findAttemptResources({ allocationId: allocation.id, attempt: allocation.attempt })
+      .pipe(Effect.result);
+    if (Result.isFailure(resources)) {
+      yield* Effect.logWarning("Could not read the guest to hibernate.", {
+        allocationId: allocation.id,
+        error: resources.failure.message,
+      });
+      return;
+    }
+    const guest = resources.success.find((resource) => resource.instanceId === instanceId);
+    if (guest === undefined || guest.state === "terminated" || guest.state === "shutting-down") {
+      // There is no disk left to keep. The retained result stays the recovery
+      // boundary, so the allocation is cleaned up rather than left claiming a
+      // snapshot it cannot restore.
+      yield* dispatch(allocation, occurredAt, {
+        type: "allocation.cancel",
+        commandId: commandId(allocation, "hibernate-guest-lost"),
+      });
+      return;
+    }
+    if (guest.state === "stopping") return;
+    if (guest.state !== "stopped") {
+      yield* workers.hibernate(instanceId);
+      return;
+    }
+    const snapshot: RunRuntimeSnapshot = {
+      instanceId,
+      attempt: allocation.attempt,
+      flush: allocation.idleState.flush,
+      capturedAt: occurredAt,
+    };
+    yield* dispatch(allocation, occurredAt, {
+      type: "allocation.hibernate",
+      commandId: commandId(allocation, "hibernate"),
+      snapshot,
+    });
+    yield* Effect.logInfo("Cloud agent hibernated its guest.", {
+      allocationId: allocation.id,
+      attempt: allocation.attempt,
+      instanceId,
+    });
+  });
+
   const reconcileAllocation = Effect.fn("CloudAllocationReconciler.reconcileAllocation")(function* (
     allocation: RunAllocation,
     reviewGraceMillis: number,
     maxInputWaitSeconds: number,
+    idleReleaseSeconds: number,
   ) {
     const now = yield* DateTime.now;
     const occurredAt = DateTime.formatIso(now);
@@ -214,8 +329,7 @@ export const make = Effect.fn("CloudAllocationReconciler.make")(function* (input
       return;
     }
 
-    const completedReviewDeadline = reviewDeadline(allocation, reviewGraceMillis);
-    if (hasPassed(now, allocation.deadlines.expiresAt)) {
+    if (runDeadlineApplies(allocation) && hasPassed(now, allocation.deadlines.expiresAt)) {
       yield* dispatch(allocation, occurredAt, {
         type:
           allocation.agentOutcome.status === "not-started" ||
@@ -226,14 +340,36 @@ export const make = Effect.fn("CloudAllocationReconciler.make")(function* (input
       });
       return;
     }
+    // The review grace ends the preview, not the conversation. It runs on its
+    // own clock, so a settled agent still loses its preview on time whether or
+    // not its guest has already been released.
+    const completedReviewDeadline = reviewDeadline(allocation, reviewGraceMillis);
     if (
       completedReviewDeadline !== undefined &&
+      allocation.previewState.status === "available" &&
       DateTime.toEpochMillis(now) >= completedReviewDeadline
     ) {
       yield* dispatch(allocation, occurredAt, {
-        type: "allocation.cancel",
+        type: "allocation.preview-withdrawn",
         commandId: commandId(allocation, "review-complete"),
       });
+      return;
+    }
+    // A hibernated guest is stopped and costs no compute. Nothing moves it
+    // until a follow-up wakes it, which is what makes the conversation, not
+    // the worker lifetime, decide how long a thread stays open.
+    if (allocation.idleState.status === "hibernated") return;
+    if (allocation.idleState.status === "idle") {
+      if (!isIdleReleaseDue({ allocation, now: occurredAt })) return;
+      yield* release(allocation, occurredAt);
+      return;
+    }
+    if (
+      allocation.idleState.status === "busy" &&
+      allocation.allocationState.status === "ready" &&
+      hasAgentSettled(allocation)
+    ) {
+      yield* settle(allocation, occurredAt, idleReleaseSeconds);
       return;
     }
 
@@ -338,9 +474,13 @@ export const make = Effect.fn("CloudAllocationReconciler.make")(function* (input
 
         const environment = allocation.environment;
         const build = allocation.build;
+        // A hibernated run owns its filesystem. Claiming a warm guest for it
+        // would silently restart the agent on an empty disk, so the retained
+        // snapshot always wins over the warm pool.
+        const snapshot = retainedRuntimeSnapshot(allocation);
         const claimStarted = yield* DateTime.now;
         const claimed =
-          environment === undefined || build === undefined
+          snapshot !== undefined || environment === undefined || build === undefined
             ? undefined
             : yield* warmPool.claim({
                 key: {
@@ -386,6 +526,37 @@ export const make = Effect.fn("CloudAllocationReconciler.make")(function* (input
           return;
         }
         const registrationCredential = yield* registrations.issueCredential(allocation);
+        if (snapshot !== undefined) {
+          const restored = yield* workers
+            .restore({
+              instanceId: snapshot.instanceId,
+              allocationId: allocation.id,
+              attempt: allocation.attempt,
+              selectedRef: allocation.execution?.selectedRef ?? allocation.target.baseCommit,
+              outputBranch: allocation.target.branch,
+              expiresAt: allocation.deadlines.expiresAt,
+              maxInputWaitSeconds,
+              registrationCredential,
+            })
+            .pipe(Effect.result);
+          if (Result.isSuccess(restored)) {
+            yield* dispatch(allocation, occurredAt, {
+              type: "allocation.instance-launched",
+              commandId: commandId(allocation, "instance-launched"),
+              instanceId: restored.success.instanceId,
+            });
+            return;
+          }
+          // The snapshot could not be started. Placing a fresh guest is the
+          // honest fallback; the wake report says the filesystem did not come
+          // back rather than pretending it did.
+          yield* Effect.logWarning("Could not restore a hibernated cloud guest.", {
+            allocationId: allocation.id,
+            attempt: allocation.attempt,
+            instanceId: snapshot.instanceId,
+            error: restored.failure.message,
+          });
+        }
         const launched = yield* workers
           .launch({
             allocationId: allocation.id,
@@ -519,6 +690,37 @@ export const make = Effect.fn("CloudAllocationReconciler.make")(function* (input
         });
         return;
       case "ready": {
+        if (allocation.idleState.status === "waking") {
+          const snapshot = allocation.idleState.snapshot;
+          const restoredInPlace = allocation.allocationState.instanceId === snapshot.instanceId;
+          yield* dispatch(allocation, occurredAt, {
+            type: "allocation.runtime-restored",
+            commandId: commandId(allocation, "runtime-restored"),
+            restore: {
+              filesystem: restoredInPlace
+                ? {
+                    status: "resumed",
+                    detail: `Restored the guest disk from the snapshot taken at ${snapshot.capturedAt}.`,
+                  }
+                : {
+                    status: "not-resumed",
+                    reason:
+                      "The hibernated guest could not be started, so a fresh one was placed from the environment Build.",
+                  },
+              // T3 resumes the thread from its own restored database. The
+              // provider CLI does not resume its native session across a stop.
+              providerSession: {
+                status: "not-resumed",
+                reason:
+                  snapshot.flush.providerHome.status === "unavailable"
+                    ? snapshot.flush.providerHome.reason
+                    : "The provider starts a new native session against the restored workspace.",
+              },
+              restoredAt: occurredAt,
+            },
+          });
+          return;
+        }
         if (allocation.execution === undefined || runClient === undefined) return;
         if (allocation.agentOutcome.status === "not-started") {
           const started = yield* runClient.start(allocation).pipe(Effect.result);
@@ -681,16 +883,38 @@ export const make = Effect.fn("CloudAllocationReconciler.make")(function* (input
     const pending = orderedAllocations(snapshot.allocations).filter(
       (allocation) => allocation.cleanupState.status !== "succeeded",
     );
-    const leased = pending.find(
+    // A hibernated guest holds no compute, so it does not hold the worker
+    // slot either. Waking one makes it active again and puts it back in line.
+    const active = pending.filter((allocation) => allocation.idleState.status !== "hibernated");
+    const occupying = active.filter(
       (allocation) =>
         allocation.allocationState.status !== "queued" ||
         allocation.cleanupState.status !== "not-requested",
     );
-    const next = leased ?? pending[0];
-    if (next !== undefined) {
-      const reviewGraceMillis =
-        input?.reviewGraceMillis ?? snapshot.limits.previewGraceSeconds * 1_000;
-      yield* reconcileAllocation(next, reviewGraceMillis, snapshot.limits.maxInputWaitSeconds);
+    const queued = active.filter(
+      (allocation) =>
+        allocation.allocationState.status === "queued" &&
+        allocation.cleanupState.status === "not-requested",
+    );
+    const reviewGraceMillis =
+      input?.reviewGraceMillis ?? snapshot.limits.previewGraceSeconds * 1_000;
+    const idleReleaseSeconds = input?.idleReleaseSeconds ?? snapshot.limits.idleReleaseSeconds;
+    for (const next of occupying) {
+      yield* reconcileAllocation(
+        next,
+        reviewGraceMillis,
+        snapshot.limits.maxInputWaitSeconds,
+        idleReleaseSeconds,
+      );
+    }
+    const remainingSlots = snapshot.limits.maxConcurrentWorkers - occupying.length;
+    for (const next of queued.slice(0, Math.max(0, remainingSlots))) {
+      yield* reconcileAllocation(
+        next,
+        reviewGraceMillis,
+        snapshot.limits.maxInputWaitSeconds,
+        idleReleaseSeconds,
+      );
     }
   });
 
@@ -713,11 +937,21 @@ export const make = Effect.fn("CloudAllocationReconciler.make")(function* (input
       const allocations = new Map(
         snapshot.allocations.map((allocation) => [allocation.id, allocation]),
       );
+      // A stopped guest an allocation still owns is a snapshot waiting to be
+      // woken. It carries the attempt it hibernated on, which is behind the
+      // attempt a wake already created, so it has to be excluded by identity
+      // before any of the staleness rules below see it.
+      const retained = new Set(
+        snapshot.allocations
+          .map((allocation) => retainedRuntimeSnapshot(allocation)?.instanceId)
+          .filter((instanceId): instanceId is string => instanceId !== undefined),
+      );
 
       yield* Effect.forEach(
         resources,
         (resource) =>
           Effect.gen(function* () {
+            if (retained.has(resource.instanceId)) return;
             if (resource.identity.status === "unmatched") {
               yield* removeAbandonedResource(resource);
               return;

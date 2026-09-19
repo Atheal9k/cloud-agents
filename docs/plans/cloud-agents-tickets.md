@@ -142,17 +142,17 @@ rewritten around the parity model. CA-40 onward adds the missing Cursor
 surfaces. Order below is intentional; ticket numbering does not indicate
 priority.
 
-| Delivery                           | Tickets                                                                                                                                                    | Required result                                                                                                      |
-| ---------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------- |
-| Architecture proof                 | CA-01                                                                                                                                                      | Select one provider and prove T3 reuse, ownership, offline execution, and the basic worker route.                    |
-| Local-hosted web/desktop release   | CA-02, CA-03, CA-04A, CA-04C, CA-06, CA-07, CA-08, CA-09, CA-10, CA-11, CA-14, CA-15, CA-16, CA-17, CA-18, CA-19, CA-23, CA-24, CA-25, CA-27, CA-34, CA-35 | Run the complete single-worker workflow from the local Docker controller. The controller machine must remain online. |
-| Agent/runtime foundation           | CA-40, CA-41, CA-42, CA-59, CA-43, CA-44, CA-45, CA-46                                                                                                     | Split agents/runs from runtimes, create environments with Cursor's setup skills, then pack and hibernate guests.     |
-| Permanent controller deployment    | CA-04B                                                                                                                                                     | Move the controller and new catalogs to an always-on host with safe single-writer cutover.                           |
-| Review and operations improvements | CA-05, CA-12, CA-13, CA-21, CA-33, CA-36                                                                                                                   | Administer environments, Builds, retained agents, review, and preview restore.                                       |
-| Product/API parity                 | CA-47, CA-48, CA-49, CA-50, CA-51, CA-52, CA-53, CA-54, CA-55, CA-56, CA-57, CA-58                                                                         | Match Cursor's API, integrations, collaboration, security, automation, diagnostics, and self-hosted runtime choices. |
-| Mobile development workers         | CA-37, CA-38, CA-39                                                                                                                                        | Build, boot, view, control, and test your Android/iOS app from web/desktop; no T3 native-app publication.            |
-| Existing product expansion         | CA-26, CA-28, CA-29, CA-30, CA-31, CA-32                                                                                                                   | Align handoff, triggers, durable assistants, providers, and private dependencies with the new agent model.           |
-| Deferred native T3 app work        | CA-20, CA-22                                                                                                                                               | Add native T3 iOS/Android client and push integration only when you choose to maintain and distribute those builds.  |
+| Delivery                           | Tickets                                                                                                                                                    | Required result                                                                                                       |
+| ---------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------- |
+| Architecture proof                 | CA-01                                                                                                                                                      | Select one provider and prove T3 reuse, ownership, offline execution, and the basic worker route.                     |
+| Local-hosted web/desktop release   | CA-02, CA-03, CA-04A, CA-04C, CA-06, CA-07, CA-08, CA-09, CA-10, CA-11, CA-14, CA-15, CA-16, CA-17, CA-18, CA-19, CA-23, CA-24, CA-25, CA-27, CA-34, CA-35 | Run the complete single-worker workflow from the local Docker controller. The controller machine must remain online.  |
+| Agent/runtime foundation           | CA-40, CA-41, CA-42, CA-59, CA-43, CA-44, CA-45, CA-46                                                                                                     | Split agents/runs from runtimes, create environments with Cursor's setup skills, then pack and hibernate guests.      |
+| Permanent controller deployment    | CA-04B                                                                                                                                                     | Move the controller and new catalogs to an always-on host with safe single-writer cutover.                            |
+| Review and operations improvements | CA-05, CA-12, CA-13, CA-21, CA-33, CA-36                                                                                                                   | Administer environments, Builds, retained agents, review, and preview restore.                                        |
+| Product/API parity                 | CA-47, CA-48, CA-49, CA-50, CA-51, CA-52, CA-53, CA-54, CA-55, CA-56, CA-57, CA-58                                                                         | Match Cursor's API, integrations, collaboration, security, automation, diagnostics, and self-hosted runtime choices.  |
+| Mobile development workers         | CA-37, CA-38, CA-39                                                                                                                                        | Build, boot, view, control, and test your Android/iOS app from web/desktop; no T3 native-app publication.             |
+| Existing product expansion         | CA-26, CA-28, CA-29, CA-30, CA-32                                                                                                                          | Align handoff, triggers, durable assistants, and private dependencies with the new agent model.                       |
+| Deferred work                      | CA-31, CA-20, CA-22                                                                                                                                        | Qualify further providers, and add the native T3 iOS/Android client and push integration, only when you pick them up. |
 
 ### Dependency-safe implementation waves
 
@@ -162,29 +162,33 @@ is completed in an earlier wave. Tickets in the same row may run in parallel
 because their primary ownership areas do not overlap. Later waves may be
 logically ready sooner, but they stay separate to avoid competing changes to
 the agent model, public contracts, server composition, preview state, or the
-same client screens.
+same client screens. Struck-through tickets are already done. Waves 20 and 21
+hold the deferred tickets; nothing in waves 1 to 19 depends on them, so they
+stay last until you choose to pick them up.
 
 | Wave | Tickets that may run in parallel | Primary ownership boundary                                                                 |
 | ---- | -------------------------------- | ------------------------------------------------------------------------------------------ |
-| 1    | CA-40                            | Durable agent, run, and runtime model.                                                     |
-| 2    | CA-41                            | Environment model and config resolution.                                                   |
-| 3    | CA-04B, CA-48                    | Controller deployment and host cutover; artifact, computer-use, and desktop-viewing paths. |
-| 4    | CA-42                            | Build records, preparation, and activation.                                                |
-| 5    | CA-43                            | Runtime snapshot, hibernate, and wake lifecycle.                                           |
-| 6    | CA-31, CA-38, CA-46              | Provider adapters; macOS worker infrastructure; retention and deletion services.           |
-| 7    | CA-44                            | Linux fleet and Firecracker runtime infrastructure.                                        |
+| 1    | ~~CA-40~~                        | Durable agent, run, and runtime model.                                                     |
+| 2    | ~~CA-41~~                        | Environment model and config resolution.                                                   |
+| 3    | ~~CA-04B~~, ~~CA-48~~            | Controller deployment and host cutover; artifact, computer-use, and desktop-viewing paths. |
+| 4    | ~~CA-42~~                        | Build records, preparation, and activation.                                                |
+| 5    | ~~CA-43~~                        | Runtime snapshot, hibernate, and wake lifecycle.                                           |
+| 6    | CA-38, CA-46                     | macOS worker infrastructure; retention and deletion services.                              |
+| 7    | ~~CA-44~~                        | Linux fleet and Firecracker runtime infrastructure.                                        |
 | 8    | CA-21, CA-45                     | Retained-results review UI; fleet capacity and Build pre-warming.                          |
 | 9    | CA-05, CA-37, CA-47              | AWS settings UI; Android worker profile; public Cloud Agents API.                          |
 | 10   | CA-49                            | Shared secret, identity, encryption, and network policy.                                   |
 | 11   | CA-12, CA-13, CA-26              | Environment recipes; event-stream performance; local/cloud handoff.                        |
 | 12   | CA-36, CA-51, CA-55              | Preview leases; provider extensibility; usage and audit accounting.                        |
 | 13   | CA-32, CA-50                     | Private dependency networking; source-control and collaboration entry points.              |
-| 14   | CA-20, CA-56, CA-58              | Native T3 mobile controls; multi-repository environments; self-hosted pools.               |
+| 14   | CA-56, CA-58                     | Multi-repository environments; self-hosted pools.                                          |
 | 15   | CA-28, CA-39, CA-57, CA-59       | Scheduling; simulator display; commit signing; repository-owned environment setup.         |
 | 16   | CA-29, CA-30, CA-33              | GitHub triggers; persistent assistants; remote administration UI.                          |
 | 17   | CA-52                            | Subscription wake and CI autofix.                                                          |
-| 18   | CA-22, CA-53                     | Native push; generalized automations.                                                      |
+| 18   | CA-53                            | Generalized automations.                                                                   |
 | 19   | CA-54                            | Outbound webhooks and typed SDKs.                                                          |
+| 20   | CA-31, CA-20                     | Deferred: provider adapters; native T3 mobile controls.                                    |
+| 21   | CA-22                            | Deferred: native push and mobile activity integration.                                     |
 
 Within a parallel wave, each ticket owns only the area named in the third
 column. Before the wave starts, assign any shared schema, migration,
@@ -200,7 +204,7 @@ CA-28 provides the base scheduler that CA-53 generalizes. CA-29 provides the
 GitHub trigger behavior that CA-52 uses for subscription wake and CI autofix.
 These directions avoid the previous circular dependencies.
 
-Mobile development is committed follow-on scope, not dependent on the optional product expansion or deferred native T3 app work. Run platform feasibility checks early before spending time on simulator UI. Android and iOS can be implemented independently; CA-39 passes separately for each and both must pass before claiming support for both platforms.
+Mobile development is committed follow-on scope, not dependent on the optional product expansion or the deferred work. Run platform feasibility checks early before spending time on simulator UI. Android and iOS can be implemented independently; CA-39 passes separately for each and both must pass before claiming support for both platforms.
 
 Completed tickets are not reopened merely because their original acceptance
 criteria described the old one-EC2-per-thread limit. New parity tickets
@@ -888,6 +892,8 @@ Acceptance criteria:
 
 ### CA-43: Hibernate idle agents and wake from snapshots
 
+Status: Done on 19 September 2026 in [PR #32](https://github.com/Atheal9k/cloud-agents/pull/32).
+
 Dependencies: CA-14, CA-17, CA-40, CA-42.
 
 Description: Make idle compute release the default cost boundary.
@@ -909,6 +915,8 @@ Acceptance criteria:
   reconciled without two writers or acknowledged-result loss.
 
 ### CA-44: Isolate and pack Linux runtimes on a managed fleet
+
+Status: Done on 19 September 2026 in [PR #34](https://github.com/Atheal9k/cloud-agents/pull/34).
 
 Dependencies: CA-03, CA-07, CA-40, CA-42, CA-43.
 
@@ -1382,23 +1390,6 @@ Acceptance criteria:
   subscriptions, credentials, and retained snapshots.
 - Each writable workspace has one owner and all runs retain the ordinary limits and history.
 
-### CA-31: Qualify additional providers
-
-Dependencies: CA-01, CA-07, CA-11, CA-15, CA-23, CA-40, CA-43.
-
-Description: Enable remaining providers individually after the first selected provider works reliably.
-
-Acceptance criteria:
-
-- Codex, Claude, Cursor, Grok, OpenCode, and Antigravity each receive an enabled, unsupported, or blocked status with evidence.
-- Every enabled provider passes remote login, execution, streaming,
-  interruption, idle snapshot/wake, auth/quota failure, and cleanup on its
-  advertised runtime.
-- Filesystem restore, provider-native resume, context transfer, model
-  switching, and computer use are reported as distinct capabilities.
-- Accounts/instances cannot share mutable credentials or sessions accidentally.
-- Unsupported options are rejected before allocation and switching provider does not pretend native history transferred.
-
 ### CA-32: Add private dependencies and company-network profiles
 
 Dependencies: CA-03, CA-06, CA-07, CA-12, CA-18, CA-41, CA-42, CA-49.
@@ -1418,13 +1409,38 @@ Acceptance criteria:
   profiles expose cost, trust, and routing changes.
 - Report the failing dependency/destination and support disabling the profile without stranding runs.
 
-## Deferred native T3 app work
+## Deferred work
 
-These are lowest-priority optional tickets. They are not prerequisites for any web, desktop, Android-worker, or iOS-worker ticket. No native app publication is included in the current implementation scope.
+These are lowest-priority optional tickets. They are not prerequisites for any
+web, desktop, Android-worker, or iOS-worker ticket. The selected provider from
+CA-01 remains the only cloud-executable provider, and no native T3 app
+publication is included in the current implementation scope.
+
+### CA-31: Qualify additional providers
+
+Dependencies: CA-01, CA-07, CA-11, CA-15, CA-23, CA-40, CA-43.
+
+Status: Deferred. Nothing else depends on it; cloud execution stays on the
+provider selected in CA-01 until this is picked up.
+
+Description: Enable remaining providers individually after the first selected provider works reliably.
+
+Acceptance criteria:
+
+- Codex, Claude, Cursor, Grok, OpenCode, and Antigravity each receive an enabled, unsupported, or blocked status with evidence.
+- Every enabled provider passes remote login, execution, streaming,
+  interruption, idle snapshot/wake, auth/quota failure, and cleanup on its
+  advertised runtime.
+- Filesystem restore, provider-native resume, context transfer, model
+  switching, and computer use are reported as distinct capabilities.
+- Accounts/instances cannot share mutable credentials or sessions accidentally.
+- Unsupported options are rejected before allocation and switching provider does not pretend native history transferred.
 
 ### CA-20: Add cloud controls to the native T3 mobile client
 
 Dependencies: CA-19, CA-21, CA-25, CA-34, CA-35, CA-36, CA-40, CA-47.
+
+Status: Deferred. Responsive web remains the supported phone/tablet route.
 
 Description: Match Cursor's mobile agent-management surface when the owner
 chooses to distribute a compatible T3 iOS app. Android may remain an installable
@@ -1445,6 +1461,8 @@ Acceptance criteria:
 ### CA-22: Add native push and mobile activity integration
 
 Dependencies: CA-20, CA-21, CA-40, CA-52.
+
+Status: Deferred. It cannot start before CA-20.
 
 Description: Extend T3's native notification infrastructure when a distributable personal mobile client exists. Core web/desktop status does not depend on it.
 
