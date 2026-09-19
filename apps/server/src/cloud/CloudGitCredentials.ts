@@ -118,6 +118,12 @@ export class CloudGitCredentials extends Context.Service<
       readonly repository: string;
       readonly number: number;
     }) => Effect.Effect<void, CloudGitCredentialError>;
+    /** Submodule and LFS fetch use the same SSH wrapper as clone. Task code never sees the key. */
+    readonly syncPrivateGitDependencies: (input: {
+      readonly runId: string;
+      readonly cwd: string;
+      readonly kinds: ReadonlyArray<"submodule" | "lfs">;
+    }) => Effect.Effect<void, CloudGitCredentialError>;
   }
 >()("t3/cloud/CloudGitCredentials") {}
 
@@ -153,7 +159,7 @@ function classifySecretReadFailure(stderr: string): CloudGitCredentialError {
 
 function classifyGitFailure(
   stderr: string,
-  operation: "clone" | "fetch" | "inspect" | "push",
+  operation: "clone" | "fetch" | "inspect" | "push" | "submodule" | "lfs",
 ): CloudGitCredentialError {
   const normalized = stderr.toLowerCase();
   if (normalized.includes("host key verification failed")) {
@@ -181,6 +187,18 @@ function classifyGitFailure(
       "push-rejected",
       "GitHub rejected the branch update because the remote branch changed.",
     );
+  }
+  if (operation === "submodule") {
+    const submodulePath = /Submodule path '([^']+)'/.exec(stderr)?.[1];
+    return error(
+      "git-failed",
+      submodulePath === undefined
+        ? "The trusted Git submodule update failed."
+        : `The trusted Git submodule update failed for '${submodulePath}'.`,
+    );
+  }
+  if (operation === "lfs") {
+    return error("git-failed", "The trusted Git LFS fetch failed.");
   }
   return error("git-failed", `The trusted Git ${operation} failed.`);
 }
@@ -435,6 +453,39 @@ export const make = Effect.fn("CloudGitCredentials.make")(function* (input: {
         });
       }),
     );
+
+  const runWorkspaceGit = Effect.fn("CloudGitCredentials.runWorkspaceGit")(function* (input: {
+    readonly operation: "submodule" | "lfs";
+    readonly runId: string;
+    readonly cwd: string;
+    readonly args: ReadonlyArray<string>;
+    readonly extraEnv?: Readonly<Record<string, string>>;
+  }) {
+    return yield* withSshCredential(input.runId, ({ gitEnvironment }) =>
+      runner
+        .run({
+          command: "git",
+          args: [...input.args],
+          cwd: input.cwd,
+          env: { ...gitEnvironment, ...input.extraEnv },
+          timeout: DEFAULT_COMMAND_TIMEOUT,
+          maxOutputBytes: 1024 * 1024,
+        })
+        .pipe(
+          Effect.mapError(() =>
+            error(
+              "git-failed",
+              `The controller could not start the trusted Git ${input.operation}.`,
+            ),
+          ),
+          Effect.flatMap((result) =>
+            result.code === ChildProcessSpawner.ExitCode(0)
+              ? Effect.succeed(result)
+              : Effect.fail(classifyGitFailure(result.stderr, input.operation)),
+          ),
+        ),
+    );
+  });
 
   const runGit = Effect.fn("CloudGitCredentials.runGit")(function* (input: {
     readonly operation: "clone" | "fetch" | "inspect" | "push";
@@ -809,6 +860,28 @@ export const make = Effect.fn("CloudGitCredentials.make")(function* (input: {
       );
     });
 
+  const syncPrivateGitDependencies: CloudGitCredentials["Service"]["syncPrivateGitDependencies"] = (
+    request,
+  ) =>
+    Effect.gen(function* () {
+      if (request.kinds.includes("submodule")) {
+        yield* runWorkspaceGit({
+          operation: "submodule",
+          runId: request.runId,
+          cwd: request.cwd,
+          args: ["submodule", "update", "--init", "--recursive"],
+        });
+      }
+      if (request.kinds.includes("lfs")) {
+        yield* runWorkspaceGit({
+          operation: "lfs",
+          runId: request.runId,
+          cwd: request.cwd,
+          args: ["lfs", "pull"],
+        });
+      }
+    });
+
   return CloudGitCredentials.of({
     clone,
     fetch,
@@ -818,6 +891,7 @@ export const make = Effect.fn("CloudGitCredentials.make")(function* (input: {
     findPullRequest,
     createDraftPullRequest,
     closePullRequest,
+    syncPrivateGitDependencies,
   });
 });
 

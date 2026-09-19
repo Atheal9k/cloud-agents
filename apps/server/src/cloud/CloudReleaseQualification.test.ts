@@ -164,6 +164,7 @@ it.layer(TestLayer)("cloud release qualification", (it) => {
             Effect.sync(() => {
               pullRequest = null;
             }),
+          syncPrivateGitDependencies: () => Effect.void,
         });
 
         const recipe: CloudRepositoryRecipe = {

@@ -17,6 +17,14 @@ import {
   ThreadId,
   TrimmedNonEmptyString,
 } from "./baseSchemas.ts";
+import {
+  CloudAuditEvent,
+  CloudInvoiceLine,
+  CloudSpendLimit,
+  CloudSpendPrincipal,
+  CloudUsageDimension,
+  CloudCollaborationDefault,
+} from "./cloudAccounting.ts";
 import { ExecutionEnvironmentPlatformArch, ExecutionEnvironmentPlatformOs } from "./environment.ts";
 import { CloudProviderTurnInput, CloudProviderUnansweredRequestSeconds } from "./cloudExecution.ts";
 import { CloudEnvironment, CloudEnvironmentVersionReference } from "./cloudEnvironment.ts";
@@ -603,6 +611,8 @@ export const RunAllocationCommand = Schema.Union([
     control: Schema.optionalKey(RunControlPlaneLink),
     profile: RunWorkerProfile,
     deadlines: RunDeadlines,
+    /** Missing on launches written before spend attribution. */
+    principal: Schema.optionalKey(CloudSpendPrincipal),
   }),
   Schema.Struct({
     ...AttemptCommandBase,
@@ -686,6 +696,8 @@ export const RunAllocationCommand = Schema.Union([
     runId: CloudRunId,
     execution: RunExecutionIntent,
     deadlines: RunDeadlines,
+    /** Missing on follow-ups written before spend attribution. */
+    principal: Schema.optionalKey(CloudSpendPrincipal),
   }),
   Schema.Struct({ ...AttemptCommandBase, type: Schema.Literal("allocation.snapshot-expire") }),
   Schema.Struct({ ...AttemptCommandBase, type: Schema.Literal("allocation.agent-archive") }),
@@ -865,8 +877,14 @@ export type CloudAllocationControllerWritability = typeof CloudAllocationControl
  */
 export const CloudControllerDefaults = Schema.Struct({
   model: Schema.optionalKey(TrimmedNonEmptyString),
+  context: Schema.optionalKey(TrimmedNonEmptyString),
   repository: Schema.optionalKey(TrimmedNonEmptyString),
   ref: Schema.optionalKey(TrimmedNonEmptyString),
+  longRunning: Schema.optionalKey(Schema.Boolean),
+  computerUse: Schema.optionalKey(Schema.Boolean),
+  summaries: Schema.optionalKey(Schema.Boolean),
+  artifactsToGit: Schema.optionalKey(Schema.Boolean),
+  collaboration: Schema.optionalKey(CloudCollaborationDefault),
 });
 export type CloudControllerDefaults = typeof CloudControllerDefaults.Type;
 
@@ -935,6 +953,16 @@ export const CloudRunCostCategory = Schema.Union([
 ]);
 export type CloudRunCostCategory = typeof CloudRunCostCategory.Type;
 
+const NonNegativeUsageQuantity = Schema.Finite.check(Schema.isGreaterThanOrEqualTo(0));
+
+export const CloudUsageMeter = Schema.Struct({
+  dimension: CloudUsageDimension,
+  quantity: NonNegativeUsageQuantity,
+  unit: TrimmedNonEmptyString,
+  cost: CloudRunCostCategory,
+});
+export type CloudUsageMeter = typeof CloudUsageMeter.Type;
+
 export const CloudRunUsage = Schema.Struct({
   allocationId: RunAllocationId,
   attempt: RunAllocationAttempt,
@@ -951,6 +979,9 @@ export const CloudRunUsage = Schema.Struct({
     provider: CloudRunCostCategory,
     streamingTransfer: CloudRunCostCategory,
   }),
+  /** Absent when decoding usage from controllers older than CA-55. */
+  meters: Schema.optionalKey(Schema.Array(CloudUsageMeter)),
+  principal: Schema.optionalKey(CloudSpendPrincipal),
 });
 export type CloudRunUsage = typeof CloudRunUsage.Type;
 
@@ -964,8 +995,11 @@ export const CloudAllocationSnapshot = Schema.Struct({
   controller: CloudAllocationControllerStatus,
   limits: CloudAllocationLimits,
   workerPriceAssumptions: Schema.Array(CloudWorkerPriceAssumption),
-  /** Billing alerts can lag and are not an exact live spending cap. */
-  spendingControl: Schema.Literal("estimate-only"),
+  /**
+   * `estimate-only` until an operator sets a spend cap. A hard cap rejects
+   * launch and follow-up before compute; cleanup and review stay available.
+   */
+  spendingControl: Schema.Literals(["estimate-only", "hard-cap"]),
   allocations: Schema.Array(RunAllocation),
   /** Absent when decoding snapshots from controllers older than CA-40. */
   agents: Schema.optionalKey(Schema.Array(CloudAgent)),
@@ -986,6 +1020,10 @@ export const CloudAllocationSnapshot = Schema.Struct({
   /** Absent when decoding snapshots from controllers older than CA-46. */
   deletions: Schema.optionalKey(Schema.Array(CloudAgentDeletion)),
   usage: Schema.Array(CloudRunUsage),
+  /** Absent when decoding snapshots from controllers older than CA-55. */
+  spendLimits: Schema.optionalKey(Schema.Array(CloudSpendLimit)),
+  invoices: Schema.optionalKey(Schema.Array(CloudInvoiceLine)),
+  audit: Schema.optionalKey(Schema.Array(CloudAuditEvent)),
 });
 export type CloudAllocationSnapshot = typeof CloudAllocationSnapshot.Type;
 
@@ -1003,6 +1041,7 @@ export class CloudAllocationControllerError extends Schema.TaggedError<CloudAllo
       "run-already-exists",
       "invalid-request",
       "queue-full",
+      "spend-limit-exceeded",
       "persistence-failed",
       "invalid-persisted-event",
     ]),

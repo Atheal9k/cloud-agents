@@ -120,6 +120,7 @@ it.layer(NodeServices.layer)("CloudRepositoryPreparation", (it) => {
       findPullRequest: () => Effect.die("PR inspection should not run during preparation"),
       createDraftPullRequest: () => Effect.die("PR creation should not run during preparation"),
       closePullRequest: () => Effect.die("PR deletion should not run during preparation"),
+      syncPrivateGitDependencies: () => Effect.void,
     });
     const preparation = yield* make({
       workspaceRoot,

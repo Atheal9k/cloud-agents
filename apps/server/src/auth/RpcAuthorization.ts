@@ -69,6 +69,10 @@ export const RPC_REQUIRED_SCOPES = {
   [WS_METHODS.cloudAllocationList]: AuthOrchestrationReadScope,
   [WS_METHODS.cloudAllocationSetAdmission]: AuthOrchestrationOperateScope,
   [WS_METHODS.cloudAllocationSetDefaults]: AuthOrchestrationOperateScope,
+  [WS_METHODS.cloudAccountingSetSpendLimit]: AuthOrchestrationOperateScope,
+  [WS_METHODS.cloudAccountingRecordInvoice]: AuthOrchestrationOperateScope,
+  [WS_METHODS.cloudAccountingExport]: AuthOrchestrationReadScope,
+  [WS_METHODS.cloudAccountingListAudit]: AuthOrchestrationReadScope,
   [WS_METHODS.cloudReadinessGet]: AuthOrchestrationReadScope,
   // The probes spend AWS calls and touch the controller's disk, so reading the
   // report is not enough to run them.

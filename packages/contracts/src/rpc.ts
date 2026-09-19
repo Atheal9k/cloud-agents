@@ -280,6 +280,15 @@ import {
   RunAllocationCommand,
 } from "./cloudAllocation.ts";
 import {
+  CloudAuditEvent,
+  CloudAuditListInput,
+  CloudInvoiceInput,
+  CloudInvoiceLine,
+  CloudSpendLimitInput,
+  CloudUsageExport,
+  CloudUsageExportInput,
+} from "./cloudAccounting.ts";
+import {
   CloudGuidedSetupInput,
   CloudGuidedSetupResult,
   CloudReadinessCheckInput,
@@ -450,6 +459,10 @@ export const WS_METHODS = {
   cloudAllocationList: "cloud.allocations.list",
   cloudAllocationSetAdmission: "cloud.allocations.setAdmission",
   cloudAllocationSetDefaults: "cloud.allocations.setDefaults",
+  cloudAccountingSetSpendLimit: "cloud.accounting.setSpendLimit",
+  cloudAccountingRecordInvoice: "cloud.accounting.recordInvoice",
+  cloudAccountingExport: "cloud.accounting.export",
+  cloudAccountingListAudit: "cloud.accounting.listAudit",
   cloudReadinessGet: "cloud.readiness.get",
   cloudReadinessCheck: "cloud.readiness.check",
   cloudReadinessGuidedSetup: "cloud.readiness.guidedSetup",
@@ -768,6 +781,30 @@ const WsCloudAllocationSetAdmissionRpc = Rpc.make(WS_METHODS.cloudAllocationSetA
 const WsCloudAllocationSetDefaultsRpc = Rpc.make(WS_METHODS.cloudAllocationSetDefaults, {
   payload: CloudControllerDefaultsInput,
   success: CloudAllocationSnapshot,
+  error: Schema.Union([CloudAllocationControllerError, EnvironmentAuthorizationError]),
+});
+
+const WsCloudAccountingSetSpendLimitRpc = Rpc.make(WS_METHODS.cloudAccountingSetSpendLimit, {
+  payload: CloudSpendLimitInput,
+  success: CloudAllocationSnapshot,
+  error: Schema.Union([CloudAllocationControllerError, EnvironmentAuthorizationError]),
+});
+
+const WsCloudAccountingRecordInvoiceRpc = Rpc.make(WS_METHODS.cloudAccountingRecordInvoice, {
+  payload: CloudInvoiceInput,
+  success: CloudInvoiceLine,
+  error: Schema.Union([CloudAllocationControllerError, EnvironmentAuthorizationError]),
+});
+
+const WsCloudAccountingExportRpc = Rpc.make(WS_METHODS.cloudAccountingExport, {
+  payload: CloudUsageExportInput,
+  success: CloudUsageExport,
+  error: Schema.Union([CloudAllocationControllerError, EnvironmentAuthorizationError]),
+});
+
+const WsCloudAccountingListAuditRpc = Rpc.make(WS_METHODS.cloudAccountingListAudit, {
+  payload: CloudAuditListInput,
+  success: Schema.Array(CloudAuditEvent),
   error: Schema.Union([CloudAllocationControllerError, EnvironmentAuthorizationError]),
 });
 
@@ -1696,6 +1733,10 @@ export const WsRpcGroup = RpcGroup.make(
   WsCloudEnvironmentBuildSaveRpc,
   WsCloudEnvironmentBuildStaleThresholdRpc,
   WsCloudAllocationSetDefaultsRpc,
+  WsCloudAccountingSetSpendLimitRpc,
+  WsCloudAccountingRecordInvoiceRpc,
+  WsCloudAccountingExportRpc,
+  WsCloudAccountingListAuditRpc,
   WsCloudReadinessGetRpc,
   WsCloudReadinessCheckRpc,
   WsCloudReadinessGuidedSetupRpc,

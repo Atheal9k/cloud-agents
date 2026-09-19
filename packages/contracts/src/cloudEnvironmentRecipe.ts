@@ -8,6 +8,11 @@ import {
 } from "./cloudEnvironment.ts";
 import { cloudEnvironmentBuildSecrets } from "./cloudEnvironmentBuild.ts";
 import {
+  type CloudPrivateDependency,
+  cloudPrivateDependencyHost,
+  isCloudProtectedSecretName,
+} from "./cloudPrivateNetwork.ts";
+import {
   type CloudRepositoryCommand,
   CloudRepositoryCommandResult,
   type CloudRepositoryRecipe,
@@ -199,6 +204,37 @@ export function admitCloudEnvironmentBuild(input: {
     }
   }
 
+  const secretNames = new Set(version.secretReferences.map((secret) => secret.name));
+  const privateDependencyIds = new Set<string>();
+  for (const dependency of version.config.privateDependencies ?? []) {
+    if (privateDependencyIds.has(dependency.id)) {
+      return {
+        status: "rejected",
+        message: `Private dependency '${dependency.id}' is listed more than once.`,
+      };
+    }
+    privateDependencyIds.add(dependency.id);
+    const host = cloudPrivateDependencyHost(dependency.destination);
+    if (host === undefined) {
+      return {
+        status: "rejected",
+        message: `Private ${dependency.kind} '${dependency.id}' has no usable destination host.`,
+      };
+    }
+    if (dependency.secretName !== undefined && !secretNames.has(dependency.secretName)) {
+      return {
+        status: "rejected",
+        message: `Private ${dependency.kind} '${dependency.id}' needs secret '${dependency.secretName}', which is not declared.`,
+      };
+    }
+    if (dependency.secretName !== undefined && isCloudProtectedSecretName(dependency.secretName)) {
+      return {
+        status: "rejected",
+        message: `Private ${dependency.kind} '${dependency.id}' cannot use protected secret '${dependency.secretName}'.`,
+      };
+    }
+  }
+
   const ports = new Set<number>();
   for (const port of version.config.ports ?? []) {
     if (ports.has(port.port)) {
@@ -252,6 +288,60 @@ export function injectCloudEnvironmentSecrets(input: {
     if (secret.availability !== "runtime") redact.push(value);
   }
   return { env, redact };
+}
+
+function privateDependencySecretNames(
+  dependencies: ReadonlyArray<CloudPrivateDependency>,
+): ReadonlySet<string> {
+  return new Set(
+    dependencies.flatMap((dependency) =>
+      dependency.secretName === undefined ? [] : [dependency.secretName],
+    ),
+  );
+}
+
+/**
+ * When the environment lists private dependencies, only those named secrets
+ * reach setup/task code. Protected publication prefixes never do.
+ */
+export function injectCloudPrivateDependencySecrets(input: {
+  readonly phase: CloudEnvironmentSecretPhase;
+  readonly secrets: ReadonlyArray<CloudEnvironmentSecretReference>;
+  readonly privateDependencies: ReadonlyArray<CloudPrivateDependency>;
+  readonly values: Readonly<Record<string, string>>;
+}): {
+  readonly env: Record<string, string>;
+  readonly redact: ReadonlyArray<string>;
+} {
+  const named = privateDependencySecretNames(input.privateDependencies);
+  const eligible =
+    named.size === 0 ? input.secrets : input.secrets.filter((secret) => named.has(secret.name));
+  return injectCloudEnvironmentSecrets({
+    phase: input.phase,
+    secrets: eligible.filter((secret) => !isCloudProtectedSecretName(secret.name)),
+    values: input.values,
+  });
+}
+
+export function missingCloudPrivateDependencySecrets(input: {
+  readonly phase: CloudEnvironmentSecretPhase;
+  readonly secrets: ReadonlyArray<CloudEnvironmentSecretReference>;
+  readonly privateDependencies: ReadonlyArray<CloudPrivateDependency>;
+  readonly values: Readonly<Record<string, string>>;
+}): ReadonlyArray<CloudEnvironmentSecretReference> {
+  const named = privateDependencySecretNames(input.privateDependencies);
+  const expected = (
+    named.size === 0
+      ? input.phase === "build"
+        ? cloudEnvironmentBuildSecrets(input.secrets)
+        : input.secrets.filter(
+            (secret) =>
+              secret.availability === "runtime" || secret.availability === "runtime-redacted",
+          )
+      : input.secrets.filter((secret) => named.has(secret.name))
+  ).filter((secret) => !isCloudProtectedSecretName(secret.name));
+  const injected = injectCloudPrivateDependencySecrets(input);
+  return expected.filter((secret) => injected.env[secret.name] === undefined);
 }
 
 export function missingCloudEnvironmentSecrets(input: {
