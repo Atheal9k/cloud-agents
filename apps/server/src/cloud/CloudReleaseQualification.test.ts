@@ -14,6 +14,7 @@ import {
   type CloudRepositoryRecipe,
   type OrchestrationThreadDetailSnapshot,
   type RunAllocation,
+  emptyCloudSessionLeases,
 } from "@t3tools/contracts";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
@@ -297,6 +298,8 @@ it.layer(TestLayer)("cloud release qualification", (it) => {
             completedAt: NOW,
           },
           previewState: { status: "unavailable" },
+          leases: emptyCloudSessionLeases(),
+          attemptPurpose: "run",
           idleState: { status: "busy" },
           cleanupState: { status: "requested", requestedAt: NOW },
           handledCommandIds: [],

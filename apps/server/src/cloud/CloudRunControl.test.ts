@@ -5,6 +5,7 @@ import {
   CloudRunRetryInput,
   RunAllocation,
   type RunAllocationCommand,
+  emptyCloudSessionLeases,
 } from "@t3tools/contracts";
 import { expect, it } from "@effect/vitest";
 import * as Effect from "effect/Effect";
@@ -51,6 +52,8 @@ function runningAllocation() {
     },
     agentOutcome: { status: "running", startedAt: NOW },
     previewState: { status: "unavailable" },
+    leases: emptyCloudSessionLeases(),
+    attemptPurpose: "run",
     idleState: { status: "busy" },
     cleanupState: { status: "not-requested" },
     handledCommandIds: [],
@@ -174,7 +177,8 @@ function fixture(initial: RunAllocation, options?: { readonly captureFails?: boo
           maxQueueDepth: 8,
           maxRunSeconds: 7_200,
           maxInputWaitSeconds: 900,
-          previewGraceSeconds: 900,
+          previewLeaseSeconds: 900,
+          previewLeaseMaxSeconds: 3600,
           idleReleaseSeconds: 3_600,
           conversationRetentionDays: 0,
           allowedInstanceTypes: ["t3.medium"],

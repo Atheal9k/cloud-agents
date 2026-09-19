@@ -1,10 +1,15 @@
 import {
+  CLOUD_RUNTIME_REOPEN_PATH,
+  CLOUD_SESSION_EDITS_PATH,
+  CloudRuntimeReopen,
+  CloudSessionEdits,
   CommandId,
   DispatchResult,
   OrchestrationThreadDetailSnapshot,
   ProjectId,
   RunRuntimeFlush,
   type ClientOrchestrationCommand,
+  type CloudEnvironmentVersion,
   type RunAllocation,
 } from "@t3tools/contracts";
 import * as Context from "effect/Context";
@@ -20,7 +25,7 @@ export type CloudWorkerTurnStatus = "running" | "succeeded" | "failed";
 export class CloudWorkerRunClientError extends Schema.TaggedError<CloudWorkerRunClientError>()(
   "CloudWorkerRunClientError",
   {
-    stage: Schema.Literals(["start", "status", "flush"]),
+    stage: Schema.Literals(["start", "status", "flush", "reopen", "session-edits"]),
     message: Schema.String,
   },
 ) {}
@@ -41,6 +46,15 @@ export class CloudWorkerRunClient extends Context.Service<
     readonly flush: (
       allocation: RunAllocation,
     ) => Effect.Effect<RunRuntimeFlush, CloudWorkerRunClientError>;
+    /** Runs the environment's per-boot `start` on a woken guest. Submits no turn. */
+    readonly reopen: (
+      allocation: RunAllocation,
+      version: CloudEnvironmentVersion,
+    ) => Effect.Effect<CloudRuntimeReopen, CloudWorkerRunClientError>;
+    /** Captures the edits a person made by hand during a reopened session. */
+    readonly sessionEdits: (
+      allocation: RunAllocation,
+    ) => Effect.Effect<CloudSessionEdits, CloudWorkerRunClientError>;
   }
 >()("t3/cloud/CloudWorkerRunClient") {}
 
@@ -241,7 +255,63 @@ export const make = Effect.fn("CloudWorkerRunClient.make")(function* () {
     },
   );
 
-  return CloudWorkerRunClient.of({ start, status, threadDetail, flush });
+  const reopen: CloudWorkerRunClient["Service"]["reopen"] = Effect.fn(
+    "CloudWorkerRunClient.reopen",
+  )(function* (allocation, version) {
+    const run = readyRun(allocation);
+    if (run === null) {
+      return yield* clientError("reopen", "The allocation has no ready worker execution route.");
+    }
+    return yield* HttpClientRequest.post(
+      requestUrl(run.route.httpBaseUrl, CLOUD_RUNTIME_REOPEN_PATH),
+    ).pipe(
+      HttpClientRequest.bearerToken(run.route.accessToken),
+      HttpClientRequest.bodyJson({
+        allocationId: allocation.id,
+        attempt: allocation.attempt,
+        threadId: run.execution.threadId,
+        version,
+      }),
+      Effect.flatMap(client.execute),
+      Effect.timeout("60 seconds"),
+      Effect.flatMap(HttpClientResponse.filterStatusOk),
+      Effect.flatMap(HttpClientResponse.schemaBodyJson(CloudRuntimeReopen)),
+      Effect.mapError(() =>
+        clientError("reopen", "The worker could not reopen its environment services."),
+      ),
+    );
+  });
+
+  const sessionEdits: CloudWorkerRunClient["Service"]["sessionEdits"] = Effect.fn(
+    "CloudWorkerRunClient.sessionEdits",
+  )(function* (allocation) {
+    const run = readyRun(allocation);
+    if (run === null) {
+      return yield* clientError(
+        "session-edits",
+        "The allocation has no ready worker execution route.",
+      );
+    }
+    return yield* HttpClientRequest.post(
+      requestUrl(run.route.httpBaseUrl, CLOUD_SESSION_EDITS_PATH),
+    ).pipe(
+      HttpClientRequest.bearerToken(run.route.accessToken),
+      HttpClientRequest.bodyJson({
+        allocationId: allocation.id,
+        attempt: allocation.attempt,
+        threadId: run.execution.threadId,
+      }),
+      Effect.flatMap(client.execute),
+      Effect.timeout("60 seconds"),
+      Effect.flatMap(HttpClientResponse.filterStatusOk),
+      Effect.flatMap(HttpClientResponse.schemaBodyJson(CloudSessionEdits)),
+      Effect.mapError(() =>
+        clientError("session-edits", "The worker could not capture the session edits."),
+      ),
+    );
+  });
+
+  return CloudWorkerRunClient.of({ start, status, threadDetail, flush, reopen, sessionEdits });
 });
 
 export const layer = Layer.effect(CloudWorkerRunClient, make());

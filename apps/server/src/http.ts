@@ -6,6 +6,12 @@ import {
   CloudRunResultId,
   CLOUD_AGENT_REVIEW_PAGE_PREFIX,
   CLOUD_AGENT_REVIEW_SHARE_PREFIX,
+  CLOUD_RUNTIME_REOPEN_PATH,
+  CLOUD_SESSION_EDITS_PATH,
+  CloudRuntimeReopen,
+  CloudRuntimeReopenInput,
+  CloudSessionEdits,
+  CloudSessionEditsInput,
   type CloudResultRetentionStatus,
   EnvironmentHttpApi,
 } from "@t3tools/contracts";
@@ -46,6 +52,7 @@ import * as EnvironmentAuth from "./auth/EnvironmentAuth.ts";
 import { traceRelayRequest } from "./cloud/traceRelayRequest.ts";
 import * as CloudArtifactAccess from "./cloud/CloudArtifactAccess.ts";
 import * as CloudAgentReview from "./cloud/CloudAgentReview.ts";
+import { captureCloudSessionEdits, CloudWorkerSession } from "./cloud/CloudWorkerReopen.ts";
 import { renderCloudAgentReviewPage } from "./cloud/cloudAgentReviewPage.ts";
 import * as CloudRunResults from "./cloud/CloudRunResults.ts";
 import {
@@ -529,6 +536,61 @@ export const cloudResultRouteLayer = Layer.mergeAll(
   HttpRouter.add("GET", `${CLOUD_RESULT_PAGE_PREFIX}*`, handleCloudResultPage),
   HttpRouter.add("GET", `${CLOUD_RESULT_DOWNLOAD_PREFIX}*`, handleCloudResultDownload),
   HttpRouter.add("GET", `${CLOUD_ARTIFACT_ACCESS_PREFIX}*`, handleCloudArtifactDownload),
+);
+
+const decodeReopenInput = Schema.decodeUnknownEffect(CloudRuntimeReopenInput);
+const encodeReopen = Schema.encodeUnknownEffect(CloudRuntimeReopen);
+const decodeSessionEditsInput = Schema.decodeUnknownEffect(CloudSessionEditsInput);
+const encodeSessionEdits = Schema.encodeUnknownEffect(CloudSessionEdits);
+
+/**
+ * Viewing routes, served by the guest for its own controller. They stay plain
+ * routes rather than typed API endpoints because neither is part of the
+ * environment contract a client talks to, and neither submits a turn.
+ */
+const handleCloudRuntimeReopen = Effect.gen(function* () {
+  yield* authenticateRawRouteWithScope(AuthOrchestrationOperateScope);
+  const request = yield* HttpServerRequest.HttpServerRequest;
+  const body = yield* request.json.pipe(Effect.option);
+  if (Option.isNone(body)) return HttpServerResponse.text("Bad Request", { status: 400 });
+  const input = yield* decodeReopenInput(body.value).pipe(Effect.option);
+  if (Option.isNone(input)) return HttpServerResponse.text("Bad Request", { status: 400 });
+  const session = yield* CloudWorkerSession;
+  const record = yield* session.reopen(input.value).pipe(Effect.option);
+  if (Option.isNone(record)) {
+    return HttpServerResponse.text("Reopen failed", { status: 500 });
+  }
+  return HttpServerResponse.jsonUnsafe(yield* encodeReopen(record.value));
+}).pipe(
+  Effect.catchTags({
+    EnvironmentAuthInvalidError: HttpServerRespondable.toResponse,
+    EnvironmentInternalError: HttpServerRespondable.toResponse,
+    EnvironmentScopeRequiredError: HttpServerRespondable.toResponse,
+  }),
+  Effect.orDie,
+);
+
+const handleCloudSessionEdits = Effect.gen(function* () {
+  yield* authenticateRawRouteWithScope(AuthOrchestrationOperateScope);
+  const request = yield* HttpServerRequest.HttpServerRequest;
+  const body = yield* request.json.pipe(Effect.option);
+  if (Option.isNone(body)) return HttpServerResponse.text("Bad Request", { status: 400 });
+  const input = yield* decodeSessionEditsInput(body.value).pipe(Effect.option);
+  if (Option.isNone(input)) return HttpServerResponse.text("Bad Request", { status: 400 });
+  const edits = yield* captureCloudSessionEdits(input.value);
+  return HttpServerResponse.jsonUnsafe(yield* encodeSessionEdits(edits));
+}).pipe(
+  Effect.catchTags({
+    EnvironmentAuthInvalidError: HttpServerRespondable.toResponse,
+    EnvironmentInternalError: HttpServerRespondable.toResponse,
+    EnvironmentScopeRequiredError: HttpServerRespondable.toResponse,
+  }),
+  Effect.orDie,
+);
+
+export const cloudWorkerSessionRouteLayer = Layer.mergeAll(
+  HttpRouter.add("POST", CLOUD_RUNTIME_REOPEN_PATH, handleCloudRuntimeReopen),
+  HttpRouter.add("POST", CLOUD_SESSION_EDITS_PATH, handleCloudSessionEdits),
 );
 
 export const cloudAgentReviewRouteLayer = Layer.mergeAll(

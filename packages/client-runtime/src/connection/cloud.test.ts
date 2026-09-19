@@ -1,4 +1,4 @@
-import { RunAllocation } from "@t3tools/contracts";
+import { RunAllocation, emptyCloudSessionLeases } from "@t3tools/contracts";
 import * as Schema from "effect/Schema";
 import { expect, it } from "vite-plus/test";
 
@@ -36,6 +36,7 @@ it("turns a current routed worker into the ordinary bearer connection shape", ()
     },
     agentOutcome: { status: "not-started" },
     previewState: { status: "unavailable" },
+    leases: emptyCloudSessionLeases(),
     idleState: { status: "busy" },
     cleanupState: { status: "not-requested" },
     handledCommandIds: ["launch", "register"],
@@ -88,6 +89,7 @@ it("does not publish a connection after cleanup starts", () => {
     },
     agentOutcome: { status: "cancelled", cancelledAt: "2026-09-17T03:05:00.000Z" },
     previewState: { status: "unavailable" },
+    leases: emptyCloudSessionLeases(),
     idleState: { status: "busy" },
     cleanupState: { status: "running", startedAt: "2026-09-17T03:05:00.000Z" },
     handledCommandIds: ["launch", "register", "cancel", "cleanup"],

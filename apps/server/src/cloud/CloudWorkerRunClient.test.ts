@@ -1,4 +1,8 @@
-import { ClientOrchestrationCommand, RunAllocation } from "@t3tools/contracts";
+import {
+  ClientOrchestrationCommand,
+  RunAllocation,
+  emptyCloudSessionLeases,
+} from "@t3tools/contracts";
 import { expect, it } from "@effect/vitest";
 import * as Effect from "effect/Effect";
 import * as Schema from "effect/Schema";
@@ -67,6 +71,8 @@ const allocation = decodeAllocation({
   },
   agentOutcome: { status: "not-started" },
   previewState: { status: "unavailable" },
+  leases: emptyCloudSessionLeases(),
+  attemptPurpose: "run",
   idleState: { status: "busy" },
   cleanupState: { status: "not-requested" },
   handledCommandIds: [],

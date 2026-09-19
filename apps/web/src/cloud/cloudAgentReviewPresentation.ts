@@ -30,8 +30,10 @@ export function cloudReviewActionLabel(action: CloudAgentReviewAction): string {
       return "Unarchive";
     case "cancel":
       return "Cancel run";
-    case "wake":
-      return "Wake";
+    case "reopen":
+      return "Reopen preview";
+    case "stop":
+      return "Stop session";
     case "delete":
       return "Delete permanently";
     case "delete-pr":

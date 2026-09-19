@@ -13,7 +13,8 @@ describe("cloud agent review presentation", () => {
     expect(cloudAgentStatusLabel("ARCHIVED")).toBe("Archived");
     expect(cloudSessionAvailabilityLabel("Preview", "unavailable")).toBe("Preview unavailable");
     expect(cloudSessionAvailabilityLabel("Terminal", "available")).toBe("Terminal available");
-    expect(cloudReviewActionLabel("wake")).toBe("Wake");
+    expect(cloudReviewActionLabel("reopen")).toBe("Reopen preview");
+    expect(cloudReviewActionLabel("stop")).toBe("Stop session");
     expect(cloudReviewActionLabel("delete-pr")).toBe("Delete pull request");
   });
 });

@@ -91,6 +91,8 @@ function fixture(
       startCalls: number;
       statusCalls: number;
       flushCalls: number;
+      reopenCalls: number;
+      sessionEditsCalls: number;
       hibernateCalls: number;
       restoreCalls: number;
     } = {
@@ -102,6 +104,8 @@ function fixture(
       startCalls: 0,
       statusCalls: 0,
       flushCalls: 0,
+      reopenCalls: 0,
+      sessionEditsCalls: 0,
       hibernateCalls: 0,
       restoreCalls: 0,
     };
@@ -246,6 +250,22 @@ function fixture(
             flushedAt: "2026-09-17T03:20:00.000Z",
           } as const;
         }),
+      threadDetail: () => Effect.die("unused"),
+      reopen: () =>
+        Effect.sync(() => {
+          state.reopenCalls += 1;
+          return {
+            environmentStart: { services: [] },
+            browser: { status: "fresh", reason: "No browser profile is declared." },
+            reopenedAt: "2026-09-17T04:00:00.000Z",
+            providerRunStarted: false,
+          } as const;
+        }),
+      sessionEdits: () =>
+        Effect.sync(() => {
+          state.sessionEditsCalls += 1;
+          return { status: "unchanged", capturedAt: "2026-09-17T04:10:00.000Z" } as const;
+        }),
     });
     const reconciler = yield* CloudAllocationReconciler.make({ runClient }).pipe(
       Effect.provideService(CloudAllocationController.CloudAllocationController, controller),
@@ -339,7 +359,7 @@ it.effect("recovers a lost launch response without creating another instance", (
   }).pipe(Effect.provide(SqlitePersistenceMemory)),
 );
 
-it.effect("withdraws the preview after the review grace but keeps the settled guest", () =>
+it.effect("ends a preview when its lease expires and keeps the settled guest", () =>
   Effect.gen(function* () {
     yield* TestClock.setTime(startAt);
     const { controller, reconciler, state } = yield* fixture();
@@ -353,7 +373,7 @@ it.effect("withdraws the preview after the review grace but keeps the settled gu
     if (registering === undefined) return;
     yield* controller.dispatch(
       decodeCommand({
-        type: "allocation.worker-assigned",
+        type: "allocation.worker-registered",
         commandId: "assign-allocation-1",
         allocationId: registering.id,
         attempt: registering.attempt,
@@ -362,6 +382,11 @@ it.effect("withdraws the preview after the review grace but keeps the settled gu
           workerId: "worker-1",
           environmentId: "environment-1",
           threadId: "thread-1",
+        },
+        route: {
+          httpBaseUrl: "https://worker.example.test/",
+          wsBaseUrl: "wss://worker.example.test/",
+          accessToken: "worker-access-token",
         },
       }),
     );
@@ -395,15 +420,35 @@ it.effect("withdraws the preview after the review grace but keeps the settled gu
       }),
     );
 
+    yield* controller.dispatch(
+      decodeCommand({
+        type: "allocation.session-lease-open",
+        commandId: "open-preview-lease-1",
+        allocationId: registering.id,
+        attempt: registering.attempt,
+        occurredAt: "2026-09-17T03:00:05.000Z",
+        kind: "app-preview",
+        expiresAt: "2026-09-17T03:15:05.000Z",
+        hardExpiresAt: "2026-09-17T07:00:05.000Z",
+      }),
+    );
+
     yield* TestClock.setTime(Date.parse("2026-09-17T03:15:03.000Z"));
     yield* reconciler.reconcileOnce();
-    expect((yield* controller.snapshot).allocations[0]?.previewState.status).toBe("available");
+    const watched = (yield* controller.snapshot).allocations[0];
+    expect(watched?.previewState.status).toBe("available");
+    // A held lease defers the idle release rather than racing it.
+    expect(watched?.idleState.status).toBe("idle");
 
-    yield* TestClock.setTime(Date.parse("2026-09-17T03:15:04.000Z"));
+    yield* TestClock.setTime(Date.parse("2026-09-17T03:15:06.000Z"));
     yield* reconciler.reconcileOnce();
     const withdrawn = (yield* controller.snapshot).allocations[0];
+    expect(withdrawn?.leases.appPreview).toMatchObject({
+      status: "released",
+      reason: "The session lease expired without a heartbeat.",
+    });
     expect(withdrawn?.previewState.status).toBe("unavailable");
-    // The grace ends the preview, not the conversation: the guest is still
+    // The lease ends the preview, not the conversation: the guest is still
     // there and nothing has been terminated.
     expect(withdrawn?.cleanupState.status).toBe("not-requested");
     expect(state.terminateCalls).toBe(0);
@@ -672,8 +717,28 @@ function followUpCommand(allocationId: string, occurredAt: string, runId: string
 /** Drives one allocation from launch to a settled guest ready to go idle. */
 const settledFixture = Effect.fn("settledFixture")(function* (input?: {
   readonly restoreFailure?: boolean;
+  readonly environment?: {
+    readonly environmentId: string;
+    readonly repository: string;
+    readonly start: string;
+  };
 }) {
-  const harness = yield* fixture(input ?? {});
+  const harness = yield* fixture(
+    input?.restoreFailure === undefined ? {} : { restoreFailure: input.restoreFailure },
+  );
+  if (input?.environment !== undefined) {
+    yield* harness.controller.saveEnvironment(
+      decodeEnvironmentSave({
+        environmentId: input.environment.environmentId,
+        name: "Web",
+        source: { type: "saved", scope: "personal", owner: "victor" },
+        repositories: [{ repository: input.environment.repository, defaultRef: "main" }],
+        config: { image: "node:24", start: input.environment.start },
+        secretReferences: [],
+        occurredAt: "2026-09-17T02:55:00.000Z",
+      }),
+    );
+  }
   yield* harness.controller.dispatch(launchCommand("allocation-1", true));
   yield* harness.reconciler.reconcileOnce();
   yield* harness.reconciler.reconcileOnce();
@@ -845,6 +910,116 @@ it.effect("wakes a hibernated guest and reports disk and provider resume separat
   }).pipe(Effect.provide(SqlitePersistenceMemory)),
 );
 
+it.effect("reopens a hibernated guest by running the environment start, not a run", () =>
+  Effect.gen(function* () {
+    yield* TestClock.setTime(startAt);
+    const { controller, reconciler, state } = yield* settledFixture({
+      environment: {
+        environmentId: "environment-web",
+        repository: "t3tools/t3code",
+        start: "pnpm dev",
+      },
+    });
+    yield* reconciler.reconcileOnce();
+    yield* TestClock.setTime(Date.parse("2026-09-17T04:00:00.000Z"));
+    yield* reconciler.reconcileOnce();
+    yield* reconciler.reconcileOnce();
+    expect((yield* controller.snapshot).allocations[0]?.idleState.status).toBe("hibernated");
+    const runsBefore = (yield* controller.snapshot).runs?.length ?? 0;
+    const startCallsBefore = state.startCalls;
+
+    yield* TestClock.setTime(Date.parse("2026-09-18T09:00:00.000Z"));
+    const reopened = yield* controller.dispatch(
+      decodeCommand({
+        type: "allocation.reopen",
+        commandId: "reopen-allocation-1",
+        allocationId: "allocation-1",
+        attempt: 1,
+        occurredAt: "2026-09-18T09:00:00.000Z",
+        nextAttempt: 2,
+        deadlines: {
+          launchBy: "2026-09-18T09:05:00.000Z",
+          bootBy: "2026-09-18T09:10:00.000Z",
+          registerBy: "2026-09-18T09:15:00.000Z",
+          expiresAt: "2026-09-18T11:00:00.000Z",
+          cleanupBy: "2026-09-18T11:05:00.000Z",
+        },
+      }),
+    );
+    expect(reopened.attempt).toBe(2);
+    expect(reopened.attemptPurpose).toBe("reopen");
+
+    yield* reconciler.reconcileOnce();
+    yield* reconciler.reconcileOnce();
+    yield* reconciler.reconcileOnce();
+    const registering = (yield* controller.snapshot).allocations[0];
+    if (registering === undefined) throw new Error("Expected an allocation");
+    yield* controller.dispatch(
+      decodeCommand({
+        type: "allocation.worker-registered",
+        commandId: "register-allocation-1-reopen",
+        allocationId: registering.id,
+        attempt: registering.attempt,
+        occurredAt: "2026-09-18T09:01:00.000Z",
+        references: {
+          workerId: "worker-1",
+          environmentId: "environment-1",
+          threadId: "thread-allocation-1",
+        },
+        route: {
+          httpBaseUrl: "https://worker.example.test/",
+          wsBaseUrl: "wss://worker.example.test/",
+          accessToken: "worker-access-token-reopen",
+        },
+      }),
+    );
+
+    // Restore, then the environment start. Neither step submits a turn.
+    yield* reconciler.reconcileOnce();
+    yield* reconciler.reconcileOnce();
+
+    const viewable = (yield* controller.snapshot).allocations[0];
+    expect(state.reopenCalls).toBe(1);
+    expect(state.startCalls).toBe(startCallsBefore);
+    expect(viewable?.reopen).toMatchObject({ providerRunStarted: false });
+    expect(viewable?.agentOutcome.status).toBe("succeeded");
+    expect((yield* controller.snapshot).runs?.length ?? 0).toBe(runsBefore);
+  }).pipe(Effect.provide(SqlitePersistenceMemory)),
+);
+
+it.effect("snapshots and releases the guest when a person stops the session", () =>
+  Effect.gen(function* () {
+    yield* TestClock.setTime(startAt);
+    const { controller, reconciler, state } = yield* settledFixture();
+    yield* reconciler.reconcileOnce();
+    expect((yield* controller.snapshot).allocations[0]?.idleState).toMatchObject({
+      releaseAt: "2026-09-17T04:00:00.000Z",
+    });
+
+    // Well inside the idle window, so only the explicit stop can end it.
+    yield* TestClock.setTime(Date.parse("2026-09-17T03:10:00.000Z"));
+    yield* controller.dispatch(
+      decodeCommand({
+        type: "allocation.session-stop",
+        commandId: "stop-allocation-1",
+        allocationId: "allocation-1",
+        attempt: 1,
+        occurredAt: "2026-09-17T03:10:00.000Z",
+      }),
+    );
+
+    yield* reconciler.reconcileOnce();
+    expect(state.hibernateCalls).toBe(1);
+    yield* reconciler.reconcileOnce();
+    expect((yield* controller.snapshot).allocations[0]?.idleState).toMatchObject({
+      status: "hibernated",
+      snapshot: { instanceId: "i-worker", attempt: 1 },
+    });
+    // Stopping releases compute. It never terminates the disk behind it.
+    expect(state.terminateCalls).toBe(0);
+  }).pipe(Effect.provide(SqlitePersistenceMemory)),
+);
+
 it.effect("places a fresh guest when the snapshot cannot be started", () =>
   Effect.gen(function* () {
     yield* TestClock.setTime(startAt);
@@ -876,7 +1051,8 @@ it.effect("packs two queued allocations when the controller has two worker slots
         maxQueueDepth: 8,
         maxRunSeconds: 7_200,
         maxInputWaitSeconds: 900,
-        previewGraceSeconds: 900,
+        previewLeaseSeconds: 900,
+        previewLeaseMaxSeconds: 3600,
         idleReleaseSeconds: 3_600,
         conversationRetentionDays: DEFAULT_CONVERSATION_RETENTION_DAYS,
         allowedInstanceTypes: ["t3.medium"],
