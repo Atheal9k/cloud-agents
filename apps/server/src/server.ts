@@ -141,6 +141,7 @@ import * as CloudAllocationController from "./cloud/CloudAllocationController.ts
 import * as CloudAgentRetention from "./cloud/CloudAgentRetention.ts";
 import * as CloudAgentsApi from "./cloud/CloudAgentsApi.ts";
 import * as CloudAgentsApiKeys from "./cloud/CloudAgentsApiKeys.ts";
+import * as CloudAgentSchedules from "./cloud/CloudAgentSchedules.ts";
 import {
   cloudAgentsApiRateLimitsLayer,
   cloudAgentsApiRouteLayer,
@@ -644,7 +645,7 @@ const RuntimeCoreDependenciesBaseLive = ReactorLayerLive.pipe(
   ),
 );
 
-const RuntimeCoreDependenciesLive = Layer.mergeAll(
+const RuntimeCoreDependenciesWithoutSchedulesLive = Layer.mergeAll(
   CloudRunControl.layer,
   CloudAgentReview.layer,
   CloudHandoffLayerLive,
@@ -664,6 +665,10 @@ const RuntimeCoreDependenciesLive = Layer.mergeAll(
   Layer.provideMerge(CloudProviderExecution.layer),
   Layer.provideMerge(CloudAllocationControllerLayerLive),
   Layer.provideMerge(RuntimeCoreDependenciesBaseLive),
+);
+
+const RuntimeCoreDependenciesLive = CloudAgentSchedules.layer.pipe(
+  Layer.provideMerge(RuntimeCoreDependenciesWithoutSchedulesLive),
 );
 
 const RuntimeDependenciesLive = RuntimeCoreDependenciesLive.pipe(

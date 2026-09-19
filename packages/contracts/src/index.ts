@@ -30,6 +30,7 @@ export * from "./cloudAllocation.ts";
 export * from "./cloudAccounting.ts";
 export * from "./cloudCollaboration.ts";
 export * from "./cloudAgentsApi.ts";
+export * from "./cloudAgentSchedules.ts";
 export * from "./cloudMacIos.ts";
 export * from "./cloudLinuxAndroid.ts";
 export * from "./cloudControl.ts";

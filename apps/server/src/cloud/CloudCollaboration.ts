@@ -31,7 +31,9 @@ const EmptyRequest = Schema.Struct({});
 const ConnectionIdRequest = Schema.Struct({ connectionId: Schema.String });
 const KeyRequest = Schema.Struct({ idempotencyKey: Schema.String });
 const encodeInstalled = Schema.encodeSync(Schema.fromJsonString(Schema.Array(Schema.String)));
-const decodeInstalled = Schema.decodeUnknownSync(Schema.fromJsonString(Schema.Array(Schema.String)));
+const decodeInstalled = Schema.decodeUnknownSync(
+  Schema.fromJsonString(Schema.Array(Schema.String)),
+);
 
 const ConnectionRow = Schema.Struct({
   connectionId: Schema.String,

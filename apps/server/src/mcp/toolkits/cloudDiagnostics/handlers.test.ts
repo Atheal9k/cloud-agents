@@ -1,4 +1,9 @@
-import { CloudEnvironmentId, EnvironmentId, ProviderInstanceId, ThreadId } from "@t3tools/contracts";
+import {
+  CloudEnvironmentId,
+  EnvironmentId,
+  ProviderInstanceId,
+  ThreadId,
+} from "@t3tools/contracts";
 import { describe, expect, it } from "@effect/vitest";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
@@ -56,7 +61,10 @@ describe("cloud diagnostics MCP toolkit", () => {
             (chunk) =>
               chunk.at(-1)!.result as Tool.Success<(typeof CloudDiagnosticsToolkit.tools)[Name]>,
           ),
-          Effect.provideService(McpInvocationContext.McpInvocationContext, invocation(capabilities)),
+          Effect.provideService(
+            McpInvocationContext.McpInvocationContext,
+            invocation(capabilities),
+          ),
           Effect.provide(dependencies),
         );
       const info = yield* call("environment-info", {}, ["cloud-diagnostics"]);

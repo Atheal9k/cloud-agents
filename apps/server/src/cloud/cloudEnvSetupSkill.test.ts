@@ -77,10 +77,7 @@ describe("cloud env-setup skill package", () => {
     ).toBe(true);
     expect(
       NodeFS.existsSync(
-        NodePath.join(
-          home,
-          ".claude/skills/env-setup/references/update-db-managed-environment.md",
-        ),
+        NodePath.join(home, ".claude/skills/env-setup/references/update-db-managed-environment.md"),
       ),
     ).toBe(true);
   });

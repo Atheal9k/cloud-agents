@@ -59,6 +59,7 @@ export const CloudAgentsApiErrorCode = Schema.Literals([
   "scm_access_denied",
   "self_hosted_disabled",
   "self_hosted_required",
+  "schedule_not_found",
   "internal_error",
 ]);
 export type CloudAgentsApiErrorCode = typeof CloudAgentsApiErrorCode.Type;

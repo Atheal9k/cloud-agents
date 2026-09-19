@@ -179,9 +179,7 @@ describe("branch plans and SCM URLs", () => {
       kind: "bitbucket",
       repository: "ws/repo",
     });
-    expect(
-      parseCloudRepositoryUrl("https://dev.azure.com/org/project/_git/repo"),
-    ).toMatchObject({
+    expect(parseCloudRepositoryUrl("https://dev.azure.com/org/project/_git/repo")).toMatchObject({
       kind: "azure-devops",
       repository: "org/project/_git/repo",
     });

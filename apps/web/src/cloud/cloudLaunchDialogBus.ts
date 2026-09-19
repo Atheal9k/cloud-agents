@@ -4,9 +4,7 @@ export type CloudLaunchDialogIntent =
   | { readonly kind: "task" }
   | { readonly kind: "env-setup"; readonly repository?: string };
 
-export function openCloudLaunchDialog(
-  intent: CloudLaunchDialogIntent = { kind: "task" },
-): void {
+export function openCloudLaunchDialog(intent: CloudLaunchDialogIntent = { kind: "task" }): void {
   window.dispatchEvent(
     new CustomEvent<CloudLaunchDialogIntent>(CLOUD_LAUNCH_DIALOG_EVENT, { detail: intent }),
   );

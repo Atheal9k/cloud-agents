@@ -110,10 +110,7 @@ function parseChecklist(createReference: string): CloudEnvSetupSkillPackage["che
   return CHECKLIST_TITLES;
 }
 
-function resolveReference(
-  directory: string,
-  relativePath: string,
-): CloudEnvSetupSkillFile {
+function resolveReference(directory: string, relativePath: string): CloudEnvSetupSkillFile {
   const absolute = NodePath.join(directory, relativePath);
   if (!exists(absolute)) {
     throw new CloudEnvSetupSkillError(

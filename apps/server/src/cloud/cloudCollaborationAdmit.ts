@@ -38,8 +38,7 @@ export const admitCloudRun = Effect.fn("admitCloudRun")(function* (input: {
     } as CloudAgentsApiCreateAgentRequest);
   const repos = createBody.repos ?? [];
   const installed = yield* collaboration.installedRepositories();
-  const actorRepositories =
-    input.actorRepositories ?? (installed.length === 0 ? ["*"] : installed);
+  const actorRepositories = input.actorRepositories ?? (installed.length === 0 ? ["*"] : installed);
   const configured = repos.flatMap((repo) => {
     const parsed = parseCloudRepositoryUrl(repo.url);
     return parsed === undefined ? [] : [parsed.repository];

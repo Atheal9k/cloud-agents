@@ -45,7 +45,10 @@ export interface CloudDiagnosticsBindInput {
 
 interface DiagnosticsState {
   readonly snapshots: ReadonlyMap<string, CloudEnvironmentSnapshotRecord>;
-  readonly proposals: ReadonlyMap<string, { readonly environmentJson: CloudEnvironmentConfig; readonly buildId?: string }>;
+  readonly proposals: ReadonlyMap<
+    string,
+    { readonly environmentJson: CloudEnvironmentConfig; readonly buildId?: string }
+  >;
   readonly setupActions: ReadonlyArray<CloudEnvironmentSetupAction>;
   readonly bindings: ReadonlyMap<string, CloudDiagnosticsBindInput>;
   readonly usage: ReadonlyArray<CloudSubagentUsageEvent>;
@@ -145,7 +148,9 @@ function environmentInfoOf(environment: CloudEnvironment): CloudEnvironmentInfo 
     environmentJsonPath: source.type === "repository" ? source.path : null,
     name: environment.current.name,
     sourceType: source.type === "repository" ? "repository" : source.scope,
-    ...(environment.activeBuildId === undefined ? {} : { activeBuildId: environment.activeBuildId }),
+    ...(environment.activeBuildId === undefined
+      ? {}
+      : { activeBuildId: environment.activeBuildId }),
     ...(defaultRevision === undefined ? {} : { defaultRevision }),
     config: environment.current.config,
   };
@@ -158,7 +163,9 @@ export const make = Effect.fn("CloudDiagnosticsCatalog.make")(function* () {
     Effect.serviceOption(CloudAllocationController.CloudAllocationController),
     Option.match({
       onNone: () =>
-        Effect.fail(diagnosticsError("unavailable", "The cloud allocation catalog is unavailable.")),
+        Effect.fail(
+          diagnosticsError("unavailable", "The cloud allocation catalog is unavailable."),
+        ),
       onSome: (controller) =>
         controller.snapshot.pipe(
           Effect.mapError(() =>
@@ -356,11 +363,13 @@ export const make = Effect.fn("CloudDiagnosticsCatalog.make")(function* () {
   const buildLogs: CloudDiagnosticsCatalog["Service"]["buildLogs"] = (input) =>
     Effect.gen(function* () {
       const builds = yield* buildCatalog;
-      const build = yield* builds.read(CloudEnvironmentBuildId.make(input.buildId)).pipe(
-        Effect.mapError(() =>
-          diagnosticsError("persistence-failed", "The Build catalog is unavailable."),
-        ),
-      );
+      const build = yield* builds
+        .read(CloudEnvironmentBuildId.make(input.buildId))
+        .pipe(
+          Effect.mapError(() =>
+            diagnosticsError("persistence-failed", "The Build catalog is unavailable."),
+          ),
+        );
       return build === undefined
         ? yield* diagnosticsError("not-found", `Build '${input.buildId}' was not found.`)
         : build;
@@ -426,7 +435,9 @@ export const make = Effect.fn("CloudDiagnosticsCatalog.make")(function* () {
         runId: run.id,
         status: run.status,
         ...(agent === undefined ? {} : { repository: agent.repository }),
-        ...(agent?.environment === undefined ? {} : { environmentId: agent.environment.environmentId }),
+        ...(agent?.environment === undefined
+          ? {}
+          : { environmentId: agent.environment.environmentId }),
       };
     });
 

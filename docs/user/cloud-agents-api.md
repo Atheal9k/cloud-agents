@@ -52,6 +52,35 @@ profile fields only for user keys. Each principal sees only the agents it create
 - `DELETE /v1/agents/{id}` — permanent delete
 - `GET /v1/me`, `GET /v1/models`, `GET /v1/repositories`
 
+## Scheduled runs
+
+`POST /v1/schedules` creates a recurring schedule. The body records a five-field
+cron expression, an IANA timezone, the prompt, repository ref policy, current
+environment recipe policy, Codex model, publication mode, and run and retry
+limits. The action must choose one of these forms:
+
+- `create_agent` creates a new durable agent for every occurrence.
+- `follow_up` submits a run to the named durable agent. It does not assume the
+  agent's runtime is awake. The normal follow-up path wakes or allocates compute,
+  and the provider model is recorded as `inherit`.
+
+Manage schedules with `GET /v1/schedules`, `GET|PUT|DELETE /v1/schedules/{id}`,
+and `POST /v1/schedules/{id}/pause|resume`. Read durable outcomes from
+`GET /v1/schedule-activities`, optionally filtered by `scheduleId`.
+Admitted work uses ordinary durable agent threads, so its activity and terminal
+state also appear in the web and desktop clients.
+
+Cron slots use wall-clock time in the recorded timezone. A wall time skipped by
+daylight saving does not run. A repeated wall time runs once at its earlier
+occurrence. Overlapping follow-ups are skipped because one durable agent accepts
+one run at a time. Each schedule chooses whether an occurrence missed by more
+than 90 seconds is skipped or run once after restart. Admission retries use the
+recorded bounded attempt count and delay.
+
+Schedules run inside the controller process. With a local controller, the host
+and Docker engine must be online. `run_once` can admit one missed occurrence when
+the controller returns; it does not make a local controller an always-on service.
+
 Self-hosted machines and team pools use the older `/v0/private-workers` paths. See
 [Self-hosted machines and team pools](./cloud-agents-self-hosted.md).
 

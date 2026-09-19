@@ -2821,9 +2821,9 @@ const makeWsRpcLayer = (
         [WS_METHODS.cloudCollaborationDisconnectScm]: (input) =>
           observeRpcEffect(
             WS_METHODS.cloudCollaborationDisconnectScm,
-            cloudCollaboration.disconnect(input.connectionId).pipe(
-              Effect.map(() => ({ id: input.connectionId })),
-            ),
+            cloudCollaboration
+              .disconnect(input.connectionId)
+              .pipe(Effect.map(() => ({ id: input.connectionId }))),
             { "rpc.aggregate": "cloud-collaboration" },
           ),
         [WS_METHODS.cloudReadinessGet]: (_input) =>

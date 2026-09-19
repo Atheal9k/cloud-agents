@@ -23,9 +23,7 @@ const GITHUB_HOST = /(^|\.)github\.com$/i;
 const GITLAB_HOST = /(^|\.)gitlab\.com$/i;
 const BITBUCKET_HOST = /(^|\.)bitbucket\.org$/i;
 
-export function cloudTeamFollowUpWarnings(
-  policy: CloudTeamFollowUpPolicy,
-): ReadonlyArray<string> {
+export function cloudTeamFollowUpWarnings(policy: CloudTeamFollowUpPolicy): ReadonlyArray<string> {
   if (policy === "disabled") return [];
   return [CLOUD_TEAM_FOLLOW_UP_LATERAL_ACCESS_WARNING, CLOUD_TEAM_FOLLOW_UP_SECRET_RISK_WARNING];
 }
@@ -219,7 +217,9 @@ export function parseCloudRepositoryUrl(raw: string): CloudParsedRepository | un
   if (parts.length < 2) return undefined;
 
   const azure =
-    host === "dev.azure.com" || host.endsWith(".dev.azure.com") || host.endsWith(".visualstudio.com");
+    host === "dev.azure.com" ||
+    host.endsWith(".dev.azure.com") ||
+    host.endsWith(".visualstudio.com");
   if (azure) {
     const gitIndex = parts.indexOf("_git");
     if (gitIndex === -1 || parts[gitIndex + 1] === undefined) return undefined;
@@ -290,7 +290,9 @@ export function repositoryUrlForIdentity(input: {
 export function parseIntegrationDelivery(input: {
   readonly entryPoint: CloudRunEntryPoint;
   readonly payload: unknown;
-}): { readonly deliveryId: string; readonly prompt: string; readonly agentId?: string } | undefined {
+}):
+  | { readonly deliveryId: string; readonly prompt: string; readonly agentId?: string }
+  | undefined {
   if (input.payload === null || typeof input.payload !== "object") return undefined;
   const payload = input.payload as Record<string, unknown>;
   switch (input.entryPoint) {
