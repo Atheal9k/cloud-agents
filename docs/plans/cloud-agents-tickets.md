@@ -185,7 +185,7 @@ stay last until you choose to pick them up.
 | 15   | ~~CA-28~~, ~~CA-39~~, ~~CA-57~~, ~~CA-59~~ | Scheduling; simulator display; commit signing; repository-owned environment setup.         |
 | 16   | ~~CA-29~~, ~~CA-30~~, CA-33                | GitHub triggers; persistent assistants; remote administration UI.                          |
 | 17   | ~~CA-52~~                                  | Subscription wake and CI autofix.                                                          |
-| 18   | CA-53                                      | Generalized automations.                                                                   |
+| 18   | ~~CA-53~~                            | Generalized automations.                                                                   |
 | 19   | CA-54                                      | Outbound webhooks and typed SDKs.                                                          |
 | 20   | CA-31, CA-20                               | Deferred: provider adapters; native T3 mobile controls.                                    |
 | 21   | CA-22                                      | Deferred: native push and mobile activity integration.                                     |
@@ -1153,6 +1153,8 @@ Acceptance criteria:
 ### CA-53: Add Cursor-like automations
 
 Dependencies: CA-28, CA-47, CA-50, CA-51, CA-52.
+
+Status: Done on 19 September 2026 in [PR #63](https://github.com/Atheal9k/cloud-agents/pull/63).
 
 Description: Generalize schedules and webhook triggers into reusable
 automations running as a user or service account.
