@@ -46,6 +46,8 @@ profile fields only for user keys. Each principal sees only the agents it create
   — paged history, tool output, setup logs, or artifact names under a 256 KiB
   byte budget. Full payloads stay off the live stream.
 - `GET /v1/agents/{id}/usage`
+- `GET /v1/usage-report?periodStart=&periodEnd=` — dimensional usage export without prompts or
+  secret values, including invoice variance when invoices have been recorded.
 - `POST /v1/agents/{id}/archive` and `POST /v1/agents/{id}/unarchive` (idempotent)
 - `DELETE /v1/agents/{id}` — permanent delete
 - `GET /v1/me`, `GET /v1/models`, `GET /v1/repositories`
@@ -68,7 +70,7 @@ mutating hooks do not run during early read-only environment setup.
 Error bodies are `{ "code", "message" }` with stable codes including `unauthorized`,
 `invalid_request`, `agent_id_conflict`, `agent_busy`, `agent_archived`,
 `agent_not_found`, `run_not_found`, `run_not_cancellable`, `invalid_last_event_id`,
-`stream_expired`, and `rate_limited`.
+`stream_expired`, `rate_limited`, and `spend_limit_exceeded`.
 
 Every response includes `X-Request-Id` and `X-RateLimit-*` headers. Repositories
 are limited to 1 request per minute and 30 per hour per principal. Other routes

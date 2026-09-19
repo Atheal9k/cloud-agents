@@ -724,7 +724,9 @@ export const SETTINGS_SEARCH_ITEMS = [
     id: "cloud-defaults",
     title: "Cloud run defaults",
     to: "/settings/cloud-agents",
-    searchTerms: ["default model repository ref retention instance types policy"],
+    searchTerms: [
+      "default model context repository ref long-running computer use summaries artifacts spend limit audit export policy",
+    ],
   },
   {
     id: "cloud-config-precedence",

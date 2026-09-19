@@ -1013,3 +1013,104 @@ it.effect("never gives a run wider repository access than the user who triggered
     expect(error.message).toContain("triggering user's 'read' access");
   }).pipe(Effect.provide(SqlitePersistenceMemory)),
 );
+
+it.effect("separates usage meters and gates launch when a spend cap is exhausted", () =>
+  Effect.gen(function* () {
+    yield* TestClock.setTime(Date.parse("2026-09-17T03:00:00.000Z"));
+    const controller = yield* make({ enabled: true });
+    const accepted = yield* controller.dispatch(launch);
+    yield* controller.dispatch(
+      decodeCommand({
+        type: "allocation.launch-started",
+        commandId: "command-launch-started",
+        allocationId: accepted.id,
+        attempt: accepted.attempt,
+        occurredAt: "2026-09-17T03:00:00.000Z",
+        launchTemplate: { id: "lt-worker", version: 1 },
+      }),
+    );
+    yield* controller.dispatch(
+      decodeCommand({
+        type: "allocation.instance-launched",
+        commandId: "command-instance-launched",
+        allocationId: accepted.id,
+        attempt: accepted.attempt,
+        occurredAt: "2026-09-17T03:00:00.000Z",
+        instanceId: "i-worker",
+      }),
+    );
+    yield* TestClock.setTime(Date.parse("2026-09-17T04:00:00.000Z"));
+    const snapshot = yield* controller.snapshot;
+    const meters = Object.fromEntries(
+      (snapshot.usage[0]?.meters ?? []).map((meter) => [meter.dimension, meter]),
+    );
+    expect(meters["active-guest-time"]?.quantity).toBe(3_600);
+    expect(meters["hypervisor-allocation"]?.quantity).toBe(3_600);
+    expect(meters["model-tokens"]?.cost.status).toBe("unknown");
+    expect(snapshot.spendingControl).toBe("estimate-only");
+
+    const capped = yield* controller.setSpendLimit({
+      principal: { kind: "user", id: "local-operator" },
+      period: "monthly",
+      capUsd: 0,
+      occurredAt: "2026-09-17T04:00:00.000Z",
+    });
+    expect(capped.spendingControl).toBe("hard-cap");
+    const blocked = yield* controller
+      .dispatch(
+        decodeCommand({
+          ...launchInput,
+          commandId: "command-over-cap",
+          allocationId: "allocation-over-cap",
+        }),
+      )
+      .pipe(Effect.flip);
+    expect(blocked.reason).toBe("spend-limit-exceeded");
+
+    yield* controller.dispatch(
+      decodeCommand({
+        type: "allocation.cancel",
+        commandId: "command-cancel-over-cap",
+        allocationId: accepted.id,
+        attempt: accepted.attempt,
+        occurredAt: "2026-09-17T04:01:00.000Z",
+      }),
+    );
+    const report = yield* controller.exportUsage({
+      periodStart: "2026-09-01T00:00:00.000Z",
+      periodEnd: "2026-10-01T00:00:00.000Z",
+    });
+    expect(report.redactions).toEqual({ prompts: true, secrets: true });
+    expect(JSON.stringify(report)).not.toMatch(/Fix the cloud launch flow/);
+    const audit = yield* controller.listAudit({});
+    expect(audit.some((event) => event.action === "admin")).toBe(true);
+    expect(audit.some((event) => event.action === "run-lifecycle")).toBe(true);
+  }).pipe(Effect.provide(SqlitePersistenceMemory)),
+);
+
+it.effect("stores admin-controlled long-running and collaboration defaults", () =>
+  Effect.gen(function* () {
+    const controller = yield* make({ enabled: true });
+    const saved = yield* controller.setDefaults({
+      defaults: {
+        model: "gpt-5.6-sol",
+        context: "200k",
+        longRunning: true,
+        computerUse: false,
+        summaries: true,
+        artifactsToGit: true,
+        collaboration: "service-accounts",
+      },
+      occurredAt: "2026-09-19T12:00:00.000Z",
+    });
+    expect(saved.controller.defaults).toMatchObject({
+      model: "gpt-5.6-sol",
+      context: "200k",
+      longRunning: true,
+      computerUse: false,
+      summaries: true,
+      artifactsToGit: true,
+      collaboration: "service-accounts",
+    });
+  }).pipe(Effect.provide(SqlitePersistenceMemory)),
+);

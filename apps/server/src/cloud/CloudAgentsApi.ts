@@ -50,6 +50,7 @@ import * as SqlSchema from "effect/unstable/sql/SqlSchema";
 
 import * as CloudAllocationController from "./CloudAllocationController.ts";
 import * as CloudDiagnosticsCatalog from "./CloudDiagnosticsCatalog.ts";
+import { principalFromApiKey } from "./cloudAccountingPolicy.ts";
 import * as CloudRunPublication from "./CloudRunPublication.ts";
 import * as CloudRunResults from "./CloudRunResults.ts";
 import * as CloudWorkerRunClient from "./CloudWorkerRunClient.ts";
@@ -183,6 +184,10 @@ export class CloudAgentsApi extends Context.Service<
       readonly agentId: string;
       readonly runId?: string;
     }) => Effect.Effect<CloudAgentsApiAgentUsage, CloudAgentsApiFailure>;
+    readonly usageReport: (input: {
+      readonly periodStart: string;
+      readonly periodEnd: string;
+    }) => Effect.Effect<import("@t3tools/contracts").CloudUsageExport, CloudAgentsApiFailure>;
     readonly archive: (input: {
       readonly principal: CloudAgentsApiPrincipal;
       readonly agentId: string;
@@ -238,6 +243,8 @@ function mapControllerError(error: unknown): CloudAgentsApiFailure {
         return apiError("agent_not_found", error.message);
       case "admission-stopped":
         return apiError("admission_stopped", error.message);
+      case "spend-limit-exceeded":
+        return apiError("spend_limit_exceeded", error.message);
       case "invalid-request":
         return error.message.includes("already exists")
           ? apiError("agent_id_conflict", error.message)
@@ -442,6 +449,7 @@ export const make = Effect.fn("CloudAgentsApi.make")(function* () {
       }
       const occurredAt = DateTime.formatIso(yield* DateTime.now);
       const startedAt = Date.parse(occurredAt);
+      const defaults = current.controller.defaults ?? {};
       const agentId = CloudAgentId.make(input.body.agentId ?? `bc-${NodeCrypto.randomUUID()}`);
       const runId = CloudRunId.make(`run-${NodeCrypto.randomUUID()}`);
       const allocationId = RunAllocationId.make(`alloc-${agentId}`);
@@ -451,12 +459,12 @@ export const make = Effect.fn("CloudAgentsApi.make")(function* () {
       const title = titleFromPrompt(input.body.prompt.text, input.body.name);
       const repo = input.body.repos?.[0];
       const parsedRepo = repo === undefined ? undefined : parseRepositoryUrl(repo.url);
-      const repository = parsedRepo?.ownerName ?? "local/none";
-      const selectedRef = repo?.startingRef ?? "main";
+      const repository = parsedRepo?.ownerName ?? defaults.repository ?? "local/none";
+      const selectedRef = repo?.startingRef ?? defaults.ref ?? "main";
       const workOnCurrentBranch = input.body.workOnCurrentBranch === true;
       const branch = workOnCurrentBranch ? selectedRef : `cloud/${agentId.slice(-12)}`;
       const models = yield* listModels;
-      const modelId = input.body.model?.id ?? models[0]?.id ?? "default";
+      const modelId = input.body.model?.id ?? defaults.model ?? models[0]?.id ?? "default";
       const instanceType = current.limits.allowedInstanceTypes[0] ?? "t3.medium";
       const runSeconds = Math.min(current.limits.maxRunSeconds, 3 * 24 * 60 * 60);
       const autoCreatePR = input.body.autoCreatePR === true;
@@ -507,6 +515,7 @@ export const make = Effect.fn("CloudAgentsApi.make")(function* () {
             },
           },
           profile: { id: "linux-web", os: "linux", arch: "x64", instanceType },
+          principal: principalFromApiKey(input.principal),
           deadlines: {
             launchBy: deadline(startedAt, Math.min(120, runSeconds)),
             bootBy: deadline(startedAt, Math.min(300, runSeconds)),
@@ -688,6 +697,7 @@ export const make = Effect.fn("CloudAgentsApi.make")(function* () {
             },
           },
           deadlines: located.allocation.deadlines,
+          principal: principalFromApiKey(input.principal),
         })
         .pipe(Effect.mapError(mapControllerError));
       const refreshed = yield* locate(input.principal, input.agentId);
@@ -789,6 +799,11 @@ export const make = Effect.fn("CloudAgentsApi.make")(function* () {
       );
       return agentUsageFromRuns(newestFirst.map((run) => ({ id: run.id })));
     });
+
+  const usageReport: CloudAgentsApi["Service"]["usageReport"] = (input) =>
+    allocations
+      .exportUsage({ periodStart: input.periodStart, periodEnd: input.periodEnd })
+      .pipe(Effect.mapError(mapControllerError));
 
   const mutateLifecycle = (
     type: "allocation.agent-archive" | "allocation.agent-unarchive" | "allocation.agent-delete",
@@ -1028,6 +1043,7 @@ export const make = Effect.fn("CloudAgentsApi.make")(function* () {
     getRun,
     cancelRun,
     usage,
+    usageReport,
     archive: mutateLifecycle("allocation.agent-archive"),
     unarchive: mutateLifecycle("allocation.agent-unarchive"),
     deleteAgent: mutateLifecycle("allocation.agent-delete"),

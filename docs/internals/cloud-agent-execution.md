@@ -185,6 +185,15 @@ one added rule: exactly one of `build`, `image`, or `snapshot`. A committed
 file may carry `$schema` for editor completion; decoding ignores it and T3
 never writes it back.
 
+Private submodule, LFS, and package-registry destinations are environment
+policy. The controller checks each host against the resolved egress mode
+before a Build starts and names the host that failed. Optional company-network
+overlays (stable egress, Tailscale, Cloudflare Tunnel, PrivateLink) record
+cost, trust, and routing; disabling one falls back to public routing plus the
+documented controller, SCM, artifact, and Cursor exceptions so runs are not
+stranded. See
+[`cloudPrivateNetwork`](../../packages/contracts/src/cloudPrivateNetwork.ts).
+
 ## Builds
 
 A Build is a prepared disk snapshot for one environment version: it resolves

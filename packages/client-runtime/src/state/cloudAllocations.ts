@@ -4,6 +4,8 @@ import {
   type CloudAgentReviewActInput,
   type CloudAgentReviewInspectInput,
   type CloudAgentReviewShareInput,
+  type CloudHandoffExecuteInput,
+  type CloudHandoffPreviewInput,
   type CloudEnvironmentBuildCancelInput,
   type CloudEnvironmentBuildSaveInput,
   type CloudEnvironmentBuildStaleThresholdInput,
@@ -59,6 +61,30 @@ export function createCloudAllocationAtoms<R, E>(
     concurrency: { mode: "singleFlight", key: ({ environmentId }) => environmentId },
     execute: (input: CloudControllerDefaultsInput) =>
       request(WS_METHODS.cloudAllocationSetDefaults, input),
+  });
+  const setSpendLimit = createEnvironmentRpcCommand(runtime, {
+    label: "environment-data:cloud-accounting:set-spend-limit",
+    tag: WS_METHODS.cloudAccountingSetSpendLimit,
+    scheduler,
+    concurrency: { mode: "singleFlight", key: ({ environmentId }) => environmentId },
+    execute: (input: import("@t3tools/contracts").CloudSpendLimitInput) =>
+      request(WS_METHODS.cloudAccountingSetSpendLimit, input),
+  });
+  const recordInvoice = createEnvironmentRpcCommand(runtime, {
+    label: "environment-data:cloud-accounting:record-invoice",
+    tag: WS_METHODS.cloudAccountingRecordInvoice,
+    scheduler,
+    concurrency: { mode: "singleFlight", key: ({ environmentId }) => environmentId },
+    execute: (input: import("@t3tools/contracts").CloudInvoiceInput) =>
+      request(WS_METHODS.cloudAccountingRecordInvoice, input),
+  });
+  const exportUsage = createEnvironmentRpcCommand(runtime, {
+    label: "environment-data:cloud-accounting:export",
+    tag: WS_METHODS.cloudAccountingExport,
+    scheduler,
+    concurrency: { mode: "singleFlight", key: ({ environmentId }) => environmentId },
+    execute: (input: import("@t3tools/contracts").CloudUsageExportInput) =>
+      request(WS_METHODS.cloudAccountingExport, input),
   });
   const readiness = createEnvironmentRpcCommand(runtime, {
     label: "environment-data:cloud-readiness:get",
@@ -206,12 +232,36 @@ export function createCloudAllocationAtoms<R, E>(
     execute: (input: CloudAgentReviewShareInput) =>
       request(WS_METHODS.cloudAgentReviewShare, input),
   });
+  const previewHandoff = createEnvironmentRpcCommand(runtime, {
+    label: "environment-data:cloud-handoff:preview",
+    tag: WS_METHODS.cloudHandoffPreview,
+    scheduler,
+    concurrency: {
+      mode: "singleFlight",
+      key: ({ environmentId, input }) =>
+        `${environmentId}:${input.direction}:${input.intent}:${input.localWorkspacePath}`,
+    },
+    execute: (input: CloudHandoffPreviewInput) => request(WS_METHODS.cloudHandoffPreview, input),
+  });
+  const executeHandoff = createEnvironmentRpcCommand(runtime, {
+    label: "environment-data:cloud-handoff:execute",
+    tag: WS_METHODS.cloudHandoffExecute,
+    scheduler,
+    concurrency: {
+      mode: "singleFlight",
+      key: ({ environmentId, input }) => `${environmentId}:${input.transferId}`,
+    },
+    execute: (input: CloudHandoffExecuteInput) => request(WS_METHODS.cloudHandoffExecute, input),
+  });
 
   return {
     snapshot,
     dispatch,
     setAdmission,
     setDefaults,
+    setSpendLimit,
+    recordInvoice,
+    exportUsage,
     readiness,
     runReadinessChecks,
     runGuidedSetup,
@@ -226,5 +276,7 @@ export function createCloudAllocationAtoms<R, E>(
     inspectAgentReview,
     actAgentReview,
     shareAgentReview,
+    previewHandoff,
+    executeHandoff,
   };
 }

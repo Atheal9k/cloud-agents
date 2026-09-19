@@ -7,6 +7,7 @@ import {
   type CloudAllocationControllerMode,
   CloudAllocationLimits,
   type CloudAllocationSnapshot,
+  type CloudAuditListInput,
   DEFAULT_IDLE_RELEASE_SECONDS,
   type CloudEnvironment,
   type CloudEnvironmentBuild,
@@ -22,6 +23,9 @@ import {
   type CloudEnvironmentSaveInput,
   type CloudRunResultId,
   type CloudRunUsage,
+  type CloudInvoiceInput,
+  type CloudSpendLimitInput,
+  type CloudUsageExportInput,
   CloudWorkerPriceAssumption,
   admitLinuxAndroidWorker,
   admitMacIosWorker,
@@ -51,6 +55,19 @@ import * as ServerConfig from "../config.ts";
 import { subscribeBeforeSnapshot } from "../utils/subscribeBeforeSnapshot.ts";
 import { resolveAwsWorkerConfig } from "./awsWorkerConfig.ts";
 import { projectCloudControlPlane } from "./cloudControlPlane.ts";
+import * as CloudAccountingCatalog from "./CloudAccountingCatalog.ts";
+import {
+  admitSpendLimit,
+  auditActionForCommand,
+  auditEvent,
+  cloudUsageMeters,
+  estimatedUsageUsd,
+  exportUsageReport,
+  principalOf,
+  reconcileInvoices,
+  spendLimitStatus,
+  spendPeriodWindow,
+} from "./cloudAccountingPolicy.ts";
 import * as CloudEnvironmentBuildCatalog from "./CloudEnvironmentBuildCatalog.ts";
 import { isCloudEnvironmentBuildStale } from "./cloudEnvironmentBuildPolicy.ts";
 import * as CloudEnvironmentCatalog from "./CloudEnvironmentCatalog.ts";
@@ -122,6 +139,27 @@ export class CloudAllocationController extends Context.Service<
     readonly setDefaults: (
       input: CloudControllerDefaultsInput,
     ) => Effect.Effect<CloudAllocationSnapshot, CloudAllocationControllerError>;
+    readonly setSpendLimit: (
+      input: CloudSpendLimitInput,
+    ) => Effect.Effect<CloudAllocationSnapshot, CloudAllocationControllerError>;
+    readonly recordInvoice: (
+      input: CloudInvoiceInput,
+    ) => Effect.Effect<
+      import("@t3tools/contracts").CloudInvoiceLine,
+      CloudAllocationControllerError
+    >;
+    readonly exportUsage: (
+      input: CloudUsageExportInput,
+    ) => Effect.Effect<
+      import("@t3tools/contracts").CloudUsageExport,
+      CloudAllocationControllerError
+    >;
+    readonly listAudit: (
+      input: CloudAuditListInput,
+    ) => Effect.Effect<
+      ReadonlyArray<import("@t3tools/contracts").CloudAuditEvent>,
+      CloudAllocationControllerError
+    >;
     readonly saveEnvironment: (
       input: CloudEnvironmentSaveInput,
     ) => Effect.Effect<CloudEnvironment, CloudAllocationControllerError | CloudEnvironmentError>;
@@ -226,6 +264,7 @@ export const make = Effect.fn("CloudAllocationController.make")(function* (input
   const macHosts = yield* CloudMacHostCatalog.make();
   const warmPool = yield* CloudWarmPoolCatalog.make();
   const settings = yield* ControllerSettings.make();
+  const accounting = yield* CloudAccountingCatalog.make();
   const mode = input.mode ?? "local";
   const region = input.region ?? "us-west-1";
   const changes = yield* PubSub.unbounded<CloudAllocationSnapshot>();
@@ -422,6 +461,14 @@ export const make = Effect.fn("CloudAllocationController.make")(function* (input
           reason: "Preview and display transfer are not metered by the controller.",
         },
       },
+      meters: cloudUsageMeters({
+        events,
+        nowMs: DateTime.toEpochMillis(now),
+        hourlyUsd: price?.hourlyUsd,
+        rateAssumption:
+          workerCompute.status === "estimated" ? workerCompute.assumption : undefined,
+        hasSnapshot: allocation.idleState.status === "hibernated",
+      }),
     };
   };
 
@@ -437,6 +484,10 @@ export const make = Effect.fn("CloudAllocationController.make")(function* (input
       macHostCatalog,
       warmGuests,
       timings,
+      limitRows,
+      attributions,
+      invoices,
+      audit,
     ] = yield* Effect.all([
       readAllEventRows({}),
       readDeletionRows({}),
@@ -447,6 +498,10 @@ export const make = Effect.fn("CloudAllocationController.make")(function* (input
       macHosts.list,
       warmPool.list,
       warmPool.timings,
+      accounting.listLimitRows(),
+      accounting.listAttributions(),
+      accounting.listInvoices(),
+      accounting.listAudit(100),
     ]).pipe(Effect.mapError(persistenceError));
     const grouped = new Map<RunAllocationId, Array<RunAllocationEvent>>();
     for (const row of rows) {
@@ -465,6 +520,50 @@ export const make = Effect.fn("CloudAllocationController.make")(function* (input
           "The cloud allocation catalog cannot rebuild its agent and run records.",
         ),
     });
+    const nowIso = DateTime.formatIso(now);
+    const usage = allocations.map((allocation) =>
+      usageForAllocation(allocation, grouped.get(allocation.id) ?? [], now, macHostCatalog),
+    );
+    const usageByAllocation = new Map(usage.map((row) => [row.allocationId, row]));
+    const spendLimits = limitRows.map((row) => {
+      const principal = { kind: row.principalKind, id: row.principalId };
+      const window = spendPeriodWindow(row.period, nowIso);
+      const start = Date.parse(window.start);
+      const end = Date.parse(window.end);
+      const usedUsd = attributions.reduce((total, attribution) => {
+        if (
+          row.principalKind !== "team" &&
+          (attribution.principalKind !== row.principalKind ||
+            attribution.principalId !== row.principalId)
+        ) {
+          return total;
+        }
+        const allocation = allocations.find((candidate) => candidate.id === attribution.allocationId);
+        if (allocation === undefined) return total;
+        const created = Date.parse(allocation.createdAt);
+        if (!Number.isFinite(created) || created < start || created >= end) return total;
+        return total + estimatedUsageUsd(usageByAllocation.get(allocation.id)!);
+      }, 0);
+      return spendLimitStatus({
+        principal,
+        period: row.period,
+        capUsd: row.capUsd,
+        usedUsd,
+        nowIso,
+      });
+    });
+    const reconciledInvoices = reconcileInvoices({
+      invoices: invoices.map((invoice) => ({
+        id: invoice.id,
+        source: invoice.source,
+        dimension: invoice.dimension,
+        periodStart: invoice.periodStart,
+        periodEnd: invoice.periodEnd,
+        invoicedUsd: invoice.invoicedUsd,
+        recordedAt: invoice.recordedAt,
+      })),
+      usages: usage,
+    });
     return {
       controller: {
         mode,
@@ -481,7 +580,7 @@ export const make = Effect.fn("CloudAllocationController.make")(function* (input
       },
       limits,
       workerPriceAssumptions,
-      spendingControl: "estimate-only",
+      spendingControl: spendLimits.length > 0 ? ("hard-cap" as const) : ("estimate-only" as const),
       allocations,
       agents: controlPlane.agents,
       runs: controlPlane.runs,
@@ -495,9 +594,10 @@ export const make = Effect.fn("CloudAllocationController.make")(function* (input
         timings,
       }),
       deletions: deletionRows.map((row) => row.deletion),
-      usage: allocations.map((allocation) =>
-        usageForAllocation(allocation, grouped.get(allocation.id) ?? [], now, macHostCatalog),
-      ),
+      usage,
+      spendLimits,
+      invoices: reconciledInvoices,
+      audit,
     } satisfies CloudAllocationSnapshot;
   });
 
@@ -659,6 +759,13 @@ export const make = Effect.fn("CloudAllocationController.make")(function* (input
               "Cloud run admission is stopped. Running jobs, results, and cleanup remain available.",
             );
           }
+          const launchSpend = admitSpendLimit({
+            principal: principalOf(command.principal),
+            limits: snapshot.spendLimits ?? [],
+          });
+          if (launchSpend.status === "rejected") {
+            return yield* controllerError("spend-limit-exceeded", launchSpend.message);
+          }
           const invalid = validateAdmission(command);
           if (invalid !== undefined) return yield* invalid;
           const pending = snapshot.allocations.filter(waitingForAWorker).length;
@@ -699,6 +806,13 @@ export const make = Effect.fn("CloudAllocationController.make")(function* (input
               "Cloud run admission is stopped. Running jobs, results, and cleanup remain available.",
             );
           }
+          const followUpSpend = admitSpendLimit({
+            principal: principalOf(command.principal),
+            limits: snapshot.spendLimits ?? [],
+          });
+          if (followUpSpend.status === "rejected") {
+            return yield* controllerError("spend-limit-exceeded", followUpSpend.message);
+          }
           const invalid = validateAdmission(command);
           if (invalid !== undefined) return yield* invalid;
         }
@@ -720,6 +834,13 @@ export const make = Effect.fn("CloudAllocationController.make")(function* (input
               "admission-stopped",
               "Cloud run admission is stopped. Running jobs, results, and cleanup remain available.",
             );
+          }
+          const retrySpend = admitSpendLimit({
+            principal: principalOf(undefined),
+            limits: snapshot.spendLimits ?? [],
+          });
+          if (retrySpend.status === "rejected") {
+            return yield* controllerError("spend-limit-exceeded", retrySpend.message);
           }
           const invalid = validateAdmission(command);
           if (invalid !== undefined) return yield* invalid;
@@ -782,6 +903,31 @@ export const make = Effect.fn("CloudAllocationController.make")(function* (input
         yield* sql
           .withTransaction(Effect.forEach(events, appendEvent, { discard: true }))
           .pipe(Effect.mapError(persistenceError));
+        if (command.type === "allocation.launch") {
+          yield* accounting
+            .attribute({
+              allocationId: command.allocationId,
+              principal: principalOf(command.principal),
+              attributedAt: command.occurredAt,
+            })
+            .pipe(Effect.mapError(persistenceError));
+        }
+        const audited = auditActionForCommand(command.type);
+        if (audited !== undefined) {
+          yield* accounting
+            .appendAudit(
+              auditEvent({
+                id: `audit:${command.commandId}`,
+                occurredAt: command.occurredAt,
+                actor: principalOf("principal" in command ? command.principal : undefined),
+                action: audited,
+                resourceType: command.type.startsWith("allocation.agent") ? "agent" : "run",
+                resourceId: command.allocationId,
+                summary: `${command.type} for allocation '${command.allocationId}'.`,
+              }),
+            )
+            .pipe(Effect.catch(() => Effect.void));
+        }
 
         const [firstEvent, ...remainingEvents] = events;
         if (firstEvent === undefined) {
@@ -880,6 +1026,20 @@ export const make = Effect.fn("CloudAllocationController.make")(function* (input
       Effect.gen(function* () {
         yield* requireWritable;
         yield* settings.writeAdmission(control).pipe(Effect.mapError(persistenceError));
+        yield* accounting
+          .appendAudit(
+            auditEvent({
+              id: `audit:admission:${control.occurredAt}`,
+              occurredAt: control.occurredAt,
+              action: "admin",
+              resourceType: "controller",
+              resourceId: "admission",
+              summary: control.admissionOpen
+                ? "Opened cloud run admission."
+                : "Stopped cloud run admission.",
+            }),
+          )
+          .pipe(Effect.catch(() => Effect.void));
         const snapshot = yield* readSnapshot;
         yield* PubSub.publish(changes, snapshot);
         yield* Effect.logInfo("Cloud allocation admission changed.", {
@@ -900,8 +1060,34 @@ export const make = Effect.fn("CloudAllocationController.make")(function* (input
             defaultModel: control.defaults.model ?? null,
             defaultRepository: control.defaults.repository ?? null,
             defaultRef: control.defaults.ref ?? null,
+            defaultContext: control.defaults.context ?? null,
+            defaultLongRunning:
+              control.defaults.longRunning === undefined ? null : control.defaults.longRunning ? 1 : 0,
+            defaultComputerUse:
+              control.defaults.computerUse === undefined ? null : control.defaults.computerUse ? 1 : 0,
+            defaultSummaries:
+              control.defaults.summaries === undefined ? null : control.defaults.summaries ? 1 : 0,
+            defaultArtifactsToGit:
+              control.defaults.artifactsToGit === undefined
+                ? null
+                : control.defaults.artifactsToGit
+                  ? 1
+                  : 0,
+            defaultCollaboration: control.defaults.collaboration ?? null,
           })
           .pipe(Effect.mapError(persistenceError));
+        yield* accounting
+          .appendAudit(
+            auditEvent({
+              id: `audit:defaults:${control.occurredAt}`,
+              occurredAt: control.occurredAt,
+              action: "admin",
+              resourceType: "controller",
+              resourceId: "defaults",
+              summary: "Updated cloud launch defaults.",
+            }),
+          )
+          .pipe(Effect.catch(() => Effect.void));
         const snapshot = yield* readSnapshot;
         yield* PubSub.publish(changes, snapshot);
         return snapshot;
@@ -913,6 +1099,18 @@ export const make = Effect.fn("CloudAllocationController.make")(function* (input
       Effect.gen(function* () {
         yield* requireWritable;
         const result = yield* effect;
+        yield* accounting
+          .appendAudit(
+            auditEvent({
+              id: `audit:environment:${Date.now()}`,
+              occurredAt: new Date().toISOString(),
+              action: "config",
+              resourceType: "environment",
+              resourceId: "catalog",
+              summary: "Updated a cloud environment version.",
+            }),
+          )
+          .pipe(Effect.catch(() => Effect.void));
         yield* PubSub.publish(changes, yield* readSnapshot);
         return result;
       }),
@@ -923,6 +1121,18 @@ export const make = Effect.fn("CloudAllocationController.make")(function* (input
       Effect.gen(function* () {
         yield* requireWritable;
         const result = yield* effect;
+        yield* accounting
+          .appendAudit(
+            auditEvent({
+              id: `audit:build:${Date.now()}`,
+              occurredAt: new Date().toISOString(),
+              action: "build-activation",
+              resourceType: "build",
+              resourceId: "catalog",
+              summary: "Updated a cloud environment Build.",
+            }),
+          )
+          .pipe(Effect.catch(() => Effect.void));
         yield* PubSub.publish(changes, yield* readSnapshot);
         return result;
       }),
@@ -935,6 +1145,99 @@ export const make = Effect.fn("CloudAllocationController.make")(function* (input
       return snapshot;
     }),
   );
+
+  const setSpendLimit: CloudAllocationController["Service"]["setSpendLimit"] = (input) =>
+    mutex.withPermits(1)(
+      Effect.gen(function* () {
+        yield* requireWritable;
+        yield* accounting.upsertLimit(input).pipe(Effect.mapError(persistenceError));
+        yield* accounting
+          .appendAudit(
+            auditEvent({
+              id: `audit:spend:${input.principal.kind}:${input.principal.id}:${input.period}:${input.occurredAt}`,
+              occurredAt: input.occurredAt,
+              actor: input.principal,
+              action: "admin",
+              resourceType: "spend-limit",
+              resourceId: `${input.principal.kind}:${input.principal.id}:${input.period}`,
+              summary:
+                input.capUsd === null
+                  ? `Removed ${input.period} spend cap for ${input.principal.kind} '${input.principal.id}'.`
+                  : `Set ${input.period} spend cap for ${input.principal.kind} '${input.principal.id}' to $${input.capUsd}.`,
+            }),
+          )
+          .pipe(Effect.catch(() => Effect.void));
+        const snapshot = yield* readSnapshot;
+        yield* PubSub.publish(changes, snapshot);
+        return snapshot;
+      }),
+    );
+
+  const recordInvoice: CloudAllocationController["Service"]["recordInvoice"] = (input) =>
+    mutex.withPermits(1)(
+      Effect.gen(function* () {
+        yield* requireWritable;
+        const snapshot = yield* readSnapshot;
+        const [line] = reconcileInvoices({
+          invoices: [
+            {
+              id: `invoice:${input.source}:${input.dimension}:${input.periodStart}`,
+              source: input.source,
+              dimension: input.dimension,
+              periodStart: input.periodStart,
+              periodEnd: input.periodEnd,
+              invoicedUsd: input.invoicedUsd,
+              recordedAt: input.occurredAt,
+            },
+          ],
+          usages: snapshot.usage,
+        });
+        if (line === undefined) {
+          return yield* controllerError("invalid-request", "The invoice could not be recorded.");
+        }
+        yield* accounting.recordInvoice(line).pipe(Effect.mapError(persistenceError));
+        yield* accounting
+          .appendAudit(
+            auditEvent({
+              id: `audit:invoice:${line.id}`,
+              occurredAt: input.occurredAt,
+              action: "admin",
+              resourceType: "invoice",
+              resourceId: line.id,
+              summary: `Recorded ${input.source} invoice for ${input.dimension}.`,
+            }),
+          )
+          .pipe(Effect.catch(() => Effect.void));
+        yield* PubSub.publish(changes, yield* readSnapshot);
+        return line;
+      }),
+    );
+
+  const exportUsage: CloudAllocationController["Service"]["exportUsage"] = (input) =>
+    mutex.withPermits(1)(
+      Effect.gen(function* () {
+        yield* requireEnabled;
+        const snapshot = yield* readSnapshot;
+        return exportUsageReport({
+          generatedAt: snapshot.usage[0]?.calculatedAt ?? input.periodEnd,
+          periodStart: input.periodStart,
+          periodEnd: input.periodEnd,
+          usages: snapshot.usage,
+          spendLimits: snapshot.spendLimits ?? [],
+          invoices: snapshot.invoices ?? [],
+        });
+      }),
+    );
+
+  const listAudit: CloudAllocationController["Service"]["listAudit"] = (input) =>
+    mutex.withPermits(1)(
+      Effect.gen(function* () {
+        yield* requireEnabled;
+        return yield* accounting
+          .listAudit(input.limit ?? 100)
+          .pipe(Effect.mapError(persistenceError));
+      }),
+    );
 
   const saveBuild: CloudAllocationController["Service"]["saveBuild"] = (input) =>
     publishBuildChange(builds.save(input));
@@ -965,6 +1268,10 @@ export const make = Effect.fn("CloudAllocationController.make")(function* (input
     stream,
     setAdmission,
     setDefaults,
+    setSpendLimit,
+    recordInvoice,
+    exportUsage,
+    listAudit,
     refresh,
     saveBuild,
     cancelBuild,

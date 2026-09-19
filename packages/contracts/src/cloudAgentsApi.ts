@@ -54,6 +54,7 @@ export const CloudAgentsApiErrorCode = Schema.Literals([
   "stream_expired",
   "rate_limited",
   "admission_stopped",
+  "spend_limit_exceeded",
   "internal_error",
 ]);
 export type CloudAgentsApiErrorCode = typeof CloudAgentsApiErrorCode.Type;

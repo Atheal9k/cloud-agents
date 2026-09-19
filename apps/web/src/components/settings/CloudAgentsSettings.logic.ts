@@ -199,15 +199,28 @@ export function validateCloudGuidedSetupDraft(input: {
 /** Empty fields clear a default rather than storing a blank one. */
 export function cloudControllerDefaultsFromDraft(draft: {
   readonly model: string;
+  readonly context: string;
   readonly repository: string;
   readonly ref: string;
+  readonly longRunning: boolean;
+  readonly computerUse: boolean;
+  readonly summaries: boolean;
+  readonly artifactsToGit: boolean;
+  readonly collaboration: "disabled" | "service-accounts" | "all";
 }): CloudControllerDefaults {
   const model = draft.model.trim();
+  const context = draft.context.trim();
   const repository = draft.repository.trim();
   const ref = draft.ref.trim();
   return {
     ...(model.length === 0 ? {} : { model }),
+    ...(context.length === 0 ? {} : { context }),
     ...(repository.length === 0 ? {} : { repository }),
     ...(ref.length === 0 ? {} : { ref }),
+    longRunning: draft.longRunning,
+    computerUse: draft.computerUse,
+    summaries: draft.summaries,
+    artifactsToGit: draft.artifactsToGit,
+    collaboration: draft.collaboration,
   };
 }

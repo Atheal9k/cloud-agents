@@ -146,6 +146,12 @@ function environmentSummary(
     buildStale: isCloudEnvironmentBuildStale({ build: activeBuild, staleThresholdSeconds, now }),
     egressMode: environment.current.effectivePolicy.egressMode,
     egressAllowlist: environment.current.effectivePolicy.egressAllowlist,
+    ...(environment.current.effectivePolicy.privateDependencies === undefined
+      ? {}
+      : { privateDependencies: environment.current.effectivePolicy.privateDependencies }),
+    ...(environment.current.effectivePolicy.networkProfile === undefined
+      ? {}
+      : { networkProfile: environment.current.effectivePolicy.networkProfile }),
     secrets: environment.current.effectivePolicy.secrets,
   };
 }

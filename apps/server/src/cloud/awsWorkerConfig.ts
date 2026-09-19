@@ -9,6 +9,8 @@ import {
   CLOUD_SCM_CREDENTIAL_MAX_TTL_SECONDS,
   type CloudEgressPolicyInput,
   type CloudEncryptionPosture,
+  CloudNetworkProfileKind,
+  type CloudNetworkProfile,
   type CloudScmAccessPolicy,
   type CloudScmScope,
   type CloudTlsVersion,
@@ -57,6 +59,7 @@ export class AwsWorkerConfigError extends Schema.TaggedError<AwsWorkerConfigErro
  */
 export interface CloudControllerSecurityConfig {
   readonly egress: CloudEgressPolicyInput;
+  readonly networkProfile: CloudNetworkProfile;
   readonly scm: CloudScmAccessPolicy;
   readonly encryption: CloudEncryptionPosture;
   readonly scmHosts: ReadonlyArray<string>;
@@ -85,6 +88,7 @@ const decodeRuntimeKind = Schema.decodeUnknownEffect(CloudRuntimeKind);
 const decodeEgressMode = Schema.decodeUnknownEffect(EgressMode);
 const decodeScmScope = Schema.decodeUnknownEffect(ScmScope);
 const decodeTlsVersion = Schema.decodeUnknownEffect(TlsVersion);
+const decodeNetworkProfileKind = Schema.decodeUnknownEffect(CloudNetworkProfileKind);
 const decodeHypervisorFleet = Schema.decodeEffect(
   Schema.fromJsonString(Schema.Array(HypervisorHostConfig)),
 );
@@ -104,6 +108,10 @@ const AwsWorkerConfig = Config.all({
   egressMode: Config.string("T3CODE_CLOUD_EGRESS_MODE").pipe(Config.option),
   egressAllowlist: Config.string("T3CODE_CLOUD_EGRESS_ALLOWLIST").pipe(Config.option),
   egressAdminLock: Config.boolean("T3CODE_CLOUD_EGRESS_ADMIN_LOCK").pipe(Config.withDefault(false)),
+  networkProfile: Config.string("T3CODE_CLOUD_NETWORK_PROFILE").pipe(Config.option),
+  networkProfileEnabled: Config.boolean("T3CODE_CLOUD_NETWORK_PROFILE_ENABLED").pipe(
+    Config.withDefault(true),
+  ),
   privacyMode: Config.boolean("T3CODE_CLOUD_PRIVACY_MODE").pipe(Config.withDefault(false)),
   kmsKeyArn: Config.string("T3CODE_CLOUD_KMS_KEY_ARN").pipe(Config.option),
   tlsMinimumVersion: Config.string("T3CODE_CLOUD_TLS_MIN_VERSION").pipe(Config.option),
@@ -135,6 +143,7 @@ export function defaultCloudControllerSecurityConfig(input: {
   const storeKeyId = `aws/ebs:${input.region}`;
   return {
     egress: { mode: "default_with_allowlist", allowlist: [], adminLocked: false },
+    networkProfile: { kind: "public" },
     scm: {
       protectedRepositories: [],
       blockedRepositories: [],
@@ -213,6 +222,17 @@ export const resolveAwsWorkerConfig = Effect.fn("cloud.resolveAwsWorkerConfig")(
         ),
       )
     : "default_with_allowlist";
+  const networkProfileKind = Option.isSome(config.networkProfile)
+    ? yield* decodeNetworkProfileKind(config.networkProfile.value).pipe(
+        Effect.mapError(
+          () =>
+            new AwsWorkerConfigError({
+              message:
+                "T3CODE_CLOUD_NETWORK_PROFILE must be public, stable-egress, tailscale, cloudflare-tunnel, or aws-privatelink.",
+            }),
+        ),
+      )
+    : "public";
   const scmMaxScope: CloudScmScope = Option.isSome(config.scmMaxScope)
     ? yield* decodeScmScope(config.scmMaxScope.value).pipe(
         Effect.mapError(
@@ -249,6 +269,10 @@ export const resolveAwsWorkerConfig = Effect.fn("cloud.resolveAwsWorkerConfig")(
       mode: egressMode,
       allowlist: hostList(config.egressAllowlist),
       adminLocked: config.egressAdminLock,
+    },
+    networkProfile: {
+      kind: networkProfileKind,
+      ...(config.networkProfileEnabled ? {} : { enabled: false }),
     },
     scm: {
       ...defaults.scm,

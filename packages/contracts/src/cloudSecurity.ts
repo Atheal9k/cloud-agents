@@ -86,7 +86,12 @@ export const CloudEgressMode = Schema.Literals([
 ]);
 export type CloudEgressMode = typeof CloudEgressMode.Type;
 
-export const CloudEgressExceptionKind = Schema.Literals(["controller", "scm", "artifact"]);
+export const CloudEgressExceptionKind = Schema.Literals([
+  "controller",
+  "scm",
+  "artifact",
+  "cursor",
+]);
 export type CloudEgressExceptionKind = typeof CloudEgressExceptionKind.Type;
 
 /**

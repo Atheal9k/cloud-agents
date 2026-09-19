@@ -80,6 +80,15 @@ const fixture = Effect.fn("CloudEnvironmentBuildRunner.fixture")(function* () {
     findPullRequest: () => Effect.succeed(null),
     createDraftPullRequest: () => Effect.die("This fixture never publishes."),
     closePullRequest: () => Effect.die("This fixture never deletes a pull request."),
+    syncPrivateGitDependencies: ({ cwd, kinds }) =>
+      Effect.gen(function* () {
+        if (kinds.includes("submodule")) {
+          yield* git(cwd, ["submodule", "update", "--init", "--recursive"]);
+        }
+        if (kinds.includes("lfs")) {
+          yield* git(cwd, ["lfs", "pull"]);
+        }
+      }),
   });
 
   const environments = yield* makeEnvironments();
@@ -313,4 +322,69 @@ it.effect("rejects a Build before it starts when ports collide or Build secrets 
     expect(missingSecret.message).toContain("NPM_TOKEN");
     expect(yield* context.builds.list).toEqual([]);
   }).pipe(Effect.scoped, TestClock.withLive, Effect.provide(TestLayer)),
+);
+
+it.effect("rejects a private registry destination the egress policy cannot reach", () =>
+  Effect.gen(function* () {
+    const context = yield* fixture();
+    const error = yield* context.runner
+      .run({
+        buildId: CloudEnvironmentBuildId.make("build-egress"),
+        version: {
+          ...context.version,
+          config: {
+            ...context.version.config,
+            egressMode: "network_settings_only",
+            egressAllowlist: [],
+            privateDependencies: [
+              {
+                id: "npm",
+                kind: "package-registry",
+                destination: "https://npm.corp.example",
+                secretName: "NPM_TOKEN",
+              },
+            ],
+          },
+        },
+        trigger: "manual",
+        draft: false,
+        occurredAt: "2026-09-19T02:01:00.000Z",
+        secretValues: context.secretValues,
+      })
+      .pipe(Effect.flip);
+
+    expect(error.reason).toBe("admission-rejected");
+    expect(error.message).toContain("npm.corp.example");
+    expect(yield* context.builds.list).toEqual([]);
+  }).pipe(Effect.scoped, TestClock.withLive, Effect.provide(TestLayer)),
+);
+
+it.effect(
+  "removes credential files from the prepared tree before it is snapshotted",
+  () =>
+    Effect.gen(function* () {
+      const context = yield* fixture();
+      const withNpmrc = yield* context.saveEnvironment(
+        `node -e "require('node:fs').writeFileSync('.npmrc','_authToken=npm-build-token\\n');require('node:fs').writeFileSync('install.ok','installed\\n')"`,
+        "2026-09-19T02:04:00.000Z",
+        1,
+      );
+      const build = yield* context.runner.run({
+        buildId: CloudEnvironmentBuildId.make("build-npmrc"),
+        version: withNpmrc.current,
+        trigger: "manual",
+        draft: false,
+        occurredAt: "2026-09-19T02:04:30.000Z",
+        secretValues: context.secretValues,
+      });
+
+      assert(build.outcome.status === "succeeded");
+      const workspace = context.path.join(
+        context.runner.snapshotPath(build.outcome.snapshot.id),
+        "acme-web",
+      );
+      expect(yield* context.fs.exists(context.path.join(workspace, ".npmrc"))).toBe(false);
+      expect(yield* context.fs.exists(context.path.join(workspace, "install.ok"))).toBe(true);
+    }).pipe(Effect.scoped, TestClock.withLive, Effect.provide(TestLayer)),
+  120_000,
 );

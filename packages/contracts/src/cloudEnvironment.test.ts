@@ -19,6 +19,15 @@ describe("CloudEnvironmentConfig", () => {
       ports: [{ name: "web", port: 5173 }],
       egressMode: "network_settings_only",
       egressAllowlist: ["registry.npmjs.org"],
+      privateDependencies: [
+        {
+          id: "npm",
+          kind: "package-registry",
+          destination: "registry.npmjs.org",
+          secretName: "NPM_TOKEN",
+        },
+      ],
+      networkProfile: { kind: "aws-privatelink" },
       enable_testing: "true",
     });
 
