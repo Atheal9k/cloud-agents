@@ -1,12 +1,22 @@
 # Cloud agents for T3 Code: implementation tickets
 
-Revised 17 September 2026. Planning only. This revision makes the existing local T3 environment the first controller host, adds Docker packaging for local and permanent controller hosting, moves permanent hosting behind a proven local workflow, defers the native T3 mobile app, and includes Android emulator and iOS Simulator workers. No application code, AWS deployment, app publication, or issue creation is authorized by this document.
+Revised 19 September 2026. Planning only. Completed tickets preserve the
+working T3-specific foundation. Open and new tickets now target product parity
+with Cursor Cloud Agents: durable agents and runs, versioned environments and
+Builds, isolated runtimes that hibernate when idle, API and integration
+surfaces, security controls, artifacts, computer use, and self-hosted pools.
+The intentional differences are the existing local-controller option, T3's
+worker-owned live thread state, direct app previews alongside shared desktop
+control, and the Android/iOS development-worker profiles. No application code,
+AWS deployment, app publication, or issue creation is authorized by this
+document.
 
 ## Agreed scope
 
 The existing local T3 environment serves the web application and coordinates cloud workers first. The local machine must stay online while it is the controller, but web and desktop clients may disconnect without stopping a worker. After that workflow passes end to end, the same controller can move to a permanent EC2 host with stable remote access and no dependency on the local machine.
 
-The first usable local-host release proves one complete workflow with one provider, one GitHub repository per run, and one worker at a time:
+The completed local-host release proves one workflow with one provider, one
+GitHub repository per run, and one worker at a time:
 
 1. Submit a coding task from the web or desktop.
 2. Let the worker continue after the initiating client disconnects, while the local T3 controller remains online.
@@ -15,7 +25,10 @@ The first usable local-host release proves one complete workflow with one provid
 5. Receive a saved diff, test results, and a draft PR.
 6. Recover from a disconnect or restart and stop compute without losing acknowledged results.
 
-Start with one configured repository and provider account. Additional repositories can use the same configuration format later; repository discovery, settings wizards, a six-provider qualification program, rich fleet administration, schedules, persistent assistants, and native T3 mobile changes are not first-release gates.
+That release is the migration base, not the end state. The parity program adds
+parallel agents, multi-repository environments, agent and run APIs,
+integrations, subscriptions, fleet administration, and optional native-mobile
+surfaces without discarding the completed path.
 
 Your own mobile app development is a separate requirement. The next committed delivery adds Android emulators and iOS simulators on appropriate workers, with live display and input inside web/desktop threads. This does not depend on building or publishing the T3 mobile client.
 
@@ -27,9 +40,39 @@ The controller serves the UI, authentication, a small worker-allocation catalog,
 
 CA-01 must prove the smallest extension of T3's existing environment model before fixing a new execution protocol. The starting candidate is an ordinary T3 environment on a worker, reached through existing typed RPC and subscriptions. Reuse its provider adapters, project/thread ownership, event store, terminal, checkpoints, and permissions.
 
-There must be one writable authority for each thread. If the worker is that authority, the active controller host stores allocation records, explicit environment/thread references, and consistent archives. It does not maintain a second live orchestration event log or duplicate the worker's decider/projector. A saved archive is a recovery/read-only artifact, not another active writer. Moving from the local controller to EC2 requires a deliberate cutover with only one writable controller. If a smaller execution bridge is demonstrably preferable, CA-01 must show how it preserves those ownership boundaries before adopting it.
+There must be one writable authority for each live thread. The active runtime
+owns T3's decider, projector, provider adapter, checkpoint reactor, workspace,
+and provider home. The controller owns the durable agent/run catalog,
+environment and Build records, placement, consistent snapshots, artifacts, and
+publication. It does not run a second live decider/projector. Hibernate first
+flushes a consistent restorable snapshot and fences the old writer; wake
+creates exactly one new writer.
 
-This is a personal single-controller deployment. Multi-controller consensus, a new general-purpose scheduler framework, Kubernetes, and transparent migration of arbitrary running processes are outside the initial scope.
+This remains a single-controller deployment. Multi-controller consensus and
+transparent migration of arbitrary in-flight processes are out of scope.
+Firecracker-based packing is the managed-runtime target; Kubernetes is
+optional only for self-hosted pools.
+
+### Match Cursor's object model, not its branding
+
+An **agent** is the durable conversation. A **run** is one submitted turn. An
+**environment** is versioned setup policy. A successful **Build** is a prepared
+disk snapshot. A **runtime** is an isolated guest used only while a run is
+active or within a bounded idle window.
+
+- Agent status: `ACTIVE`, `IDLE`, or `ARCHIVED`.
+- Run status: `CREATING`, `RUNNING`, then `FINISHED`, `ERROR`, `CANCELLED`, or
+  `EXPIRED`.
+- One agent has at most one active run.
+- `IDLE` accepts follow-ups without requiring a running VM.
+- Environment config precedence: repository file, personal saved environment,
+  then team/default environment.
+- `install` runs while creating a Build; `start` and named terminals run on
+  each runtime boot.
+
+The [Cursor-parity architecture](./cursor-parity-cloud-architecture.md)
+contains the rationale and migration topology. This file is the authoritative
+implementation backlog.
 
 ### SSM is not the agent transport
 
@@ -50,13 +93,16 @@ Ordinary frontend previews use an authenticated web proxy. Clicking and typing i
 
 DCV is the preferred candidate for shared-session viewing and takeover, subject to CA-34. Start or attach streaming only when a visible viewer or an agent task needs it. Hidden threads disconnect or suspend viewers; no background frame decoding for every open thread. Closing the viewer must not kill an agent that still uses the browser.
 
-A minimal image preinstalls the selected runtime/provider. Add a bounded dependency cache before the first release. Measure cold startup before adding warm pools. No warm Linux fleet is required initially.
+A minimal base image preinstalls the selected runtime/provider. Environment
+Builds install repository dependencies once and snapshot the disk. Warm copies
+of active Builds and shared package-download caches are added only after cold
+boot, restore, and claim timings are measured.
 
 ### Mobile development needs separate worker profiles
 
 | Profile              | Workload                                                        | Allocation policy                                                                              |
 | -------------------- | --------------------------------------------------------------- | ---------------------------------------------------------------------------------------------- |
-| Linux web worker     | Coding, builds, web preview, browser automation                 | Disposable EC2 worker; default concurrency one.                                                |
+| Linux web worker     | Coding, builds, web preview, browser automation                 | Firecracker guest on a packed host; stop/snapshot EC2 fallback during migration.               |
 | Linux Android worker | Android SDK, accelerated emulator, native or React Native build | A verified virtualization-capable EC2 type with sufficient memory/storage; allocate on demand. |
 | macOS iOS worker     | Xcode, iOS Simulator, Apple-platform builds                     | Compatible EC2 Mac Dedicated Host with bounded queued jobs and a host-level allocation policy. |
 
@@ -91,21 +137,30 @@ The repo also has an [iOS simulator streaming workflow](C:/Users/Victor/Desktop/
 
 ## Delivery order and scope boundaries
 
-Existing ticket IDs are preserved except CA-04, which is split into CA-04A and CA-04B. CA-04C adds Docker deployment before CA-06; CA-37 to CA-39 add mobile workers. Order below is intentional; ticket numbering does not indicate priority.
+Existing ticket IDs and completed statuses are preserved. Open tickets are
+rewritten around the parity model. CA-40 onward adds the missing Cursor
+surfaces. Order below is intentional; ticket numbering does not indicate
+priority.
 
-| Delivery                           | Tickets                                                                                                                                                    | Required result                                                                                                                     |
-| ---------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------- |
-| Architecture proof                 | CA-01                                                                                                                                                      | Select one provider and prove T3 reuse, ownership, offline execution, and the basic worker route.                                   |
-| Local-hosted web/desktop release   | CA-02, CA-03, CA-04A, CA-04C, CA-06, CA-07, CA-08, CA-09, CA-10, CA-11, CA-14, CA-15, CA-16, CA-17, CA-18, CA-19, CA-23, CA-24, CA-25, CA-27, CA-34, CA-35 | Run the complete single-worker workflow from the local Docker controller. The controller machine must remain online.                |
-| Permanent controller deployment    | CA-04B                                                                                                                                                     | Move the proven controller to an always-on EC2 host with stable access, safe state cutover, and no dependency on the local machine. |
-| Review and operations improvements | CA-05, CA-12, CA-13, CA-21, CA-33, CA-36                                                                                                                   | Add richer setup, history, review retention/reopen, and remote administration without expanding provider scope.                     |
-| Mobile development workers         | CA-37, CA-38, CA-39                                                                                                                                        | Build, boot, view, control, and test your Android/iOS app from web/desktop; no T3 native-app publication.                           |
-| Optional product expansion         | CA-26, CA-28, CA-29, CA-30, CA-31, CA-32                                                                                                                   | Add handoff, automation, assistants, additional providers, and private-network/dependency support.                                  |
-| Deferred native T3 app work        | CA-20, CA-22                                                                                                                                               | Add native T3 iOS/Android client and push integration only when you choose to maintain and distribute those builds.                 |
+| Delivery                           | Tickets                                                                                                                                                    | Required result                                                                                                      |
+| ---------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------- |
+| Architecture proof                 | CA-01                                                                                                                                                      | Select one provider and prove T3 reuse, ownership, offline execution, and the basic worker route.                    |
+| Local-hosted web/desktop release   | CA-02, CA-03, CA-04A, CA-04C, CA-06, CA-07, CA-08, CA-09, CA-10, CA-11, CA-14, CA-15, CA-16, CA-17, CA-18, CA-19, CA-23, CA-24, CA-25, CA-27, CA-34, CA-35 | Run the complete single-worker workflow from the local Docker controller. The controller machine must remain online. |
+| Agent/runtime foundation           | CA-40, CA-41, CA-42, CA-43, CA-44, CA-45, CA-46                                                                                                            | Split agents/runs from runtimes, build reusable environments, hibernate idle guests, then pack guests safely.        |
+| Permanent controller deployment    | CA-04B                                                                                                                                                     | Move the controller and new catalogs to an always-on host with safe single-writer cutover.                           |
+| Review and operations improvements | CA-05, CA-12, CA-13, CA-21, CA-33, CA-36                                                                                                                   | Administer environments, Builds, retained agents, review, and preview restore.                                       |
+| Product/API parity                 | CA-47, CA-48, CA-49, CA-50, CA-51, CA-52, CA-53, CA-54, CA-55, CA-56, CA-57, CA-58                                                                         | Match Cursor's API, integrations, collaboration, security, automation, diagnostics, and self-hosted runtime choices. |
+| Mobile development workers         | CA-37, CA-38, CA-39                                                                                                                                        | Build, boot, view, control, and test your Android/iOS app from web/desktop; no T3 native-app publication.            |
+| Existing product expansion         | CA-26, CA-28, CA-29, CA-30, CA-31, CA-32                                                                                                                   | Align handoff, triggers, durable assistants, providers, and private dependencies with the new agent model.           |
+| Deferred native T3 app work        | CA-20, CA-22                                                                                                                                               | Add native T3 iOS/Android client and push integration only when you choose to maintain and distribute those builds.  |
 
 Mobile development is committed follow-on scope, not dependent on the optional product expansion or deferred native T3 app work. Run platform feasibility checks early before spending time on simulator UI. Android and iOS can be implemented independently; CA-39 passes separately for each and both must pass before claiming support for both platforms.
 
-The first release must not inherit deferred requirements through dependencies. In particular, it does not require repository discovery, full settings wizards, every provider, native T3 mobile testing/publication, push notification credentials, warm pools, complete historical conversation migration, or transparent live-process resume.
+Completed tickets are not reopened merely because their original acceptance
+criteria described the old one-EC2-per-thread limit. New parity tickets
+supersede those limits explicitly. Exact parity means matching documented
+observable behavior, not reproducing Cursor's proprietary implementation or
+model quality.
 
 ## First usable local-host release
 
@@ -507,106 +562,572 @@ Acceptance criteria:
 
 ### CA-04B: Move the proven controller to a permanent T3 host
 
-Dependencies: CA-03, CA-04A, CA-04C, CA-23, CA-24.
+Dependencies: CA-03, CA-04A, CA-04C, CA-23, CA-24, CA-40, CA-41.
 
-Description: Move the controller proven by CA-23 to one always-on EC2 instance using the versioned Docker image and persistent state layout from CA-04C. Keep the local and permanent modes on the same T3 code path.
+Description: Move the proven controller, durable agent/run catalog, and
+environment/Build catalog to one always-on host using CA-04C's image. Keep
+local and permanent controller modes on one code path; runtimes remain in the
+separate execution plane.
 
 Acceptance criteria:
 
-- Stable DNS, TLS renewal, service auto-start, and durable T3 identity survive a host reboot. Web and desktop connect to the same host without baked localhost origins.
-- A documented cutover stops admission on the local controller, drains or explicitly terminates active work, takes a consistent backup, restores the required controller state, and starts the EC2 controller with only one writable authority. Arbitrary live processes do not migrate.
-- Initial repository, provider, AWS, and GitHub settings use protected server configuration and existing remote setup paths. No settings wizard or native app is required.
-- Supported provider authentication completes through a validated device-code, remote callback, or explicit protected credential-entry flow. The permanent host never treats its own localhost callback as the viewer's localhost.
-- Responsive web access works from another network with the original computer off. The deployment does not require T3's production Clerk, relay, push credentials, or app-store publication.
-- A consistent backup/restore and single-host outage procedure are demonstrated. HA, controller replication, and a full admin dashboard remain deferred.
-- The local-controller mode remains supported for development and fallback. Switching back also requires an explicit single-writer cutover.
+- Stable DNS, TLS renewal, service auto-start, durable identity, agent/run
+  records, environment versions, Build records, and artifact references survive
+  reboot.
+- Cutover stops admission, drains active runs, snapshots idle agents, backs up
+  SQLite consistently, fences the old controller, then starts exactly one
+  writable controller. In-flight processes do not migrate.
+- `CloudAllocationControllerMode` represents local and permanent modes;
+  `requiresHostOnline` is accurate in clients and APIs.
+- Provider and source-control authentication use remote-safe device, callback,
+  or protected credential flows; server loopback is never shown as viewer
+  loopback.
+- Web/API access works with the original computer off. Local-controller mode
+  remains supported through the same contracts.
+- Backup, restore, rollback, and outage procedures preserve agent IDs and do
+  not wake every idle runtime.
 
 ## Review and operations improvements
 
 ### CA-05: Add a guided AWS readiness/settings screen
 
-Dependencies: CA-03, CA-04B, CA-19, CA-24.
+Dependencies: CA-03, CA-04B, CA-19, CA-24, CA-41, CA-42, CA-44.
 
-Description: Replace manual deployment configuration with a useful remote settings workflow after the first run is proven.
+Description: Replace manual deployment configuration with a readiness workflow
+for the controller, execution account, environments, Builds, snapshots, and
+runtime fleet.
 
 Acceptance criteria:
 
-- Show account, region, deployment, image/version, and health without exposing credentials.
-- Validate required AWS permissions, image availability, artifact access, and normal worker registration. Diagnose optional SSM recovery separately.
-- Settings remain environment-scoped and do not fall back to another server.
-- Disconnect stops admission while preserving cleanup and result access; reconnect finds the same catalog.
-- Browsers hold only application access credentials, never AWS provisioning keys.
+- Show controller and execution accounts, regions, guest/hypervisor versions,
+  slot capacity, active Build, snapshot policy, and health without credentials.
+- Validate IAM, KVM/Firecracker support, image and snapshot access, artifact
+  storage, guest registration, and optional SSM diagnostics independently.
+- Guided setup can create, test, and activate an environment version without
+  replacing the last successful Build on failure.
+- Settings expose config source/precedence, secrets, egress, stale-build
+  threshold, and default model/repository/ref.
+- Stop-admission leaves active runs, idle snapshots, cleanup, and review
+  available. Browsers never receive AWS provisioning credentials.
 
 ### CA-12: Add reusable repository recipes and secret management
 
-Dependencies: CA-10, CA-19, CA-24.
+Dependencies: CA-10, CA-19, CA-24, CA-41, CA-42, CA-49.
 
-Description: Extend the first fixed recipe into versioned per-project setup, validation, environment, and secret configuration.
+Description: Replace per-run recipes with versioned environments. Map setup to
+Build-time `install`, per-runtime services to `start` and named terminals, and
+secrets to explicit Build/runtime classes.
 
 Acceptance criteria:
 
-- New runs record an immutable effective recipe; editing a recipe does not alter a running task.
-- Reuse t3.json conventions where appropriate, with explicit synchronous prerequisites before agent startup.
-- Protected remote settings accept secret values; events/logs redact known values and retain only references.
-- Task-visible application secrets are distinguished from protected infrastructure and Git publication credentials.
-- Multiple runtime/port configurations have validation and bounded setup output. Private registries remain CA-32.
+- Resolve config in order: repository `.cursor/environment.json` or documented
+  T3 equivalent, personal environment, then team/default environment.
+- Each run records immutable environment version and Build IDs. Editing config
+  never mutates an active runtime.
+- `install` is terminating and idempotent; `start` and named terminals run on
+  each boot and have visible health/logs.
+- Environment-variable, runtime-redacted, and Build-only secret classes have
+  distinct injection and redaction. User secrets never enter a shared Build.
+- Multi-repo environments validate ports, private dependencies, and per-repo
+  refs before Build admission.
 
 ### CA-13: Improve large-history reconnect and streaming performance
 
-Dependencies: CA-09, CA-11, CA-19, CA-24.
+Dependencies: CA-09, CA-11, CA-19, CA-24, CA-40, CA-47.
 
-Description: Measure and improve existing T3 subscriptions for noisy tools and slow clients. Do not introduce a second durable event pipeline merely to support cloud runs.
+Description: Preserve T3's authoritative live subscription while adding the
+bounded agent/run event stream required by clients and API consumers.
 
 Acceptance criteria:
 
-- Reconnect recovers from the authoritative environment using existing cursors/snapshots without duplicate messages.
-- Lists receive bounded summaries and histories/logs load on demand.
-- Slow viewers and large output have bounded buffers/backpressure; SSM output limits do not affect the transcript.
-- Stress tests measure data transferred and resource use before and after changes.
-- No full-history mirroring to controller orchestration state is added.
+- Worker reconnect uses T3 cursors while active; hibernated agents read the
+  durable transcript and result summary without waking a guest.
+- API SSE supports event IDs, `Last-Event-ID`, heartbeats, bounded retention,
+  and explicit `410 stream_expired`.
+- Lists return bounded summaries; histories, tool output, setup logs, and
+  artifacts load on demand with backpressure.
+- Resume produces no duplicate messages across worker route, controller
+  transcript, and run stream.
+- Load tests measure bytes, latency, buffers, and restore cost. No second live
+  decider/projector is introduced.
 
 ### CA-21: Integrate retained results into the full review UI
 
-Dependencies: CA-14, CA-16, CA-19, CA-24.
+Dependencies: CA-14, CA-16, CA-19, CA-24, CA-40, CA-43, CA-46, CA-48.
 
-Description: Expand the basic saved-result page into thread/history/diff review after workers terminate.
+Description: Make the durable agent page useful while its runtime is absent.
+Conversation, runs, changes, Build provenance, artifacts, and PRs remain
+reviewable without waking compute.
 
 Acceptance criteria:
 
-- Web and desktop can inspect transcript, changed files, validation, artifacts, and PR without allocating compute.
-- A retained view shows revision/time and does not imply a live terminal or filesystem.
-- Binary/oversized diffs, missing artifacts, and expiry are explicit.
-- Downloads remain authorized and untrusted HTML cannot execute with T3 application privileges.
-- Archive/unarchive, retention deletion, and cancellation are distinct; deleting saved data does not silently delete a PR.
+- Web, desktop, and authorized shared links inspect transcript, run history,
+  changes, verification, artifacts, usage, environment/Build, and PR offline.
+- `ACTIVE`, `IDLE`, and `ARCHIVED` are distinct from run terminal status and
+  from preview/terminal availability.
+- Binary/oversized diffs, expired snapshots, missing artifacts, and failed
+  Builds are explicit. Review does not wake a runtime.
+- Artifact downloads use short-lived authorized URLs; untrusted HTML cannot
+  execute with application privileges.
+- Archive, unarchive, permanent delete, cancel, wake, and PR deletion are
+  separate and access-checked.
 
 ### CA-33: Expand remote administration beyond the first workflow
 
-Dependencies: CA-05, CA-12, CA-18, CA-19, CA-24.
+Dependencies: CA-05, CA-12, CA-18, CA-19, CA-24, CA-40, CA-41, CA-42, CA-44,
+CA-49, CA-55.
 
-Description: Add richer repository, recipe, provider-account, and worker operations to the web/desktop settings. Basic control ships in CA-04A and CA-19. CA-04B moves that control path to the permanent host so it no longer depends on the local controller machine.
+Description: Administer repositories, environments, Builds, models, secrets,
+network policy, agents, runtime capacity, integrations, and spend remotely.
 
 Acceptance criteria:
 
-- Manage configured repositories, recipes, accounts, secret references, limits, and worker diagnostics without the original computer.
-- Provider reauthentication uses supported remote flows and never sends the viewer to an unreachable EC2 loopback listener.
-- Supported update/restart and cleanup operations display progress, reconnect, and preserve durable identity.
-- Device enrollment/revocation works through application authorization; no unrestricted controller shell is exposed to task code.
-- Responsive web provides remote administration from another network. Native T3 mobile screens are not required.
+- Manage environment version history; trigger, inspect, activate, and roll back
+  Builds; set recurring/manual Build policy.
+- Configure default model/context, repository/ref, long-running permission,
+  team follow-ups, computer use, Git artifacts, and spend limits.
+- Show hypervisor slots, warm inventory, runtime placement, snapshots, queue,
+  and cleanup without exposing a general shell.
+- Provider/SCM reauthentication is remote-safe. Secret values are write-only;
+  changes affect new runtimes and trigger Builds only when appropriate.
+- Every mutation is authorized and audited; responsive web works remotely.
 
 ### CA-36: Add bounded preview retention and reopen
 
-Dependencies: CA-14, CA-17, CA-18, CA-21, CA-25, CA-34, CA-35.
+Dependencies: CA-14, CA-17, CA-18, CA-21, CA-25, CA-34, CA-35, CA-43, CA-46.
 
-Description: Extend the first fixed review grace period into explicit preview leases and preview-only recovery.
+Description: Replace review-grace-as-worker-lifetime with explicit preview
+leases on top of idle snapshot/restore. Reopening a preview wakes a runtime but
+does not start a provider run.
 
 Acceptance criteria:
 
-- Agent completion, live app availability, and worker cleanup remain separate states.
-- A visible lease allows bounded extension and explicit stop. Viewer heartbeats alone cannot keep compute alive indefinitely.
-- Expiry saves eligible work and evidence, releases input ownership, revokes routes, and cleans up.
-- Reopen restores the saved revision and app on a new worker without starting another provider turn; retries deduplicate and obey admission limits.
-- Browser login restoration requires an explicit persistence policy; a fresh session is described honestly.
-- Human filesystem edits appear in a new checkpoint/diff without silently rewriting a previously published PR.
+- Agent/run, runtime, app preview, desktop viewer, and input lease have separate
+  state and deadlines.
+- A visible preview receives a bounded lease. Heartbeats alone cannot keep a
+  guest alive indefinitely; explicit stop snapshots then releases it.
+- Reopen restores the agent snapshot and runs environment `start` without
+  creating a provider run. Placement is idempotent and obeys slot admission.
+- Browser/login persistence is explicit and secret-safe; a fresh browser is
+  reported honestly.
+- Human edits create a checkpoint and diff without rewriting a published PR.
+- Route and input tokens are attempt-bound and revoked on hibernate/replace.
+
+## Cursor-parity agent and runtime foundation
+
+These tickets replace the one-allocation/one-EC2 steady state. They supersede
+the old deferrals of hibernation, warm pools, and parallel placement without
+reopening completed proof tickets.
+
+### CA-40: Split durable agents, runs, and ephemeral runtimes
+
+Dependencies: CA-02, CA-08, CA-11, CA-14, CA-15.
+
+Description: Introduce Cursor's observable control-plane model while retaining
+T3 as the sole live thread writer.
+
+Acceptance criteria:
+
+- A durable agent has a stable ID, conversation, repository/environment
+  provenance, branch set, and status `ACTIVE`, `IDLE`, or `ARCHIVED`.
+- Each submitted prompt creates a run with status `CREATING`, `RUNNING`, then
+  `FINISHED`, `ERROR`, `CANCELLED`, or `EXPIRED`; one run per agent may be
+  active and a conflict returns `agent_busy`.
+- Runtime, worker, environment, and thread references may be absent while an
+  agent is idle. Clients can list and review it without compute.
+- Follow-up creates a run on the same agent; retry is reserved for failed
+  placement/publication rather than ordinary conversation continuity.
+- Existing allocation events remain decodable and migrate to linked runtime
+  attempts. Focused replay/race tests cover duplicate create, cancel, archive,
+  and stale runtime fencing.
+
+### CA-41: Add versioned environments and config resolution
+
+Dependencies: CA-10, CA-12, CA-40.
+
+Description: Make environment setup a first-class, versioned resource rather
+than a mutable recipe attached to each allocation.
+
+Acceptance criteria:
+
+- Environments support one or multiple repositories, one base strategy
+  (Dockerfile, explicit image, or snapshot), `install`, `start`, named
+  terminals, ports, secrets, egress, and runtime user.
+- Resolution order is repository `.cursor/environment.json` or documented T3
+  equivalent, personal saved environment, then team/default environment.
+- Every edit creates an immutable version; active agents retain the version
+  they started with. Restore creates a new version pointing to prior config.
+- Agent-led setup can inspect the repo, propose config, request missing secrets
+  or user actions, test it, and hand the proposal to the user before saving.
+- The dashboard exposes source, version history, repositories, owner/scope,
+  active Build, and effective policy.
+
+### CA-42: Build and activate prepared environment snapshots
+
+Dependencies: CA-07, CA-27, CA-41.
+
+Description: Add Cursor-like Builds so clone and dependency installation leave
+the agent hot path.
+
+Acceptance criteria:
+
+- A Build prepares the base, clones default refs, runs terminating/idempotent
+  `install`, records commit SHAs and logs, snapshots disk, then atomically
+  becomes active.
+- Failed or cancelled Builds never replace the last active Build. Draft Builds
+  can be tested but never activate implicitly.
+- Triggers include manual, recurring, configuration change, and
+  agent-requested. Recurring Builds may be skipped when refs/config/secrets are
+  unchanged.
+- Build records expose status, trigger, environment version, snapshot, timings,
+  `gitSetup`, and logs. User-only runtime secrets never enter shared snapshots.
+- Stale-build threshold defaults to 24 hours and may be `0` to always refresh.
+  A feature-branch run boots the Build then checks out the requested ref.
+
+### CA-43: Hibernate idle agents and wake from snapshots
+
+Dependencies: CA-14, CA-17, CA-40, CA-42.
+
+Description: Make idle compute release the default cost boundary.
+
+Acceptance criteria:
+
+- When a turn settles with no blocking interaction, mark the agent `IDLE`,
+  flush T3 userdata/workspace/provider-home consistently, and start a
+  configurable idle-release timer (initial default 3600 seconds).
+- Follow-up inside the window resets the timer and reuses the guest. After the
+  window, snapshot dirty state and stop/destroy the guest.
+- Follow-up after release restores exactly one fenced runtime and resumes T3
+  from its snapshot. It reports filesystem restore separately from
+  provider-native session resume.
+- Active-run deadlines remain hard caps, but the old 120-minute EC2 TTL is not
+  the conversation lifetime. Cleanup never terminates a stopped snapshot as an
+  expired active worker.
+- Crash between settle, snapshot acknowledgement, and guest deletion is
+  reconciled without two writers or acknowledged-result loss.
+
+### CA-44: Isolate and pack Linux runtimes on a managed fleet
+
+Dependencies: CA-03, CA-07, CA-40, CA-42, CA-43.
+
+Description: Replace per-thread `RunInstances` with Firecracker microVM guests
+on a small execution fleet in a separate AWS account.
+
+Acceptance criteria:
+
+- Prove Firecracker on the selected metal/nested-virtualization instance,
+  including KVM, guest kernel, networking, block snapshots, console, and
+  teardown.
+- Each agent has its own VM boundary, encrypted disk/key, userspace, network
+  identity, and task cgroup. It cannot read hypervisor credentials, instance
+  metadata, or sibling state.
+- Placement consumes explicit CPU/memory/disk/profile slots. CPU may be
+  oversubscribed within measured limits; memory pressure cannot OOM neighbors.
+- Hypervisor loss reschedules only snapshot-safe idle/terminal work; active
+  process migration is not claimed.
+- The EC2 stop/snapshot-per-active-thread path remains a documented migration
+  fallback. It is not reported as final Cursor parity.
+
+### CA-45: Pre-warm active Builds and scale runtime capacity
+
+Dependencies: CA-27, CA-42, CA-44.
+
+Description: Keep bounded warm copies of popular active Builds and scale host
+capacity from measured queue and slot demand.
+
+Acceptance criteria:
+
+- Placement records `warmFork: warm|cold`, Build ID, claim latency, boot time,
+  and reason for fallback.
+- Warm guests contain no user secrets, provider session, branch changes, or
+  prior agent identity.
+- Pool targets are bounded by environment/profile demand; scale-to-zero and
+  eviction never remove the last durable Build snapshot.
+- Concurrent claims cannot assign one guest twice. Obsolete environment
+  versions drain without mutating active agents.
+- Compare cold Build restore, warm claim, and today's EC2 startup before
+  choosing pool sizes.
+
+### CA-46: Implement snapshot retention, archive, and deletion
+
+Dependencies: CA-21, CA-40, CA-43.
+
+Description: Separate live compute, disk snapshots, conversation retention,
+archive, and permanent deletion.
+
+Acceptance criteria:
+
+- Agent snapshots use rolling 90-day inactivity retention; successful
+  start/resume refreshes it. Garbage collection is idempotent and visible.
+- Conversation/run state is retained indefinitely by default with a
+  configurable administrative cap; artifacts follow their declared policy.
+- Archive is idempotent, releases runtime claims, hides the agent, and rejects
+  new runs. Unarchive restores eligibility without silently waking compute.
+- Permanent delete removes transcript and artifacts irreversibly but does not
+  promise on-demand deletion of immutable snapshots before policy expiry.
+- Cleanup cannot remove hypervisors, active guests, current Builds, PRs, or
+  another agent's data.
+
+## Cursor-parity product, API, and security
+
+### CA-47: Expose the Cloud Agents API and event stream
+
+Dependencies: CA-13, CA-40, CA-46.
+
+Description: Add a versioned API shaped like Cursor's Cloud Agents API rather
+than exposing infrastructure allocation calls.
+
+Acceptance criteria:
+
+- Basic and Bearer API keys support create/list/get agents, create/list/get
+  runs, cancel, usage, archive, unarchive, and delete; service accounts are
+  distinct principals.
+- Create supports caller-provided agent IDs with `agent_id_conflict`; concurrent
+  runs return `agent_busy`; terminal cancellation returns
+  `run_not_cancellable`.
+- SSE emits `status`, `assistant`, `thinking`, `tool_call`,
+  `interaction_update`, `heartbeat`, `result`, `error`, and `done`; supports
+  `Last-Event-ID` and explicit expired-stream errors.
+- Inputs support agent/plan mode, model/context parameters, environment or
+  repository target, ref/PR behavior, images, environment variables, MCP
+  servers, and custom subagents with validated limits.
+- `/v1/me`, models, repositories, usage, pagination, rate limits, request IDs,
+  and stable error codes are documented and contract-tested.
+
+### CA-48: Serve artifacts, computer use, and remote desktop
+
+Dependencies: CA-21, CA-34, CA-35, CA-40.
+
+Description: Complete Cursor's verification loop while retaining T3's direct
+app-preview versus shared-desktop distinction.
+
+Acceptance criteria:
+
+- Agent-scoped artifacts list relative paths and download through short-lived
+  authorized URLs; screenshots, videos, logs, and test output can be attached
+  to PRs.
+- Artifact storage is encrypted, bounded, content-typed, access-checked, and
+  available after hibernation. Optional public Git image links require an
+  explicit admin policy.
+- Computer use controls the same browser/desktop the user can observe and take
+  over; existing CA-35 input leases remain authoritative.
+- Direct app previews remain cheaper and isolated from the agent browser.
+  Hidden viewers stop frames without stopping active automation.
+- Artifacts and a walkthrough are part of successful user-visible run
+  completion, not a replacement for actual verification.
+
+### CA-49: Add Cursor-equivalent secrets, identity, and network controls
+
+Dependencies: CA-06, CA-07, CA-41, CA-44.
+
+Description: Make security policy part of each environment/runtime rather than
+ambient EC2 configuration.
+
+Acceptance criteria:
+
+- Support environment variables, runtime-redacted secrets, and Build-only
+  secrets with user/team/environment scope and correct Build/runtime timing.
+- Support allow-all, default-plus-allowlist, and allowlist-only egress with
+  environment/team inheritance and an admin lock. Controller, SCM, and artifact
+  exceptions are explicit.
+- Runtime metadata and five-minute OIDC tokens are served over a local Unix
+  socket with agent, owner, turn, workspace, repository, and managed/self-hosted
+  claims, rate limits, and JWKS verification.
+- TLS 1.2+, per-agent encryption keys, encrypted snapshots/artifacts, optional
+  customer-managed KMS keys, Privacy Mode, and secret redaction are verified.
+- Protected repository scopes, blocklists, short-lived SCM credentials, and
+  optional AWS assume-role federation prevent access wider than the triggering
+  user.
+
+### CA-50: Match source-control entry points and team collaboration
+
+Dependencies: CA-06, CA-16, CA-21, CA-40, CA-47.
+
+Description: Let users create and share agents where they already work while
+enforcing team and repository access.
+
+Acceptance criteria:
+
+- Connect GitHub/GHES, GitLab/self-hosted GitLab, Bitbucket Cloud, and Azure
+  DevOps incrementally; each agent's access is the intersection of app install,
+  triggering principal, and configured repository scope.
+- Web, desktop Cloud destination, API, Slack, GitHub/Bitbucket mentions, and
+  Linear all create/follow up through one idempotent run path.
+- Shared agent URLs require same-team membership and the viewer's own SCM
+  access. Viewing is read-only by default.
+- Team follow-ups have admin policy: disabled, service accounts only, or all,
+  with explicit lateral-access and secret-risk warnings.
+- Branch/PR behavior supports new `cursor/...` branches, current branch,
+  starting ref, PR continuation, draft PR creation, and reviewer suppression
+  without force pushes.
+
+### CA-51: Support MCP servers, hooks, and custom subagents
+
+Dependencies: CA-11, CA-41, CA-47, CA-49.
+
+Description: Match the extensibility available to Cursor cloud runs.
+
+Acceptance criteria:
+
+- Team and personal MCP servers support HTTP and stdio transports; OAuth is
+  per user, HTTP credentials can stay outside the guest, and stdio executes in
+  the runtime.
+- The built-in cloud diagnostics MCP exposes run info, transcripts, events,
+  environment/Build details, setup logs, and authorized fleet diagnostics.
+- Repository `.cursor/hooks.json` command hooks cover supported tool/file and
+  lifecycle events. Early read-only setup and unavailable local-home hooks are
+  documented.
+- API custom subagents have bounded count/size, cannot shadow built-ins, inherit
+  permissions intentionally, and appear in run events/usage.
+- MCP/hook/subagent failures are isolated, redacted, auditable, and never
+  silently widen runtime network or secret access.
+
+### CA-52: Wake agents from subscriptions and CI autofix
+
+Dependencies: CA-29, CA-40, CA-43, CA-47, CA-50.
+
+Description: Allow an idle durable agent to receive event-driven follow-up
+runs without keeping compute online.
+
+Acceptance criteria:
+
+- Subscriptions support GitHub PR/CI, Slack thread/channel, Linear issue/comment,
+  and timers/loops with explicit create/list/delete operations.
+- Delivery targets the durable agent, coalesces bursts, is idempotent, and may
+  wake it for up to the configured maximum (Cursor parity target: 180 days).
+- CI autofix follows only eligible agent-created PRs and skips human pushes,
+  explicit user follow-ups, pre-existing base failures, and work after the
+  configured repair cap (parity target: 10).
+- Subscriptions remain visible and cancellable while the agent is idle; archive
+  disables them without losing audit history.
+- Event receipts replace sleeps/polling in tests. Failed wake/placement is
+  retryable and never acknowledges a follow-up that was not persisted.
+
+### CA-53: Add Cursor-like automations
+
+Dependencies: CA-28, CA-47, CA-50, CA-51, CA-52.
+
+Description: Generalize schedules and webhook triggers into reusable
+automations running as a user or service account.
+
+Acceptance criteria:
+
+- Triggers include cron, source-control events, Slack, Linear, Sentry,
+  PagerDuty, and authenticated private webhooks.
+- Automations select environment, repositories, model, instructions, tools,
+  limits, publication, and run-as principal. Service-account spend and
+  permissions remain separate from a user.
+- Actions may create/comment on PRs, request reviewers, post to Slack, call
+  MCP, use computer control, and update explicit inspectable memories.
+- Overlap, missed-run, deduplication, retries, pause/resume/edit/delete, and
+  daylight-saving behavior are defined.
+- Every execution creates ordinary agent/run records, obeys admission/spend
+  policy, and can hibernate after completion.
+
+### CA-54: Publish webhooks and typed SDKs
+
+Dependencies: CA-47, CA-52.
+
+Description: Provide supported programmatic clients and outbound lifecycle
+events without making consumers poll.
+
+Acceptance criteria:
+
+- Signed webhooks deliver terminal/status events with delivery/event IDs,
+  HMAC-SHA256 verification, replay protection, bounded retries, and dead-letter
+  visibility.
+- TypeScript and Python SDKs cover local and cloud agents through one
+  workflow-oriented interface, not a chat-completions API.
+- A documented bridge protocol permits additional SDK languages without
+  coupling clients to T3 internals.
+- Pagination, SSE resume, rate limits/backoff, idempotency keys, and API error
+  types are tested in SDK conformance fixtures.
+- Versioning distinguishes preview/beta endpoints and preserves supported
+  clients during contract evolution.
+
+### CA-55: Add usage, spend limits, and administrative audit
+
+Dependencies: CA-18, CA-40, CA-47, CA-49.
+
+Description: Replace a one-instance cost estimate with per-run model,
+runtime, storage, artifact, and automation accounting.
+
+Acceptance criteria:
+
+- Usage separates model tokens/context window, active guest time, hypervisor
+  allocation, snapshots, artifacts/transfer, previews, and external-provider
+  unknowns.
+- User/team/service-account spend limits gate admission and follow-up before
+  allocating compute; cleanup and result access remain available.
+- Defaults for model/context, repository/ref, long-running, computer use,
+  summaries, artifacts-to-Git, and collaboration are admin-controlled.
+- Audit events cover auth, config, Build activation, agent/run lifecycle,
+  snapshot, artifact, SCM publication, secret/policy changes, and admin actions.
+- Reports are exportable without full prompts or secret values and reconcile
+  estimates against AWS/model invoices.
+
+### CA-56: Add multi-repo environments and start-from-scratch
+
+Dependencies: CA-41, CA-42, CA-47, CA-50.
+
+Description: Match Cursor's repository targeting beyond one configured GitHub
+checkout.
+
+Acceptance criteria:
+
+- One environment can prepare multiple authorized repositories in one Build,
+  preserve per-repo refs/branches, and open coordinated PRs in changed repos.
+- Limits and access are validated per repository; dependent repos/submodules
+  cannot widen the triggering user's scope.
+- Multi-repo incompatibilities are explicit, including no long-running mode
+  until the implementation proves it.
+- A no-repository agent starts in an isolated workspace and can create a draft
+  repository through the chosen T3/Git provider path.
+- Port forwarding, Design Mode/visual selection, and optional deployment from
+  scratch are capability-gated and use the same artifact/security boundaries.
+
+### CA-57: Sign commits and expose provenance
+
+Dependencies: CA-16, CA-40, CA-49, CA-50.
+
+Description: Make agent-authored changes attributable and compatible with
+signed-commit protection.
+
+Acceptance criteria:
+
+- Every trusted publication commit is signed with a per-service HSM/KMS-backed
+  key and verified by supported Git providers.
+- Commit/PR metadata links agent, run, environment version, Build, base,
+  provider/model, and triggering principal without leaking prompts or secrets.
+- Task code cannot access signing keys or invoke the signer for arbitrary
+  repositories/identities.
+- Re-sign, rebase, retry, key rotation, and provider outage behavior are
+  deterministic and never force-push silently.
+- Provenance is available in review UI, API, audit export, and retained
+  results.
+
+### CA-58: Offer self-hosted machines and team pools
+
+Dependencies: CA-40, CA-47, CA-49, CA-55.
+
+Description: Match Cursor's runtime choice for customers who keep tool
+execution on their own machines while T3 retains the agent control plane.
+
+Acceptance criteria:
+
+- Personal machines support multiple agents where configured; team pools use
+  one agent per worker by default and retain registration at scale-to-zero.
+- Pool APIs list/watch pending work, claim/release by worker ID, emit
+  `created`, `claimed`, `claimed_offline`, `expired`, and heartbeat events, and
+  recover from expired cursors by relisting.
+- Idle release, `workerReadyTimeoutSeconds`, `claimedWorkerId`, and
+  `wakeTimeoutMs` support customer-managed hibernate/restore; otherwise a
+  follow-up may claim a fresh worker honestly.
+- Workers connect outbound only, support labels and bounded repo roots,
+  optional clone/token/secret sync, identity socket, health/readiness/metrics,
+  and computer use.
+- Admins can allow or require self-hosting. Pool and machine permission,
+  billing, network, artifact, and secret differences are visible before launch.
 
 ## Mobile development workers
 
@@ -614,9 +1135,12 @@ These tickets concern the mobile apps you develop. They do not require modifying
 
 ### CA-37: Build and launch Android apps in accelerated emulator workers
 
-Dependencies: CA-02, CA-03, CA-07, CA-08, CA-10, CA-14, CA-17, CA-18, CA-27.
+Dependencies: CA-02, CA-03, CA-07, CA-10, CA-14, CA-27, CA-40, CA-41,
+CA-42, CA-43, CA-44.
 
-Description: Add an Android worker profile that boots an emulator, builds the selected repository's app, installs it, and makes its session available for testing and live control.
+Description: Add an Android environment/Build profile that boots an accelerated
+emulator inside an isolated runtime, builds the app, and participates in the
+same durable-agent and idle-snapshot lifecycle as web runtimes.
 
 Acceptance criteria:
 
@@ -626,13 +1150,21 @@ Acceptance criteria:
 - Give each job its own writable emulator data, ports, and app state. Agent testing commands target its exact serial; ADB/gRPC/control endpoints are not public.
 - For React Native/Expo projects, configure Metro and emulator connectivity within the worker and rebuild native clients when native inputs change. Expo Go alone is not proof of arbitrary native-module support.
 - UI tests or semantic interaction tools can inspect/tap/type in the running app; capture screenshots/video as run artifacts. An interactive human stream is supplied by CA-39.
-- Stop only owned emulator/build/app processes, save configured artifacts, and clean the workspace between runs. An emulator crash or failed build leaves an actionable result and no unbounded worker.
+- Stop only owned emulator/build/app processes and snapshot configured emulator
+  state separately from shared Build state. An emulator crash or failed build
+  leaves an actionable result and no unbounded host.
+- Hibernation proves whether AVD data is restorable; otherwise wake creates a
+  new AVD and reports that app/login state did not persist.
 
 ### CA-38: Build and launch iOS apps on EC2 Mac workers
 
-Dependencies: CA-02, CA-03, CA-04A, CA-06, CA-08, CA-10, CA-14, CA-17, CA-18, CA-27.
+Dependencies: CA-02, CA-03, CA-04A, CA-06, CA-10, CA-14, CA-27, CA-40,
+CA-41, CA-42, CA-43.
 
-Description: Add a macOS worker profile for native iOS/iPadOS builds and Simulator execution. Keep controller hosting separate from the Mac worker and give the Mac its own host allocation policy.
+Description: Add a macOS environment/Build profile for iOS/iPadOS builds and
+Simulator execution. Keep the Mac host policy separate: the durable agent can
+idle, but EC2 Mac's 24-hour Dedicated Host economics do not become Linux
+microVM rules.
 
 Acceptance criteria:
 
@@ -645,10 +1177,13 @@ Acceptance criteria:
 - Record dedicated-host allocation time, earliest release time, availability/scrubbing state, and continuing host cost separately from job runtime. Cancelling a two-hour job must not claim that the 24-hour host allocation or charges ended.
 - Stop new jobs when release is requested, finish/cancel active work according to policy, and retry host release when eligible. Never apply the disposable Linux worker shutdown policy blindly to the Mac host.
 - The provider, simulator, and display route do not require a local Mac. Under CA-04A, the local controller machine must remain online even after the initiating client disconnects. CA-04B later allows that machine to be off. Where the Mac worker needs a desktop session or login, provision and validate it explicitly.
+- Agent snapshots, simulator data, Xcode caches, and reusable Build layers have
+  separate retention. Wake never claims transparent resume if the simulator
+  process was not restorable.
 
 ### CA-39: Embed live simulator display and control in each thread
 
-Dependencies: CA-19, CA-25, CA-34, CA-35, CA-37, CA-38.
+Dependencies: CA-19, CA-25, CA-34, CA-35, CA-36, CA-37, CA-38, CA-48.
 
 Description: Extend the thread preview to Android emulator and iOS Simulator sessions. The user can watch the app the agent is testing and take control from web or desktop.
 
@@ -660,6 +1195,8 @@ Acceptance criteria:
 - Keep display/control endpoints local to the worker and expose only authorized capabilities through the thread route. Do not forward a simulator service's general shell endpoint, public ADB, arbitrary filesystem access, or unrelated desktop sessions.
 - Reuse the human/agent input lease from CA-35. Agent automation targets exact devices through supported tools; delayed human input cannot reach a different job.
 - Stream on demand, suspend hidden viewers, and make build/device startup independent of whether someone is watching. Recordings are explicit bounded artifacts.
+- Hibernation revokes the display route and input lease. Reopen restores or
+  recreates the exact declared device profile without starting a provider run.
 - Android and iOS each pass a full build-install-launch-test-takeover-return-cleanup scenario after the initiating client disconnects. Under CA-04A the local controller machine stays online; under CA-04B the original computer may be off. A browser-rendered mobile website does not satisfy native-app testing.
 - Run Android/iOS implementation independently as capacity allows. Report each platform's verified status separately; do not label both supported when only one passes.
 - Existing T3 native mobile app navigation, stores, push services, and publication are not involved.
@@ -668,27 +1205,33 @@ Acceptance criteria:
 
 ### CA-26: Hand work between local and cloud environments
 
-Dependencies: CA-10, CA-14, CA-15, CA-16, CA-21.
+Dependencies: CA-10, CA-14, CA-15, CA-16, CA-21, CA-40, CA-43.
 
-Description: Transfer selected local changes to a worker and bring cloud changes into a new local worktree.
+Description: Transfer selected local changes into a cloud agent/environment and
+bring cloud changes into a new local worktree. Distinguish continuing the same
+agent after wake from creating a linked local continuation.
 
 Acceptance criteria:
 
 - Show base, destination, selected changes, and excluded files before transfer; never upload credentials/ignored files implicitly.
 - Import results without overwriting dirty local files, with explicit conflict handling.
-- Keep source/destination threads linked under their own environment identities.
+- Keep source/destination agents and threads linked under their own environment
+  identities; never attach two writers to one snapshot.
 - Transfer provider history only when supported; otherwise seed a clearly described continuation.
 - Retry an interrupted transfer without duplicate patch application.
 
 ### CA-28: Add API-triggered and scheduled runs
 
-Dependencies: CA-02, CA-08, CA-12, CA-17, CA-18, CA-24.
+Dependencies: CA-12, CA-17, CA-18, CA-24, CA-40, CA-47, CA-52, CA-53.
 
-Description: Run recurring work through the same admission and execution path as interactive tasks.
+Description: Run recurring work through the same agent/run admission path as
+interactive tasks. This ticket supplies T3-native schedules; CA-53 generalizes
+them into Cursor-like automations.
 
 Acceptance criteria:
 
-- Scoped authenticated APIs support idempotent launch, status, input, and cancel without exposing arbitrary infrastructure operations.
+- Schedules create a new agent or follow up an existing durable agent
+  explicitly; they never assume a runtime is already awake.
 - Schedules record timezone, prompt, ref policy, recipe, provider, publication, and limits.
 - Define daylight-saving, overlap, missed-run, and restart behavior.
 - Under CA-04A, schedules run only while the local controller host and Docker engine are online. Missed-run behavior must not imply an always-on service. CA-04B later removes that local-machine dependency.
@@ -697,7 +1240,7 @@ Acceptance criteria:
 
 ### CA-29: Trigger work from GitHub and address feedback
 
-Dependencies: CA-06, CA-15, CA-16, CA-18, CA-28.
+Dependencies: CA-06, CA-15, CA-16, CA-18, CA-28, CA-47, CA-50, CA-52.
 
 Description: Add opted-in issue/PR triggers and bounded repair of review feedback or failing checks.
 
@@ -706,50 +1249,61 @@ Acceptance criteria:
 - Validate webhook signatures, delivery IDs, repositories, and authorized trigger actors.
 - Under CA-04A, webhook delivery requires the configured authenticated route to the local controller, and the controller machine must be online. CA-04B later provides the always-on endpoint; this ticket does not require it.
 - Retain source issue/comment/PR and base revision; task text cannot widen credentials or permissions.
-- Follow-up targets the correct branch head and avoids duplicate delivery or agent-comment loops.
+- Follow-up targets the durable agent and correct branch head, wakes it when
+  idle, and avoids duplicate delivery or agent-comment loops.
 - Bound attempts, time, and compute; report unresolved failures.
 - Disable/revoke controls stop new triggers. Automatic merge is separate.
 
 ### CA-30: Add persistent assistants
 
-Dependencies: CA-14, CA-15, CA-18, CA-25, CA-28, CA-36.
+Dependencies: CA-14, CA-15, CA-18, CA-25, CA-28, CA-36, CA-40, CA-46.
 
-Description: Add reusable assistant roles and inspectable saved context after the coding and mobile workflows are stable.
+Description: Add reusable assistant roles on top of durable agents rather than
+creating a third persistence model.
 
 Acceptance criteria:
 
 - Each assistant has explicit instructions, provider, tools, repositories, secret access, and persistence policy.
 - Memory is inspectable, editable, and deletable; consequential facts can be traced to source context.
 - Persistent files/browser state are opt-in, encrypted, and not silently shared between assistants.
-- Sleep/wake/reset/delete define their effects on runs, schedules, credentials, and retained state.
+- `IDLE`, archive/unarchive, reset, and delete define their effects on runs,
+  subscriptions, credentials, and retained snapshots.
 - Each writable workspace has one owner and all runs retain the ordinary limits and history.
 
 ### CA-31: Qualify additional providers
 
-Dependencies: CA-01, CA-07, CA-11, CA-15, CA-23.
+Dependencies: CA-01, CA-07, CA-11, CA-15, CA-23, CA-40, CA-43.
 
 Description: Enable remaining providers individually after the first selected provider works reliably.
 
 Acceptance criteria:
 
 - Codex, Claude, Cursor, Grok, OpenCode, and Antigravity each receive an enabled, unsupported, or blocked status with evidence.
-- Every enabled provider passes remote login, execution, streaming, interruption, follow-up, auth/quota failure, and cleanup checks on its advertised worker OS.
-- Resume, rollback, model switching, and computer-use capabilities reflect actual adapter support.
+- Every enabled provider passes remote login, execution, streaming,
+  interruption, idle snapshot/wake, auth/quota failure, and cleanup on its
+  advertised runtime.
+- Filesystem restore, provider-native resume, context transfer, model
+  switching, and computer use are reported as distinct capabilities.
 - Accounts/instances cannot share mutable credentials or sessions accidentally.
 - Unsupported options are rejected before allocation and switching provider does not pretend native history transferred.
 
 ### CA-32: Add private dependencies and company-network profiles
 
-Dependencies: CA-03, CA-06, CA-07, CA-10, CA-12, CA-18.
+Dependencies: CA-03, CA-06, CA-07, CA-12, CA-18, CA-41, CA-42, CA-49.
 
-Description: Support private submodules, packages, and restricted network egress when required by additional repositories.
+Description: Support private dependencies and private connectivity as
+environment-scoped policy, with Cursor-like egress modes and explicit routes.
 
 Acceptance criteria:
 
 - Explicitly configure and check private submodule, LFS, and package-registry access.
 - Expose only required dependency credentials to setup/task code; retain the protected publication and infrastructure boundary.
 - Exclude credentials from logs, caches, commits, and exported workspace state.
-- An optional stable-egress profile supports organization IP restrictions, with its cost and networking changes visible.
+- Support allow-all, default-plus-allowlist, and allowlist-only modes with
+  inherited/locked team policy. Cursor/controller/SCM endpoints remain
+  reachable through documented exceptions.
+- Optional stable egress, Tailscale/Cloudflare Tunnel, or AWS PrivateLink
+  profiles expose cost, trust, and routing changes.
 - Report the failing dependency/destination and support disabling the profile without stranding runs.
 
 ## Deferred native T3 app work
@@ -758,35 +1312,61 @@ These are lowest-priority optional tickets. They are not prerequisites for any w
 
 ### CA-20: Add cloud controls to the native T3 mobile client
 
-Dependencies: CA-19, CA-21, CA-25, CA-34, CA-35, CA-36.
+Dependencies: CA-19, CA-21, CA-25, CA-34, CA-35, CA-36, CA-40, CA-47.
 
-Description: Port the proven web/desktop experience into T3's React Native client only when the owner chooses to maintain and distribute a compatible mobile build.
+Description: Match Cursor's mobile agent-management surface when the owner
+chooses to distribute a compatible T3 iOS app. Android may remain an installable
+responsive PWA until a native build is intentionally supported.
 
 Acceptance criteria:
 
-- iOS/Android native navigation exposes launch, follow-up, questions, approval, cancel, retry, and review through shared client-runtime logic.
+- iOS exposes create, plan/agent mode, follow-up, questions, approval, cancel,
+  run status, PR review, artifacts, and remote desktop through shared runtime
+  logic. Android PWA covers the supported subset.
 - Backgrounding the app does not affect worker execution; reconnect targets the correct environment/thread.
+- Live Activities show a bounded number of active agents and deep-link to the
+  correct run without leaking prompt or secret content.
 - Preview and takeover work through separately verified WebViews/native embedding rather than assuming browser support is sufficient.
 - Native distribution, signing, and store access are explicit prerequisites for this optional delivery.
 - Until this ticket is selected, responsive web remains the supported phone/tablet route and existing native clients retain compatibility through capability checks.
 
 ### CA-22: Add native push and mobile activity integration
 
-Dependencies: CA-20, CA-21.
+Dependencies: CA-20, CA-21, CA-40, CA-52.
 
 Description: Extend T3's native notification infrastructure when a distributable personal mobile client exists. Core web/desktop status does not depend on it.
 
 Acceptance criteria:
 
 - Required APNs/FCM, app identifiers, device registration, and service ownership are explicitly configured.
-- Completion, failure, approval, and input notifications deduplicate across reconnects and attempts.
+- Completion, failure, approval, subscription wake, and input notifications
+  deduplicate across run IDs and reconnects.
 - Notifications open the correct live/retained run and exclude secret values or sensitive prompt previews.
 - Preferences, revocation, and unavailable delivery are handled without blocking run execution.
 - Personal deployments without push continue to expose durable status and results in web/desktop.
 
 ## Reference behavior and validation rules
 
-Cursor's cloud workflows inform the task-to-PR experience, saved setup, and takeover goals; this plan does not promise identical model quality or performance. [Cursor capabilities](https://cursor.com/docs/cloud-agent/capabilities), [environment setup](https://cursor.com/docs/cloud-agent/setup).
+Observable product parity is the target: the same durable agent/run lifecycle,
+environment/Build behavior, idle economics, API semantics, entry points,
+security controls, collaboration, artifacts, computer use, and self-hosted
+choices documented by Cursor as of 19 September 2026. We do not claim access to
+or reproduce Cursor's proprietary model, scheduler, or backend implementation.
+T3 keeps the intentional differences listed at the top of this plan.
+
+Primary references:
+
+- [Cloud Agents overview](https://cursor.com/docs/cloud-agent)
+- [Capabilities](https://cursor.com/docs/cloud-agent/capabilities)
+- [Environment setup](https://cursor.com/docs/cloud-agent/setup)
+- [Builds](https://cursor.com/docs/cloud-agent/builds)
+- [Security](https://cursor.com/docs/cloud-agent/security)
+- [Secrets and network](https://cursor.com/docs/cloud-agent/security-network)
+- [Settings](https://cursor.com/docs/cloud-agent/settings)
+- [Automations](https://cursor.com/docs/cloud-agent/automations)
+- [Self-hosted machines and pools](https://cursor.com/docs/cloud-agent/self-hosted)
+- [Cloud Agents API](https://cursor.com/docs/cloud-agent/api/endpoints)
+- [API overview](https://cursor.com/docs/api)
 
 DCV supports embedded interactive display, while its SDK release notes include mobile-browser support. Those capabilities still need validation for the chosen worker OS, image, tunnel, and client. [DCV SDK](https://docs.aws.amazon.com/dcv/latest/websdkguide/what-is.html), [SDK release notes](https://docs.aws.amazon.com/dcv/latest/websdkguide/doc-history-release-notes.html).
 

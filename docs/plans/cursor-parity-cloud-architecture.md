@@ -419,8 +419,10 @@ From [cloud-agents-tickets.md](./cloud-agents-tickets.md):
 - Cleanup that terminates stopped instances as if they were expired workers
   (`cleanup_expired_workers.py` currently includes `stopping`/`stopped`).
 
-Update that ticket list when implementation starts; do not treat this file as
-a second competing backlog. Implementation PRs should be one concern each.
+The backlog now incorporates these reversals in CA-40 through CA-58 and rewrites
+every previously open ticket that depended on the old runtime model. Treat
+[cloud-agents-tickets.md](./cloud-agents-tickets.md) as the authoritative
+implementation order; this file records rationale and topology only.
 
 ## Contracts and code touchpoints
 
@@ -448,21 +450,21 @@ statuses so old clients degrade cleanly.
 
 Order is dependency, not ticket IDs.
 
-1. **Model split** — persist Environment, Build, Agent, RuntimeVm separately
+1. **Model split (CA-40)** — persist Environment, Build, Agent, RuntimeVm separately
    from `RunAllocation` instance IDs. Agent conversation survives missing
    `instanceId`.
-2. **Environment builds** — snapshot after `install`; boot next run from it
+2. **Environment builds (CA-41/CA-42)** — snapshot after `install`; boot next run from it
    with git reuse. Still allowed to use one EC2 for the build job.
-3. **Idle hibernate** — on settle, snapshot and stop/destroy guest; follow-up
+3. **Idle hibernate (CA-43/CA-46)** — on settle, snapshot and stop/destroy guest; follow-up
    restores. Replace 120-minute TTL as primary policy. Fix cleanup Lambda so
    stopped snapshot volumes are not terminated as expired workers.
-4. **Warm pool** — N pre-booted guests per popular environment.
-5. **Firecracker packing** — hypervisor hosts in the execution account;
+4. **Warm pool (CA-45)** — N pre-booted guests per popular environment.
+5. **Firecracker packing (CA-44)** — hypervisor hosts in the execution account;
    guests replace per-thread EC2. Nested virt / metal proof first (CA-37
    already cares about KVM).
-6. **Egress policies, 90-day snapshot GC, archive/unarchive, GitHub App**.
-7. **Preview reopen from snapshot** without a provider turn (CA-36, rewritten
-   onto this model).
+6. **Security and lifecycle (CA-46/CA-49/CA-50)** — egress policies, 90-day
+   snapshot GC, archive/unarchive, and short-lived Git credentials.
+7. **Preview reopen from snapshot (CA-36/CA-48)** without a provider turn.
 
 Android/iOS worker profiles remain separate guests with heavier images; they
 participate in the same agent/idle/snapshot state machine but not in dense
