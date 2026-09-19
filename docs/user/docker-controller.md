@@ -166,6 +166,46 @@ transfer separately when their costs are unknown. The estimate excludes taxes an
 does not turn an AWS billing alert into a live spending cap. AWS documents current price-list
 lookups in its [Price List API guide](https://docs.aws.amazon.com/awsaccountbilling/latest/aboutv2/price-changes.html).
 
+## Cloud agents settings
+
+**Settings → Cloud agents** is the screen for administering the stack the controller talks to. It
+shows the controller and execution accounts, the region and project, each hypervisor with its KVM
+support and guest/hypervisor image versions, the fleet's slot capacity, every environment with its
+active Build and snapshot, the snapshot and conversation retention policy, and whether the
+controller is accepting runs. Credentials never reach it: the controller sends account identifiers
+and the config it resolved, never an access key or a hypervisor credential path.
+
+Each readiness check runs on its own, so a failing IAM policy does not hide a healthy fleet:
+
+- **Execution IAM** confirms the controller's AWS credentials resolve and match
+  `T3CODE_CLOUD_EXECUTION_ACCOUNT_ID` when you set it.
+- **KVM and Firecracker support** confirms every configured hypervisor reports KVM. It is skipped
+  on the EC2 migration fallback.
+- **Image access** resolves a launch template for every worker profile.
+- **Snapshot access** confirms snapshots are readable and that every active Build still points at a
+  snapshot a run can boot.
+- **Artifact storage** writes to the retained-results directory on the controller host.
+- **Guest registration** enumerates workers and reports any running guest that lost its
+  registration credential.
+- **SSM diagnostics** is optional. It stays skipped until you set
+  `T3CODE_CLOUD_SSM_DIAGNOSTICS_DOCUMENT`, and a failure there affects recovery debugging only.
+
+Set `T3CODE_CLOUD_CONTROLLER_ACCOUNT_ID` and `T3CODE_CLOUD_EXECUTION_ACCOUNT_ID` to the accounts
+OpenTofu reports so the screen can flag credentials pointing at the wrong account.
+
+**New environment** and **Edit and test** save a personal, team, or default environment version and
+immediately start a Build that tests it. The Build activates only if it succeeds, so runs keep
+booting the last successful Build while a new version is still being proved. A repository-owned
+environment is created by the agent-led setup inside its repository, not by this form.
+
+**Default model**, **Default repository**, and **Default ref** prefill a new cloud thread when the
+launcher has nothing more specific. Clearing a field removes the default rather than storing a
+blank one.
+
+**Stop admission** refuses new runs while leaving active runs, idle snapshots, cleanup, retained
+results, and review available. Resume it from the same button. A state fenced by `t3 cloud fence`
+stays read-only until `t3 cloud adopt` runs on the owning host.
+
 ## Launch a cloud thread
 
 After the controller reports cloud allocation support, open the command palette and choose **New

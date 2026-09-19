@@ -74,6 +74,8 @@ output "hypervisor" {
     }
   }
 }
+
+output "artifacts_bucket" {
   description = "Encrypted retained bucket for run results."
   value       = aws_s3_bucket.artifacts.id
 }
