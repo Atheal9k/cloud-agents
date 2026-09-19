@@ -186,7 +186,7 @@ stay last until you choose to pick them up.
 | 16   | ~~CA-29~~, ~~CA-30~~, CA-33                | GitHub triggers; persistent assistants; remote administration UI.                          |
 | 17   | ~~CA-52~~                                  | Subscription wake and CI autofix.                                                          |
 | 18   | CA-53                                      | Generalized automations.                                                                   |
-| 19   | CA-54                                      | Outbound webhooks and typed SDKs.                                                          |
+| 19   | ~~CA-54~~                                  | Outbound webhooks and typed SDKs.                                                          |
 | 20   | CA-31, CA-20                               | Deferred: provider adapters; native T3 mobile controls.                                    |
 | 21   | CA-22                                      | Deferred: native push and mobile activity integration.                                     |
 
@@ -1174,6 +1174,8 @@ Acceptance criteria:
 ### CA-54: Publish webhooks and typed SDKs
 
 Dependencies: CA-47, CA-52.
+
+Status: Done on 19 September 2026 in [PR #64](https://github.com/Atheal9k/cloud-agents/pull/64).
 
 Description: Provide supported programmatic clients and outbound lifecycle
 events without making consumers poll.
