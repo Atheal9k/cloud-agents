@@ -90,6 +90,34 @@ Schedules run inside the controller process. With a local controller, the host
 and Docker engine must be online. `run_once` can admit one missed occurrence when
 the controller returns; it does not make a local controller an always-on service.
 
+## Automations
+
+`POST /v1/automations` generalizes schedules and webhook triggers into a reusable
+automation. The body records instructions, one or more triggers, environment,
+repositories (`none`, `single`, or `multi`), Codex model, tools, publication,
+limits, overlap and missed-run policy, and `runAs`.
+
+Triggers may be cron, source-control (GitHub, GitLab, Bitbucket), Slack, Linear,
+Sentry, PagerDuty, or an authenticated private webhook. Source-control triggers
+require a repository. Cron uses the same daylight-saving rules as schedules: a
+skipped wall time does not run, and a repeated wall time runs once at its
+earlier occurrence.
+
+`runAs: caller` bills and authorizes as the creating principal. `runAs:
+service_account` uses a team automations service account, so spend and
+permissions stay separate from a user. Automations can create or comment on
+PRs, request reviewers, post to Slack, call MCP, use computer control, and
+update inspectable memories. Memories live at `/v1/automations/{id}/memory`.
+
+Manage automations with `GET /v1/automations`, `GET|PUT|DELETE
+/v1/automations/{id}`, and `POST /v1/automations/{id}/pause|resume`. Deliver an
+event with `POST /v1/automations/{id}/deliveries` or the private webhook URL
+`POST /v1/automation-hooks/{hookId}` using the webhook token from create. A
+repeated `deliveryId` is idempotent. Overlapping runs are skipped. Missed cron
+slots follow `missedRunPolicy`. Admission retries stay bounded. Each execution
+creates ordinary agent and run records, obeys admission and spend policy, and
+can hibernate after completion.
+
 ## Persistent assistants
 
 `POST /v1/assistants` defines a reusable assistant role on top of the durable
@@ -229,7 +257,7 @@ Error bodies are `{ "code", "message" }` with stable codes including `unauthoriz
 `agent_not_found`, `run_not_found`, `run_not_cancellable`, `invalid_last_event_id`,
 `stream_expired`, `rate_limited`, `spend_limit_exceeded`, `follow_up_forbidden`,
 `scm_access_denied`, `self_hosted_disabled`, `self_hosted_required`, `schedule_not_found`,
-`assistant_not_found`, and `subscription_not_found`.
+`assistant_not_found`, `subscription_not_found`, and `automation_not_found`.
 
 Every response includes `X-Request-Id` and `X-RateLimit-*` headers. Repositories
 are limited to 1 request per minute and 30 per hour per principal. Other routes

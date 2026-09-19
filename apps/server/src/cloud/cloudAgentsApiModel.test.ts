@@ -106,6 +106,7 @@ describe("cloud agents API model", () => {
     expect(statusForCode("agent_busy")).toBe(409);
     expect(statusForCode("stream_expired")).toBe(410);
     expect(statusForCode("subscription_not_found")).toBe(404);
+    expect(statusForCode("automation_not_found")).toBe(404);
     expect(apiError("run_not_cancellable", "done").toBody()).toEqual({
       code: "run_not_cancellable",
       message: "done",

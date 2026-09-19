@@ -4,6 +4,9 @@ import * as NodeCrypto from "node:crypto";
 import {
   CLOUD_AGENTS_API_STREAM_RETENTION_SECONDS,
   CloudAgentScheduleCreateRequest,
+  CloudAgentAutomationCreateRequest,
+  CloudAgentAutomationDeliveryRequest,
+  CloudAgentAutomationMemoryWrite,
   CloudAgentSubscriptionCreateRequest,
   CloudAgentSubscriptionDeliveryRequest,
   CloudAgentsApiCreateAgentRequest,
@@ -25,6 +28,7 @@ import { HttpRouter, HttpServerRequest, HttpServerResponse } from "effect/unstab
 import * as CloudAgentsApi from "./CloudAgentsApi.ts";
 import * as CloudAgentsApiKeys from "./CloudAgentsApiKeys.ts";
 import * as CloudAgentSchedules from "./CloudAgentSchedules.ts";
+import * as CloudAgentAutomations from "./CloudAgentAutomations.ts";
 import * as CloudAssistants from "./CloudAssistants.ts";
 import * as CloudAgentSubscriptions from "./CloudAgentSubscriptions.ts";
 import {
@@ -42,6 +46,9 @@ import {
 const decodeCreateAgent = Schema.decodeUnknownEffect(CloudAgentsApiCreateAgentRequest);
 const decodeCreateRun = Schema.decodeUnknownEffect(CloudAgentsApiCreateRunRequest);
 const decodeSchedule = Schema.decodeUnknownEffect(CloudAgentScheduleCreateRequest);
+const decodeAutomation = Schema.decodeUnknownEffect(CloudAgentAutomationCreateRequest);
+const decodeAutomationDelivery = Schema.decodeUnknownEffect(CloudAgentAutomationDeliveryRequest);
+const decodeAutomationMemory = Schema.decodeUnknownEffect(CloudAgentAutomationMemoryWrite);
 const decodeAssistant = Schema.decodeUnknownEffect(CloudAssistantCreateRequest);
 const decodeAssistantMemory = Schema.decodeUnknownEffect(CloudAssistantMemoryWrite);
 const decodeAssistantSubscription = Schema.decodeUnknownEffect(CloudAssistantSubscription);
@@ -129,6 +136,7 @@ const handleV1 = (deps: {
   readonly api: CloudAgentsApi.CloudAgentsApi["Service"];
   readonly keys: CloudAgentsApiKeys.CloudAgentsApiKeys["Service"];
   readonly schedules: CloudAgentSchedules.CloudAgentSchedules["Service"];
+  readonly automations: CloudAgentAutomations.CloudAgentAutomations["Service"];
   readonly assistants: CloudAssistants.CloudAssistants["Service"];
   readonly subscriptions: CloudAgentSubscriptions.CloudAgentSubscriptions["Service"];
   readonly limits: Ref.Ref<LimitState>;
@@ -137,6 +145,34 @@ const handleV1 = (deps: {
     const request = yield* HttpServerRequest.HttpServerRequest;
     const requestId = requestIdOf(request.headers["x-request-id"]);
     const nowMs = DateTime.toEpochMillis(DateTime.nowUnsafe());
+    const url = new URL(request.url, "http://localhost");
+    const path = url.pathname.replace(/\/$/u, "") || "/";
+    if (request.method.toUpperCase() === "POST" && path.startsWith("/v1/automation-hooks/")) {
+      const hookMeta = limitHeaders(requestId, { remaining: 59, limit: 60, resetAtMs: nowMs });
+      const token = parseCloudAgentsApiAuthorization(request.headers.authorization);
+      if (token instanceof CloudAgentsApiFailure) return errorResponse(token, hookMeta);
+      const delivery = yield* decodeAutomationDelivery(
+        yield* request.json.pipe(
+          Effect.mapError(
+            () => new CloudAgentsApiFailure("invalid_request", "JSON body required.", 400),
+          ),
+        ),
+      ).pipe(
+        Effect.mapError(
+          () => new CloudAgentsApiFailure("invalid_request", "Invalid automation delivery.", 400),
+        ),
+      );
+      return jsonResponse(
+        200,
+        yield* deps.automations.deliver({
+          hookId: path.slice("/v1/automation-hooks/".length),
+          token,
+          delivery,
+          urlOrigin: originOf(request),
+        }),
+        hookMeta,
+      );
+    }
     const token = parseCloudAgentsApiAuthorization(request.headers.authorization);
     if (token instanceof CloudAgentsApiFailure) {
       return errorResponse(
@@ -151,7 +187,6 @@ const handleV1 = (deps: {
         limitHeaders(requestId, { remaining: 0, limit: 60, resetAtMs: nowMs }),
       );
     }
-    const url = new URL(request.url, "http://localhost");
     const decision = yield* consume(
       deps.limits,
       principal,
@@ -168,6 +203,7 @@ const handleV1 = (deps: {
     return yield* dispatchV1({
       api: deps.api,
       schedules: deps.schedules,
+      automations: deps.automations,
       assistants: deps.assistants,
       subscriptions: deps.subscriptions,
       principal,
@@ -203,6 +239,7 @@ const handleV1 = (deps: {
 const dispatchV1 = (input: {
   readonly api: CloudAgentsApi.CloudAgentsApi["Service"];
   readonly schedules: CloudAgentSchedules.CloudAgentSchedules["Service"];
+  readonly automations: CloudAgentAutomations.CloudAgentAutomations["Service"];
   readonly assistants: CloudAssistants.CloudAssistants["Service"];
   readonly subscriptions: CloudAgentSubscriptions.CloudAgentSubscriptions["Service"];
   readonly principal: CloudAgentsApiPrincipal;
@@ -216,6 +253,7 @@ const dispatchV1 = (input: {
     const {
       api,
       schedules,
+      automations,
       assistants,
       subscriptions,
       principal,
@@ -303,6 +341,96 @@ const dispatchV1 = (input: {
       }
       if (method === "POST" && parts.length === 4 && parts[3] === "resume") {
         return jsonResponse(200, yield* schedules.resume({ principal, scheduleId }), meta);
+      }
+    }
+    if (method === "POST" && path === "/v1/automations") {
+      const definition = yield* decodeAutomation(yield* jsonBody).pipe(
+        Effect.mapError(
+          () => new CloudAgentsApiFailure("invalid_request", "Invalid automation request.", 400),
+        ),
+      );
+      return jsonResponse(
+        200,
+        yield* automations.create({ principal, definition, urlOrigin: origin }),
+        meta,
+      );
+    }
+    if (method === "GET" && path === "/v1/automations") {
+      return jsonResponse(200, yield* automations.list({ principal }), meta);
+    }
+    if (method === "GET" && path === "/v1/automation-activities") {
+      const limit = parseLimitParam(url.searchParams.get("limit"));
+      if (limit instanceof CloudAgentsApiFailure) return errorResponse(limit, meta);
+      const automationId = url.searchParams.get("automationId");
+      return jsonResponse(
+        200,
+        yield* automations.listActivities({
+          principal,
+          limit,
+          ...(automationId === null ? {} : { automationId }),
+        }),
+        meta,
+      );
+    }
+    if (parts[0] === "v1" && parts[1] === "automations" && parts[2] !== undefined) {
+      const automationId = parts[2];
+      if (method === "GET" && parts.length === 3) {
+        return jsonResponse(200, yield* automations.get({ principal, automationId }), meta);
+      }
+      if (method === "PUT" && parts.length === 3) {
+        const definition = yield* decodeAutomation(yield* jsonBody).pipe(
+          Effect.mapError(
+            () => new CloudAgentsApiFailure("invalid_request", "Invalid automation request.", 400),
+          ),
+        );
+        return jsonResponse(
+          200,
+          yield* automations.replace({ principal, automationId, definition, urlOrigin: origin }),
+          meta,
+        );
+      }
+      if (method === "DELETE" && parts.length === 3) {
+        return jsonResponse(200, yield* automations.remove({ principal, automationId }), meta);
+      }
+      if (method === "POST" && parts.length === 4 && parts[3] === "pause") {
+        return jsonResponse(200, yield* automations.pause({ principal, automationId }), meta);
+      }
+      if (method === "POST" && parts.length === 4 && parts[3] === "resume") {
+        return jsonResponse(200, yield* automations.resume({ principal, automationId }), meta);
+      }
+      if (method === "POST" && parts.length === 4 && parts[3] === "deliveries") {
+        const delivery = yield* decodeAutomationDelivery(yield* jsonBody).pipe(
+          Effect.mapError(
+            () => new CloudAgentsApiFailure("invalid_request", "Invalid automation delivery.", 400),
+          ),
+        );
+        return jsonResponse(
+          200,
+          yield* automations.deliver({ principal, automationId, delivery, urlOrigin: origin }),
+          meta,
+        );
+      }
+      if (method === "GET" && parts.length === 4 && parts[3] === "memory") {
+        return jsonResponse(200, yield* automations.listMemory({ principal, automationId }), meta);
+      }
+      if (method === "POST" && parts.length === 4 && parts[3] === "memory") {
+        const fact = yield* decodeAutomationMemory(yield* jsonBody).pipe(
+          Effect.mapError(
+            () => new CloudAgentsApiFailure("invalid_request", "Invalid memory request.", 400),
+          ),
+        );
+        return jsonResponse(
+          200,
+          yield* automations.writeMemory({ principal, automationId, fact }),
+          meta,
+        );
+      }
+      if (method === "DELETE" && parts.length === 5 && parts[3] === "memory" && parts[4] !== undefined) {
+        return jsonResponse(
+          200,
+          yield* automations.deleteMemory({ principal, automationId, factId: parts[4] }),
+          meta,
+        );
       }
     }
     if (method === "POST" && path === "/v1/assistants") {
@@ -673,13 +801,14 @@ export const cloudAgentsApiRouteLayer = Layer.unwrap(
     const api = yield* CloudAgentsApi.CloudAgentsApi;
     const keys = yield* CloudAgentsApiKeys.CloudAgentsApiKeys;
     const schedules = yield* CloudAgentSchedules.CloudAgentSchedules;
+    const automations = yield* CloudAgentAutomations.CloudAgentAutomations;
     const assistants = yield* CloudAssistants.CloudAssistants;
     const subscriptions = yield* CloudAgentSubscriptions.CloudAgentSubscriptions;
     const limits = yield* CloudAgentsApiRateLimits;
     return HttpRouter.add(
       "*",
       "/v1*",
-      handleV1({ api, keys, schedules, assistants, subscriptions, limits }),
+      handleV1({ api, keys, schedules, automations, assistants, subscriptions, limits }),
     );
   }),
 );
