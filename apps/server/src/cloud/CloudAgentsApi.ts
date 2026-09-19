@@ -22,10 +22,10 @@ import {
   type CloudAgentsApiAgent,
   type CloudAgentsApiAgentSummary,
   type CloudAgentsApiAgentUsage,
+  CloudAgentsApiCreateAgentResponse,
   type CloudAgentsApiCreateAgentRequest,
-  type CloudAgentsApiCreateAgentResponse,
+  CloudAgentsApiCreateRunResponse,
   type CloudAgentsApiCreateRunRequest,
-  type CloudAgentsApiCreateRunResponse,
   type CloudAgentsApiEnvTarget,
   type CloudAgentsApiIdResponse,
   type CloudAgentsApiModel,
@@ -99,6 +99,7 @@ import { sourceControlRepositorySelector } from "@t3tools/shared/sourceControl";
 import * as CloudCollaboration from "./CloudCollaboration.ts";
 import { mapCollaborationFailure, teamIdOf } from "./CloudCollaboration.ts";
 import { resolveCloudBranchPlan, repositoryUrlForIdentity } from "./cloudCollaborationPolicy.ts";
+import * as CloudWebhooks from "./CloudWebhooks.ts";
 
 const AgentIdRequest = Schema.Struct({ agentId: Schema.String });
 const PrincipalRequest = Schema.Struct({ principalId: Schema.String });
@@ -132,6 +133,18 @@ const AgentRecordPayload = Schema.Struct({
 });
 const decodeRecord = Schema.decodeUnknownSync(Schema.fromJsonString(AgentRecordPayload));
 const encodeRecord = Schema.encodeSync(Schema.fromJsonString(AgentRecordPayload));
+const decodeCreateAgentResponse = Schema.decodeUnknownSync(
+  Schema.fromJsonString(CloudAgentsApiCreateAgentResponse),
+);
+const encodeCreateAgentResponse = Schema.encodeSync(
+  Schema.fromJsonString(CloudAgentsApiCreateAgentResponse),
+);
+const decodeCreateRunResponse = Schema.decodeUnknownSync(
+  Schema.fromJsonString(CloudAgentsApiCreateRunResponse),
+);
+const encodeCreateRunResponse = Schema.encodeSync(
+  Schema.fromJsonString(CloudAgentsApiCreateRunResponse),
+);
 
 export interface CloudAgentsApiPage<Item> {
   readonly items: ReadonlyArray<Item>;
@@ -157,6 +170,7 @@ export class CloudAgentsApi extends Context.Service<
         readonly runSeconds: number;
         readonly inputWaitSeconds: number;
       };
+      readonly idempotencyKey?: string;
     }) => Effect.Effect<CloudAgentsApiCreateAgentResponse, CloudAgentsApiFailure>;
     readonly listAgents: (input: {
       readonly principal: CloudAgentsApiPrincipal;
@@ -183,6 +197,7 @@ export class CloudAgentsApi extends Context.Service<
         readonly runSeconds: number;
         readonly inputWaitSeconds: number;
       };
+      readonly idempotencyKey?: string;
     }) => Effect.Effect<CloudAgentsApiCreateRunResponse, CloudAgentsApiFailure>;
     readonly listRuns: (input: {
       readonly principal: CloudAgentsApiPrincipal;
@@ -311,6 +326,7 @@ export const make = Effect.fn("CloudAgentsApi.make")(function* () {
   const selfHosted = Option.getOrUndefined(
     yield* Effect.serviceOption(CloudSelfHosted.CloudSelfHosted),
   );
+  const webhooks = Option.getOrUndefined(yield* Effect.serviceOption(CloudWebhooks.CloudWebhooks));
   const streams = yield* Ref.make<ReadonlyMap<string, CloudStreamBuffer>>(new Map());
   const decodeThreadSnapshot = Schema.decodeUnknownOption(
     Schema.fromJsonString(OrchestrationThreadDetailSnapshot),
@@ -336,6 +352,42 @@ export const make = Effect.fn("CloudAgentsApi.make")(function* () {
       WHERE principal_id = ${principalId}
     `,
   });
+
+  const replayIdempotency = Effect.fn("CloudAgentsApi.replayIdempotency")(function* (input: {
+    readonly principalId: string;
+    readonly key: string;
+    readonly operation: string;
+  }) {
+    const row = (yield* sql<{
+      readonly operation: string;
+      readonly bodyJson: string;
+    }>`
+      SELECT operation, body_json AS "bodyJson"
+      FROM cloud_agents_api_idempotency
+      WHERE principal_id = ${input.principalId} AND idempotency_key = ${input.key}
+    `.pipe(Effect.orElseSucceed(() => [])))[0];
+    if (row === undefined) return undefined;
+    if (row.operation !== input.operation) {
+      return yield* Effect.fail(
+        apiError("invalid_request", "Idempotency-Key was already used for a different operation."),
+      );
+    }
+    return row.bodyJson;
+  });
+
+  const storeIdempotency = (input: {
+    readonly principalId: string;
+    readonly key: string;
+    readonly operation: string;
+    readonly bodyJson: string;
+    readonly createdAt: string;
+  }) => sql`
+    INSERT OR IGNORE INTO cloud_agents_api_idempotency (
+      principal_id, idempotency_key, operation, body_json, created_at
+    ) VALUES (
+      ${input.principalId}, ${input.key}, ${input.operation}, ${input.bodyJson}, ${input.createdAt}
+    )
+  `;
 
   const appendStreamEvent: CloudAgentsApi["Service"]["appendStreamEvent"] = (input) =>
     Ref.modify(streams, (current) => {
@@ -451,13 +503,30 @@ export const make = Effect.fn("CloudAgentsApi.make")(function* () {
     };
   });
 
-  const seedStatus = (run: CloudRun, nowMs: number) =>
-    appendStreamEvent({
-      runId: run.id,
-      event: "status",
-      data: { runId: run.id, status: run.status },
-      nowMs,
-      id: false,
+  const seedStatus = (input: {
+    readonly run: CloudRun;
+    readonly agentId: string;
+    readonly principalId: string;
+    readonly nowMs: number;
+    readonly type?: "status" | "terminal";
+  }) =>
+    Effect.gen(function* () {
+      yield* appendStreamEvent({
+        runId: input.run.id,
+        event: input.type === "terminal" ? "result" : "status",
+        data: { runId: input.run.id, status: input.run.status },
+        nowMs: input.nowMs,
+        ...(input.type === "terminal" ? {} : { id: false }),
+      });
+      if (webhooks === undefined) return;
+      yield* webhooks.publish({
+        principalId: input.principalId,
+        type: input.type ?? "status",
+        agentId: input.agentId,
+        runId: input.run.id,
+        runStatus: input.run.status,
+        nowMs: input.nowMs,
+      });
     });
 
   const me: CloudAgentsApi["Service"]["me"] = (principal) =>
@@ -520,6 +589,14 @@ export const make = Effect.fn("CloudAgentsApi.make")(function* () {
     Effect.gen(function* () {
       const invalid = validateCreateAgentRequest(input.body);
       if (invalid !== undefined) return yield* Effect.fail(invalid);
+      if (input.idempotencyKey !== undefined) {
+        const replayed = yield* replayIdempotency({
+          principalId: input.principal.principalId,
+          key: input.idempotencyKey,
+          operation: "createAgent",
+        });
+        if (replayed !== undefined) return decodeCreateAgentResponse(replayed);
+      }
       const current = yield* snapshot;
       if (input.body.agentId !== undefined) {
         const existing = current.agents?.find((agent) => agent.id === input.body.agentId);
@@ -729,7 +806,12 @@ export const make = Effect.fn("CloudAgentsApi.make")(function* () {
         return yield* Effect.fail(apiError("internal_error", "The initial run was not recorded."));
       }
       const nowMs = Date.parse(occurredAt);
-      yield* seedStatus(run, Number.isFinite(nowMs) ? nowMs : epochNowMs());
+      yield* seedStatus({
+        run,
+        agentId,
+        principalId: input.principal.principalId,
+        nowMs: Number.isFinite(nowMs) ? nowMs : epochNowMs(),
+      });
       if (selfHosted !== undefined && env.type !== "cloud") {
         const [repoOwner, repoName] = (primaryRepo?.parsed.ownerName ?? "").split("/");
         yield* selfHosted
@@ -792,10 +874,20 @@ export const make = Effect.fn("CloudAgentsApi.make")(function* () {
         );
       }
       const record = { ...located.record, urlOrigin: input.urlOrigin };
-      return {
+      const created = {
         agent: publicAgent(located.agent, record),
         run: publicRun(run),
       };
+      if (input.idempotencyKey !== undefined) {
+        yield* storeIdempotency({
+          principalId: input.principal.principalId,
+          key: input.idempotencyKey,
+          operation: "createAgent",
+          bodyJson: encodeCreateAgentResponse(created),
+          createdAt: occurredAt,
+        }).pipe(Effect.ignore);
+      }
+      return created;
     });
 
   const listAgents: CloudAgentsApi["Service"]["listAgents"] = (input) =>
@@ -847,6 +939,14 @@ export const make = Effect.fn("CloudAgentsApi.make")(function* () {
     Effect.gen(function* () {
       const invalid = validateCreateRunRequest(input.body);
       if (invalid !== undefined) return yield* Effect.fail(invalid);
+      if (input.idempotencyKey !== undefined) {
+        const replayed = yield* replayIdempotency({
+          principalId: input.principal.principalId,
+          key: input.idempotencyKey,
+          operation: "createRun",
+        });
+        if (replayed !== undefined) return decodeCreateRunResponse(replayed);
+      }
       const located = yield* locate(input.principal, input.agentId, "follow-up");
       if (located.agent.status === "ARCHIVED") {
         return yield* Effect.fail(
@@ -941,8 +1041,23 @@ export const make = Effect.fn("CloudAgentsApi.make")(function* () {
           apiError("internal_error", "The follow-up run was not recorded."),
         );
       }
-      yield* seedStatus(run, Date.parse(occurredAt) || epochNowMs());
-      return { run: publicRun(run) };
+      yield* seedStatus({
+        run,
+        agentId: input.agentId,
+        principalId: input.principal.principalId,
+        nowMs: Date.parse(occurredAt) || epochNowMs(),
+      });
+      const created = { run: publicRun(run) };
+      if (input.idempotencyKey !== undefined) {
+        yield* storeIdempotency({
+          principalId: input.principal.principalId,
+          key: input.idempotencyKey,
+          operation: "createRun",
+          bodyJson: encodeCreateRunResponse(created),
+          createdAt: occurredAt,
+        }).pipe(Effect.ignore);
+      }
+      return created;
     });
 
   const listRuns: CloudAgentsApi["Service"]["listRuns"] = (input) =>
@@ -1021,6 +1136,16 @@ export const make = Effect.fn("CloudAgentsApi.make")(function* () {
         nowMs,
       });
       yield* appendStreamEvent({ runId: run.id, event: "done", data: {}, nowMs });
+      if (webhooks !== undefined) {
+        yield* webhooks.publish({
+          principalId: input.principal.principalId,
+          type: "terminal",
+          agentId: input.agentId,
+          runId: run.id,
+          runStatus: "CANCELLED",
+          nowMs,
+        });
+      }
       return { id: run.id };
     });
 

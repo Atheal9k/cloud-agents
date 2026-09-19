@@ -13,8 +13,10 @@ import {
   modelsFromProviders,
   paginateNewestFirst,
   parseCloudAgentsApiAuthorization,
+  parseCloudAgentsApiStability,
   principalMe,
   resumeStream,
+  rewriteCloudAgentsApiPath,
   statusForCode,
   validateCreateAgentRequest,
 } from "./cloudAgentsApiModel.ts";
@@ -22,10 +24,16 @@ import {
 describe("cloud agents API model", () => {
   it("accepts Basic and Bearer API keys", () => {
     expect(parseCloudAgentsApiAuthorization("Bearer secret-key")).toBe("secret-key");
-    expect(parseCloudAgentsApiAuthorization(`Basic ${Buffer.from("secret-key:").toString("base64")}`)).toBe(
-      "secret-key",
-    );
+    expect(
+      parseCloudAgentsApiAuthorization(`Basic ${Buffer.from("secret-key:").toString("base64")}`),
+    ).toBe("secret-key");
     expect(parseCloudAgentsApiAuthorization(undefined)).toMatchObject({ code: "unauthorized" });
+    expect(parseCloudAgentsApiStability("/beta/agents")).toBe("beta");
+    expect(rewriteCloudAgentsApiPath("/preview/webhooks")).toBe("/v1/webhooks");
+    expect(parseCloudAgentsApiStability("/v2/agents")).toMatchObject({
+      code: "unsupported_api_version",
+    });
+    expect(statusForCode("webhook_not_found")).toBe(404);
   });
 
   it("omits user fields for service accounts", () => {
@@ -56,13 +64,12 @@ describe("cloud agents API model", () => {
   });
 
   it("paginates newest-first without a null nextCursor", () => {
-    const page = paginateNewestFirst(
-      [{ id: "a" }, { id: "b" }, { id: "c" }],
-      { limit: 2 },
-    );
+    const page = paginateNewestFirst([{ id: "a" }, { id: "b" }, { id: "c" }], { limit: 2 });
     expect(page.items.map((item) => item.id)).toEqual(["a", "b"]);
     expect(page.nextCursor).toBe("c");
-    expect(paginateNewestFirst([{ id: "a" }, { id: "b" }], { limit: 2 }).nextCursor).toBeUndefined();
+    expect(
+      paginateNewestFirst([{ id: "a" }, { id: "b" }], { limit: 2 }).nextCursor,
+    ).toBeUndefined();
   });
 
   it("resumes SSE from Last-Event-ID and expires old streams", () => {
@@ -70,8 +77,18 @@ describe("cloud agents API model", () => {
       { event: "status", data: { status: "RUNNING" }, createdAtMs: 1_000 },
       { id: "1000-1", event: "assistant", data: { text: "Hi" }, createdAtMs: 1_000 },
       { id: "1000-2", event: "thinking", data: { text: "..." }, createdAtMs: 1_000 },
-      { id: "1000-3", event: "tool_call", data: { callId: "c1", name: "read_file", status: "running" }, createdAtMs: 1_000 },
-      { id: "1000-4", event: "interaction_update", data: { type: "text-delta" }, createdAtMs: 1_000 },
+      {
+        id: "1000-3",
+        event: "tool_call",
+        data: { callId: "c1", name: "read_file", status: "running" },
+        createdAtMs: 1_000,
+      },
+      {
+        id: "1000-4",
+        event: "interaction_update",
+        data: { type: "text-delta" },
+        createdAtMs: 1_000,
+      },
       { id: "1000-5", event: "heartbeat", data: {}, createdAtMs: 1_000 },
       { id: "1000-6", event: "result", data: { status: "FINISHED" }, createdAtMs: 1_000 },
       { id: "1000-7", event: "done", data: {}, createdAtMs: 1_000 },

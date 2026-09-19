@@ -144,6 +144,7 @@ import * as CloudAgentsApiKeys from "./cloud/CloudAgentsApiKeys.ts";
 import * as CloudAgentSchedules from "./cloud/CloudAgentSchedules.ts";
 import * as CloudAssistants from "./cloud/CloudAssistants.ts";
 import * as CloudAgentSubscriptions from "./cloud/CloudAgentSubscriptions.ts";
+import * as CloudWebhooks from "./cloud/CloudWebhooks.ts";
 import {
   cloudAgentsApiRateLimitsLayer,
   cloudAgentsApiRouteLayer,
@@ -661,7 +662,11 @@ const RuntimeCoreDependenciesWithoutSchedulesLive = Layer.mergeAll(
   CloudAgentReview.layer,
   CloudHandoffLayerLive,
   CloudWorkerSessionLayerLive,
-  CloudAgentsApi.layer,
+  CloudAgentsApi.layer.pipe(
+    Layer.provideMerge(
+      CloudWebhooks.layer.pipe(Layer.provide(CloudWebhooks.CloudWebhookTransportLive)),
+    ),
+  ),
   CloudAgentsApiKeys.layer,
   CloudCollaboration.layer,
   CloudSelfHosted.layer,

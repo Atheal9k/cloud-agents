@@ -1,0 +1,20 @@
+{
+  "apiVersion": "2026-09-19",
+  "stabilities": ["v1", "beta", "preview"],
+  "error": { "code": "rate_limited", "message": "Rate limit exceeded." },
+  "pagination": {
+    "items": [{ "id": "agent-2" }, { "id": "agent-1" }],
+    "nextCursor": "agent-0"
+  },
+  "sse": [
+    "id: 1000-0\nevent: status\ndata: {\"status\":\"CREATING\"}\n\n",
+    "id: 1000-1\nevent: result\ndata: {\"status\":\"FINISHED\"}\n\n"
+  ],
+  "idempotencyKey": "create-1",
+  "webhook": {
+    "secret": "whsec_test",
+    "timestampSeconds": 1000,
+    "body": "{\"eventId\":\"evt-1\",\"deliveryId\":\"dlv-1\",\"type\":\"terminal\",\"apiVersion\":\"2026-09-19\",\"createdAt\":\"2026-09-19T00:00:00.000Z\",\"agentId\":\"bc-1\",\"runId\":\"run-1\",\"runStatus\":\"FINISHED\"}",
+    "signature": "sha256=placeholder"
+  }
+}

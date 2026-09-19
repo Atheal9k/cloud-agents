@@ -55,6 +55,15 @@ profile fields only for user keys. Each principal sees only the agents it create
   subscription that can wake an idle agent
 - `DELETE /v1/agents/{id}` — permanent delete
 - `GET /v1/me`, `GET /v1/models`, `GET /v1/repositories`
+- `GET /v1/features` — contract version and stability (`v1`, `beta`, or `preview`)
+- `POST /v1/webhooks`, `GET /v1/webhooks`, `GET|DELETE /v1/webhooks/{id}`
+- `GET /v1/webhooks/{id}/deliveries`, `GET /v1/webhooks/dead-letters`,
+  `POST /v1/webhooks/deliveries/{deliveryId}` to redeliver a dead letter
+
+`/beta` and `/preview` serve the same workflow as `/v1` and add `T3-Api-Version`
+(`2026-09-19`) plus `T3-Api-Stability`. Supported clients keep working on `/v1`
+when preview fields change. Send `Idempotency-Key` on `POST /v1/agents` and
+`POST /v1/agents/{id}/runs` to replay the original agent or run.
 
 ## Scheduled runs
 
@@ -224,8 +233,27 @@ Error bodies are `{ "code", "message" }` with stable codes including `unauthoriz
 `agent_not_found`, `run_not_found`, `run_not_cancellable`, `invalid_last_event_id`,
 `stream_expired`, `rate_limited`, `spend_limit_exceeded`, `follow_up_forbidden`,
 `scm_access_denied`, `self_hosted_disabled`, `self_hosted_required`, `schedule_not_found`,
-`assistant_not_found`, and `subscription_not_found`.
+`assistant_not_found`, `subscription_not_found`, `webhook_not_found`, and
+`unsupported_api_version`.
 
-Every response includes `X-Request-Id` and `X-RateLimit-*` headers. Repositories
-are limited to 1 request per minute and 30 per hour per principal. Other routes
-allow 60 requests per minute.
+Every response includes `X-Request-Id`, `T3-Api-Version`, `T3-Api-Stability`, and
+`X-RateLimit-*` headers. Rate-limited responses also include `Retry-After`.
+Repositories are limited to 1 request per minute and 30 per hour per principal.
+Other routes allow 60 requests per minute.
+
+## Outbound webhooks
+
+`POST /v1/webhooks` registers an HTTPS endpoint (HTTP is allowed only for
+localhost). The create response returns the signing `secret` once. Status and
+terminal run events are posted as JSON with `eventId` and `deliveryId`. Verify
+`X-T3-Signature` as HMAC-SHA256 of `{timestamp}.{body}` using `X-T3-Timestamp`.
+Reject timestamps older than 300 seconds. Failed deliveries retry five times,
+then appear in `GET /v1/webhooks/dead-letters` until you redeliver them.
+
+## SDKs
+
+TypeScript (`@t3tools/cloud-agents-sdk`) and Python (`t3_sdk`) talk to this HTTP
+API. Point `baseUrl` at a local controller or a remote one; the workflow is
+create agent, follow-up run, stream, cancel, and webhooks — not chat
+completions. Additional languages should implement the same routes, headers, SSE
+`Last-Event-ID` resume, `Idempotency-Key` replay, and webhook signature rules.
