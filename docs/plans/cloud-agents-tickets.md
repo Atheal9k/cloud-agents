@@ -183,7 +183,7 @@ stay last until you choose to pick them up.
 | 13   | ~~CA-32~~, ~~CA-50~~                       | Private dependency networking; source-control and collaboration entry points.              |
 | 14   | ~~CA-56~~, ~~CA-58~~                       | Multi-repository environments; self-hosted pools.                                          |
 | 15   | ~~CA-28~~, ~~CA-39~~, ~~CA-57~~, ~~CA-59~~ | Scheduling; simulator display; commit signing; repository-owned environment setup.         |
-| 16   | ~~CA-29~~, CA-30, CA-33                    | GitHub triggers; persistent assistants; remote administration UI.                          |
+| 16   | ~~CA-29~~, ~~CA-30~~, CA-33                | GitHub triggers; persistent assistants; remote administration UI.                          |
 | 17   | ~~CA-52~~                                  | Subscription wake and CI autofix.                                                          |
 | 18   | CA-53                                      | Generalized automations.                                                                   |
 | 19   | CA-54                                      | Outbound webhooks and typed SDKs.                                                          |
@@ -1424,6 +1424,8 @@ Acceptance criteria:
 ### CA-30: Add persistent assistants
 
 Dependencies: CA-14, CA-15, CA-18, CA-25, CA-28, CA-36, CA-40, CA-46.
+
+Status: Done on 19 September 2026 in [PR #59](https://github.com/Atheal9k/cloud-agents/pull/59).
 
 Description: Add reusable assistant roles on top of durable agents rather than
 creating a third persistence model.

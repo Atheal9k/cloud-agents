@@ -152,6 +152,7 @@ import * as SharedBrowserGateway from "./cloud/SharedBrowserGateway.ts";
 import * as CloudAgentsApi from "./cloud/CloudAgentsApi.ts";
 import * as CloudAgentsApiKeys from "./cloud/CloudAgentsApiKeys.ts";
 import * as CloudAgentSchedules from "./cloud/CloudAgentSchedules.ts";
+import * as CloudAssistants from "./cloud/CloudAssistants.ts";
 import * as CloudAgentSubscriptions from "./cloud/CloudAgentSubscriptions.ts";
 import { cloudAgentsApiRateLimitsLayer } from "./cloud/CloudAgentsApiHttp.ts";
 import * as CloudSelfHosted from "./cloud/CloudSelfHosted.ts";
@@ -1251,6 +1252,7 @@ const buildAppUnderTest = (options?: {
           Layer.mock(CloudAgentsApi.CloudAgentsApi)({}),
           Layer.mock(CloudAgentsApiKeys.CloudAgentsApiKeys)({}),
           Layer.mock(CloudAgentSchedules.CloudAgentSchedules)({}),
+          Layer.mock(CloudAssistants.CloudAssistants)({}),
           Layer.mock(CloudAgentSubscriptions.CloudAgentSubscriptions)({}),
           Layer.mock(CloudSelfHosted.CloudSelfHosted)({}),
           cloudAgentsApiRateLimitsLayer,

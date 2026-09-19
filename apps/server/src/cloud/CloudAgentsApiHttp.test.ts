@@ -1,4 +1,9 @@
-import { CloudAgentSchedule, CloudAgentSubscription, CloudAgentsApiPrincipal } from "@t3tools/contracts";
+import {
+  CloudAgentSchedule,
+  CloudAgentSubscription,
+  CloudAgentsApiPrincipal,
+  CloudAssistant,
+} from "@t3tools/contracts";
 import { expect, it } from "vite-plus/test";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
@@ -11,11 +16,32 @@ import * as CloudAgentsApi from "./CloudAgentsApi.ts";
 import { cloudAgentsApiRateLimitsLayer, cloudAgentsApiRouteLayer } from "./CloudAgentsApiHttp.ts";
 import * as CloudAgentsApiKeys from "./CloudAgentsApiKeys.ts";
 import * as CloudAgentSchedules from "./CloudAgentSchedules.ts";
+import * as CloudAssistants from "./CloudAssistants.ts";
 import * as CloudAgentSubscriptions from "./CloudAgentSubscriptions.ts";
 
 const unused = () => Effect.die("unused");
 const decodeCloudAgentSchedule = Schema.decodeUnknownSync(CloudAgentSchedule);
+const decodeCloudAssistant = Schema.decodeUnknownSync(CloudAssistant);
 const decodeCloudAgentSubscription = Schema.decodeUnknownSync(CloudAgentSubscription);
+
+const unusedAssistants = Layer.succeed(CloudAssistants.CloudAssistants, {
+  create: unused,
+  list: unused,
+  get: unused,
+  replace: unused,
+  listMemory: unused,
+  writeMemory: unused,
+  replaceMemory: unused,
+  deleteMemory: unused,
+  putPersistence: unused,
+  getPersistence: unused,
+  attachSubscription: unused,
+  archive: unused,
+  unarchive: unused,
+  reset: unused,
+  remove: unused,
+  createRun: unused,
+} as unknown as CloudAssistants.CloudAssistants["Service"]);
 
 const routesLayer = cloudAgentsApiRouteLayer.pipe(
   Layer.provideMerge(cloudAgentsApiRateLimitsLayer),
@@ -53,6 +79,7 @@ const routesLayer = cloudAgentsApiRouteLayer.pipe(
       reconcile: unused,
     } as unknown as CloudAgentSchedules.CloudAgentSchedules["Service"]),
   ),
+  Layer.provideMerge(unusedAssistants),
   Layer.provideMerge(
     Layer.succeed(CloudAgentSubscriptions.CloudAgentSubscriptions, {
       create: unused,
@@ -79,7 +106,8 @@ const schedulePrincipal = Schema.decodeSync(CloudAgentsApiPrincipal)({
   createdAt: "2026-09-19T00:00:00.000Z",
 });
 
-const scheduleServices = CloudAgentSubscriptions.layer.pipe(
+const catalogServices = CloudAssistants.layer.pipe(
+  Layer.provideMerge(CloudAgentSubscriptions.layer),
   Layer.provideMerge(CloudAgentSchedules.layer),
   Layer.provideMerge(CloudAgentsApi.layer),
   Layer.provideMerge(
@@ -93,7 +121,7 @@ const scheduleServices = CloudAgentSubscriptions.layer.pipe(
 
 const scheduleRoutesLayer = cloudAgentsApiRouteLayer.pipe(
   Layer.provideMerge(cloudAgentsApiRateLimitsLayer),
-  Layer.provideMerge(scheduleServices),
+  Layer.provideMerge(catalogServices),
   Layer.provideMerge(
     Layer.succeed(CloudAgentsApiKeys.CloudAgentsApiKeys, {
       create: unused,
@@ -189,6 +217,67 @@ it("creates and controls a schedule through the remote API", async () => {
     expect(listedResponse.status, await listedResponse.clone().text()).toBe(200);
     expect(await listedResponse.json()).toMatchObject({
       items: [{ id: created.id, status: "paused" }],
+    });
+  } finally {
+    await dispose();
+  }
+});
+
+it("creates and archives a persistent assistant through the remote API", async () => {
+  const { handler, dispose } = HttpRouter.toWebHandler(scheduleRoutesLayer, {
+    disableLogger: true,
+  });
+  const headers = {
+    authorization: "Bearer t3ca_schedule",
+    "content-type": "application/json",
+  };
+  const definition = {
+    name: "Docs maintainer",
+    instructions: "Keep the README accurate.",
+    provider: { instanceId: "codex", model: { id: "default" } },
+    tools: ["shell"],
+    repositories: [{ url: "https://github.com/acme/app" }],
+    secretAccess: { mode: "none" },
+    persistence: { files: false, browser: false },
+    limits: { runSeconds: 600, inputWaitSeconds: 60 },
+  };
+  try {
+    const createdResponse = await handler(
+      new Request("http://127.0.0.1/v1/assistants", {
+        method: "POST",
+        headers,
+        body: JSON.stringify(definition),
+      }),
+    );
+    expect(createdResponse.status, await createdResponse.clone().text()).toBe(200);
+    const created = decodeCloudAssistant(await createdResponse.json());
+    expect(created.status).toBe("IDLE");
+    expect(created.workspaceOwner).toBe("principal-scheduler");
+    expect(created.lifecycle.action).toBe("idle");
+
+    const memoryResponse = await handler(
+      new Request(`http://127.0.0.1/v1/assistants/${created.id}/memory`, {
+        method: "POST",
+        headers,
+        body: JSON.stringify({
+          text: "The package manager is vp.",
+          source: { agentId: "bc-1", quote: "vp i" },
+        }),
+      }),
+    );
+    expect(memoryResponse.status, await memoryResponse.clone().text()).toBe(200);
+
+    const archivedResponse = await handler(
+      new Request(`http://127.0.0.1/v1/assistants/${created.id}/archive`, {
+        method: "POST",
+        headers,
+      }),
+    );
+    expect(archivedResponse.status, await archivedResponse.clone().text()).toBe(200);
+    expect(await archivedResponse.json()).toMatchObject({
+      id: created.id,
+      status: "ARCHIVED",
+      lifecycle: { action: "archive", runs: "reject_new" },
     });
   } finally {
     await dispose();

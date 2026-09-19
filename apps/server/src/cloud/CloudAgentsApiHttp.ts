@@ -8,6 +8,10 @@ import {
   CloudAgentSubscriptionDeliveryRequest,
   CloudAgentsApiCreateAgentRequest,
   CloudAgentsApiCreateRunRequest,
+  CloudAssistantCreateRequest,
+  CloudAssistantMemoryWrite,
+  CloudAssistantPersistenceKind,
+  CloudAssistantSubscription,
   type CloudAgentsApiPrincipal,
 } from "@t3tools/contracts";
 import * as Context from "effect/Context";
@@ -21,6 +25,7 @@ import { HttpRouter, HttpServerRequest, HttpServerResponse } from "effect/unstab
 import * as CloudAgentsApi from "./CloudAgentsApi.ts";
 import * as CloudAgentsApiKeys from "./CloudAgentsApiKeys.ts";
 import * as CloudAgentSchedules from "./CloudAgentSchedules.ts";
+import * as CloudAssistants from "./CloudAssistants.ts";
 import * as CloudAgentSubscriptions from "./CloudAgentSubscriptions.ts";
 import {
   CloudAgentsApiFailure,
@@ -37,6 +42,15 @@ import {
 const decodeCreateAgent = Schema.decodeUnknownEffect(CloudAgentsApiCreateAgentRequest);
 const decodeCreateRun = Schema.decodeUnknownEffect(CloudAgentsApiCreateRunRequest);
 const decodeSchedule = Schema.decodeUnknownEffect(CloudAgentScheduleCreateRequest);
+const decodeAssistant = Schema.decodeUnknownEffect(CloudAssistantCreateRequest);
+const decodeAssistantMemory = Schema.decodeUnknownEffect(CloudAssistantMemoryWrite);
+const decodeAssistantSubscription = Schema.decodeUnknownEffect(CloudAssistantSubscription);
+const decodeAssistantPersistence = Schema.decodeUnknownEffect(
+  Schema.Struct({
+    kind: CloudAssistantPersistenceKind,
+    plaintext: Schema.String,
+  }),
+);
 const decodeSubscription = Schema.decodeUnknownEffect(CloudAgentSubscriptionCreateRequest);
 const decodeSubscriptionDelivery = Schema.decodeUnknownEffect(
   CloudAgentSubscriptionDeliveryRequest,
@@ -115,6 +129,7 @@ const handleV1 = (deps: {
   readonly api: CloudAgentsApi.CloudAgentsApi["Service"];
   readonly keys: CloudAgentsApiKeys.CloudAgentsApiKeys["Service"];
   readonly schedules: CloudAgentSchedules.CloudAgentSchedules["Service"];
+  readonly assistants: CloudAssistants.CloudAssistants["Service"];
   readonly subscriptions: CloudAgentSubscriptions.CloudAgentSubscriptions["Service"];
   readonly limits: Ref.Ref<LimitState>;
 }) =>
@@ -153,6 +168,7 @@ const handleV1 = (deps: {
     return yield* dispatchV1({
       api: deps.api,
       schedules: deps.schedules,
+      assistants: deps.assistants,
       subscriptions: deps.subscriptions,
       principal,
       request,
@@ -187,6 +203,7 @@ const handleV1 = (deps: {
 const dispatchV1 = (input: {
   readonly api: CloudAgentsApi.CloudAgentsApi["Service"];
   readonly schedules: CloudAgentSchedules.CloudAgentSchedules["Service"];
+  readonly assistants: CloudAssistants.CloudAssistants["Service"];
   readonly subscriptions: CloudAgentSubscriptions.CloudAgentSubscriptions["Service"];
   readonly principal: CloudAgentsApiPrincipal;
   readonly request: HttpServerRequest.HttpServerRequest;
@@ -196,7 +213,18 @@ const dispatchV1 = (input: {
   readonly meta: Record<string, string>;
 }) =>
   Effect.gen(function* () {
-    const { api, schedules, subscriptions, principal, request, url, origin, nowMs, meta } = input;
+    const {
+      api,
+      schedules,
+      assistants,
+      subscriptions,
+      principal,
+      request,
+      url,
+      origin,
+      nowMs,
+      meta,
+    } = input;
     const method = request.method.toUpperCase();
     const path = url.pathname.replace(/\/$/u, "") || "/";
     const parts = path.split("/").filter((part) => part.length > 0);
@@ -275,6 +303,156 @@ const dispatchV1 = (input: {
       }
       if (method === "POST" && parts.length === 4 && parts[3] === "resume") {
         return jsonResponse(200, yield* schedules.resume({ principal, scheduleId }), meta);
+      }
+    }
+    if (method === "POST" && path === "/v1/assistants") {
+      const definition = yield* decodeAssistant(yield* jsonBody).pipe(
+        Effect.mapError(
+          () => new CloudAgentsApiFailure("invalid_request", "Invalid assistant request.", 400),
+        ),
+      );
+      return jsonResponse(200, yield* assistants.create({ principal, definition }), meta);
+    }
+    if (method === "GET" && path === "/v1/assistants") {
+      return jsonResponse(200, yield* assistants.list({ principal }), meta);
+    }
+    if (parts[0] === "v1" && parts[1] === "assistants" && parts[2] !== undefined) {
+      const assistantId = parts[2];
+      if (method === "GET" && parts.length === 3) {
+        return jsonResponse(200, yield* assistants.get({ principal, assistantId }), meta);
+      }
+      if (method === "PUT" && parts.length === 3) {
+        const definition = yield* decodeAssistant(yield* jsonBody).pipe(
+          Effect.mapError(
+            () => new CloudAgentsApiFailure("invalid_request", "Invalid assistant request.", 400),
+          ),
+        );
+        return jsonResponse(
+          200,
+          yield* assistants.replace({ principal, assistantId, definition }),
+          meta,
+        );
+      }
+      if (method === "DELETE" && parts.length === 3) {
+        return jsonResponse(200, yield* assistants.remove({ principal, assistantId }), meta);
+      }
+      if (method === "POST" && parts.length === 4 && parts[3] === "archive") {
+        return jsonResponse(200, yield* assistants.archive({ principal, assistantId }), meta);
+      }
+      if (method === "POST" && parts.length === 4 && parts[3] === "unarchive") {
+        return jsonResponse(200, yield* assistants.unarchive({ principal, assistantId }), meta);
+      }
+      if (method === "POST" && parts.length === 4 && parts[3] === "reset") {
+        return jsonResponse(200, yield* assistants.reset({ principal, assistantId }), meta);
+      }
+      if (method === "POST" && parts.length === 4 && parts[3] === "runs") {
+        const body = yield* decodeCreateRun(yield* jsonBody).pipe(
+          Effect.mapError(
+            () => new CloudAgentsApiFailure("invalid_request", "Invalid create run request.", 400),
+          ),
+        );
+        return jsonResponse(
+          200,
+          yield* assistants.createRun({ principal, assistantId, body, urlOrigin: origin }),
+          meta,
+        );
+      }
+      if (method === "GET" && parts.length === 4 && parts[3] === "memory") {
+        return jsonResponse(200, yield* assistants.listMemory({ principal, assistantId }), meta);
+      }
+      if (method === "POST" && parts.length === 4 && parts[3] === "memory") {
+        const fact = yield* decodeAssistantMemory(yield* jsonBody).pipe(
+          Effect.mapError(
+            () => new CloudAgentsApiFailure("invalid_request", "Invalid memory request.", 400),
+          ),
+        );
+        return jsonResponse(
+          200,
+          yield* assistants.writeMemory({ principal, assistantId, fact }),
+          meta,
+        );
+      }
+      if (
+        method === "PUT" &&
+        parts.length === 5 &&
+        parts[3] === "memory" &&
+        parts[4] !== undefined
+      ) {
+        const fact = yield* decodeAssistantMemory(yield* jsonBody).pipe(
+          Effect.mapError(
+            () => new CloudAgentsApiFailure("invalid_request", "Invalid memory request.", 400),
+          ),
+        );
+        return jsonResponse(
+          200,
+          yield* assistants.replaceMemory({
+            principal,
+            assistantId,
+            factId: parts[4],
+            fact,
+          }),
+          meta,
+        );
+      }
+      if (
+        method === "DELETE" &&
+        parts.length === 5 &&
+        parts[3] === "memory" &&
+        parts[4] !== undefined
+      ) {
+        return jsonResponse(
+          200,
+          yield* assistants.deleteMemory({ principal, assistantId, factId: parts[4] }),
+          meta,
+        );
+      }
+      if (method === "PUT" && parts.length === 4 && parts[3] === "persistence") {
+        const body = yield* decodeAssistantPersistence(yield* jsonBody).pipe(
+          Effect.mapError(
+            () => new CloudAgentsApiFailure("invalid_request", "Invalid persistence request.", 400),
+          ),
+        );
+        return jsonResponse(
+          200,
+          yield* assistants.putPersistence({
+            principal,
+            assistantId,
+            kind: body.kind,
+            plaintext: body.plaintext,
+          }),
+          meta,
+        );
+      }
+      if (
+        method === "GET" &&
+        parts.length === 5 &&
+        parts[3] === "persistence" &&
+        parts[4] !== undefined
+      ) {
+        if (parts[4] !== "files" && parts[4] !== "browser") {
+          return errorResponse(
+            new CloudAgentsApiFailure("invalid_request", "Unknown persistence kind.", 400),
+            meta,
+          );
+        }
+        return jsonResponse(
+          200,
+          yield* assistants.getPersistence({ principal, assistantId, kind: parts[4] }),
+          meta,
+        );
+      }
+      if (method === "POST" && parts.length === 4 && parts[3] === "subscriptions") {
+        const subscription = yield* decodeAssistantSubscription(yield* jsonBody).pipe(
+          Effect.mapError(
+            () =>
+              new CloudAgentsApiFailure("invalid_request", "Invalid subscription request.", 400),
+          ),
+        );
+        return jsonResponse(
+          200,
+          yield* assistants.attachSubscription({ principal, assistantId, subscription }),
+          meta,
+        );
       }
     }
     if (method === "POST" && path === "/v1/agents") {
@@ -495,8 +673,13 @@ export const cloudAgentsApiRouteLayer = Layer.unwrap(
     const api = yield* CloudAgentsApi.CloudAgentsApi;
     const keys = yield* CloudAgentsApiKeys.CloudAgentsApiKeys;
     const schedules = yield* CloudAgentSchedules.CloudAgentSchedules;
+    const assistants = yield* CloudAssistants.CloudAssistants;
     const subscriptions = yield* CloudAgentSubscriptions.CloudAgentSubscriptions;
     const limits = yield* CloudAgentsApiRateLimits;
-    return HttpRouter.add("*", "/v1*", handleV1({ api, keys, schedules, subscriptions, limits }));
+    return HttpRouter.add(
+      "*",
+      "/v1*",
+      handleV1({ api, keys, schedules, assistants, subscriptions, limits }),
+    );
   }),
 );
