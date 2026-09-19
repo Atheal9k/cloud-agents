@@ -15,6 +15,7 @@ import {
   buildCloudEnvSetupTurn,
   findCloudEnvSetupSkillDirectory,
   installCloudEnvSetupSkillPackage,
+  loadBundledCloudEnvSetupSkillPackage,
   loadCloudEnvSetupSkillPackage,
 } from "./cloudEnvSetupSkill.ts";
 
@@ -55,6 +56,15 @@ describe("cloud env-setup skill package", () => {
       complete.references.create.contents,
     );
     expect(() => loadCloudEnvSetupSkillPackage(incomplete)).toThrow(/missing 'references\//);
+    expect(() => findCloudEnvSetupSkillDirectory(NodeOS.tmpdir())).toThrow(CloudEnvSetupSkillError);
+
+    const bundled = loadBundledCloudEnvSetupSkillPackage();
+    expect(bundled.directory).toBe(".agents/skills/env-setup");
+    expect(bundled.skill.contents).toContain("name: env-setup");
+    expect(bundled.opener.startsWith("Environments let agents run")).toBe(true);
+    expect(Object.values(bundled.references).map((file) => file.relativePath)).toEqual(
+      Object.values(CLOUD_ENV_SETUP_REFERENCE_FILES),
+    );
   });
 
   it("installs the package so Cursor, Claude, and Codex skill roots can discover it", () => {
@@ -69,7 +79,7 @@ describe("cloud env-setup skill package", () => {
         NodePath.join(home, ".agents/skills/env-setup/references/create-environment.md"),
         "utf8",
       ),
-    ).toContain("verbatim opener");
+    ).toContain("verbatim copy");
     expect(
       NodeFS.existsSync(
         NodePath.join(home, ".cursor/skills/env-setup/references/migrate-to-builds.md"),
