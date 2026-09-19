@@ -352,4 +352,33 @@ it.layer(TestLayer)("CloudRunResults", (it) => {
       }),
     );
   });
+
+  describe("permanent deletion", () => {
+    it.effect("erases only the agent it was asked to delete", () =>
+      Effect.gen(function* () {
+        const { captureInput, fs, path, results, resultsRoot } = yield* fixture();
+        const manifest = yield* results.capture(captureInput);
+        const neighbour = CloudRunResultId.make(
+          NodeCrypto.createHash("sha256").update("allocation-neighbour:1").digest("hex"),
+        );
+        yield* fs.makeDirectory(path.join(resultsRoot, neighbour), { recursive: true });
+        yield* fs.writeFileString(path.join(resultsRoot, neighbour, "status.json"), "{}");
+
+        const purged = yield* results.purgeAllocation({
+          allocationId: SOURCE_ALLOCATION_ID,
+          attempts: [1, 2],
+        });
+
+        expect(purged).toEqual([manifest.resultId]);
+        expect(yield* fs.exists(path.join(resultsRoot, manifest.resultId))).toBe(false);
+        expect(yield* fs.exists(path.join(resultsRoot, neighbour))).toBe(true);
+        expect(
+          yield* results.purgeAllocation({
+            allocationId: SOURCE_ALLOCATION_ID,
+            attempts: [1, 2],
+          }),
+        ).toEqual([]);
+      }),
+    );
+  });
 });

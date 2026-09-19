@@ -963,6 +963,8 @@ Acceptance criteria:
 
 ### CA-46: Implement snapshot retention, archive, and deletion
 
+Status: Done on 19 September 2026 in [PR #37](https://github.com/Atheal9k/cloud-agents/pull/37).
+
 Dependencies: CA-40, CA-43.
 
 Description: Separate live compute, disk snapshots, conversation retention,

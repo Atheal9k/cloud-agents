@@ -2,6 +2,7 @@ import {
   CloudEnvironmentBuildId,
   CloudEnvironmentSaveInput,
   CloudWarmGuestId,
+  DEFAULT_CONVERSATION_RETENTION_DAYS,
   RunAllocationAttempt,
   RunAllocationCommand,
 } from "@t3tools/contracts";
@@ -866,6 +867,7 @@ it.effect("packs two queued allocations when the controller has two worker slots
         maxInputWaitSeconds: 900,
         previewGraceSeconds: 900,
         idleReleaseSeconds: 3_600,
+        conversationRetentionDays: DEFAULT_CONVERSATION_RETENTION_DAYS,
         allowedInstanceTypes: ["t3.medium"],
       },
     });

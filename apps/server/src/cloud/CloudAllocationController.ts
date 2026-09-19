@@ -1,5 +1,7 @@
 import {
   type CloudAdmissionControlInput,
+  CloudAgentDeletion,
+  CloudAgentId,
   CloudAllocationControllerError,
   type CloudAllocationControllerMode,
   CloudAllocationLimits,
@@ -17,8 +19,10 @@ import {
   type CloudEnvironmentResolutionInput,
   type CloudEnvironmentRestoreInput,
   type CloudEnvironmentSaveInput,
+  type CloudRunResultId,
   type CloudRunUsage,
   CloudWorkerPriceAssumption,
+  DEFAULT_CONVERSATION_RETENTION_DAYS,
   RunAllocationEvent,
   RunAllocationId,
   type RunAllocation,
@@ -56,6 +60,10 @@ const EmptyRequest = Schema.Struct({});
 const PersistedEventRow = Schema.Struct({
   event: Schema.fromJsonString(RunAllocationEvent),
 });
+const DeletionRow = Schema.Struct({
+  deletion: Schema.fromJsonString(CloudAgentDeletion),
+});
+const encodeDeletion = Schema.encodeSync(Schema.fromJsonString(CloudAgentDeletion));
 const DEFAULT_LIMITS = {
   maxConcurrentWorkers: 1,
   maxQueueDepth: 8,
@@ -63,6 +71,7 @@ const DEFAULT_LIMITS = {
   maxInputWaitSeconds: 15 * 60,
   previewGraceSeconds: 15 * 60,
   idleReleaseSeconds: DEFAULT_IDLE_RELEASE_SECONDS,
+  conversationRetentionDays: DEFAULT_CONVERSATION_RETENTION_DAYS,
   allowedInstanceTypes: ["t3.medium"],
 } as const satisfies CloudAllocationLimits;
 
@@ -85,6 +94,16 @@ export class CloudAllocationController extends Context.Service<
     readonly dispatch: (
       command: RunAllocationCommand,
     ) => Effect.Effect<RunAllocation, CloudAllocationControllerError>;
+    /**
+     * Erases one agent's events and leaves a tombstone. Callers purge the
+     * retained results first and pass what they removed, so the record cannot
+     * claim an erasure that did not happen.
+     */
+    readonly purgeAllocation: (input: {
+      readonly allocationId: RunAllocationId;
+      readonly deletedAt: string;
+      readonly purgedResultIds: ReadonlyArray<CloudRunResultId>;
+    }) => Effect.Effect<CloudAgentDeletion, CloudAllocationControllerError>;
     readonly snapshot: Effect.Effect<CloudAllocationSnapshot, CloudAllocationControllerError>;
     readonly stream: Stream.Stream<CloudAllocationSnapshot, CloudAllocationControllerError>;
     readonly setAdmission: (
@@ -214,6 +233,26 @@ export const make = Effect.fn("CloudAllocationController.make")(function* (input
       SELECT event_json AS event
       FROM cloud_allocation_events
       ORDER BY allocation_id ASC, sequence ASC
+    `,
+  });
+
+  const readDeletion = SqlSchema.findAll({
+    Request: AllocationIdRequest,
+    Result: DeletionRow,
+    execute: ({ allocationId }) => sql`
+      SELECT deletion_json AS deletion
+      FROM cloud_agent_deletions
+      WHERE allocation_id = ${allocationId}
+    `,
+  });
+
+  const readDeletionRows = SqlSchema.findAll({
+    Request: EmptyRequest,
+    Result: DeletionRow,
+    execute: () => sql`
+      SELECT deletion_json AS deletion
+      FROM cloud_agent_deletions
+      ORDER BY deleted_at ASC, allocation_id ASC
     `,
   });
 
@@ -350,16 +389,25 @@ export const make = Effect.fn("CloudAllocationController.make")(function* (input
 
   const readSnapshot = Effect.gen(function* () {
     yield* requireEnabled;
-    const [rows, controllerSettings, now, environmentCatalog, buildCatalog, warmGuests, timings] =
-      yield* Effect.all([
-        readAllEventRows({}),
-        settings.read({}),
-        DateTime.now,
-        environments.list,
-        builds.list,
-        warmPool.list,
-        warmPool.timings,
-      ]).pipe(Effect.mapError(persistenceError));
+    const [
+      rows,
+      deletionRows,
+      controllerSettings,
+      now,
+      environmentCatalog,
+      buildCatalog,
+      warmGuests,
+      timings,
+    ] = yield* Effect.all([
+      readAllEventRows({}),
+      readDeletionRows({}),
+      settings.read({}),
+      DateTime.now,
+      environments.list,
+      builds.list,
+      warmPool.list,
+      warmPool.timings,
+    ]).pipe(Effect.mapError(persistenceError));
     const grouped = new Map<RunAllocationId, Array<RunAllocationEvent>>();
     for (const row of rows) {
       const events = grouped.get(row.event.allocationId) ?? [];
@@ -404,6 +452,7 @@ export const make = Effect.fn("CloudAllocationController.make")(function* (input
         inventories: warmPoolInventories({ guests: warmGuests, allocations }),
         timings,
       }),
+      deletions: deletionRows.map((row) => row.deletion),
       usage: allocations.map((allocation) =>
         usageForAllocation(allocation, grouped.get(allocation.id) ?? [], now),
       ),
@@ -483,6 +532,15 @@ export const make = Effect.fn("CloudAllocationController.make")(function* (input
     mutex.withPermits(1)(
       Effect.gen(function* () {
         yield* requireWritable;
+        const deleted = yield* readDeletion({ allocationId: command.allocationId }).pipe(
+          Effect.mapError(persistenceError),
+        );
+        if (deleted.length > 0) {
+          return yield* controllerError(
+            "agent-deleted",
+            `Cloud agent for allocation '${command.allocationId}' was permanently deleted.`,
+          );
+        }
         const current = yield* readAllocation(command.allocationId);
         if (command.type === "allocation.launch" && current === undefined) {
           const snapshot = yield* readSnapshot;
@@ -679,6 +737,65 @@ export const make = Effect.fn("CloudAllocationController.make")(function* (input
       }),
     );
 
+  /**
+   * The event rows go, so the prompt, titles, and run history they carry go
+   * with them: a permanent delete that only hid the conversation would not be
+   * permanent. Erasing and tombstoning share one transaction, so a crash can
+   * never leave an agent that replays without its own record of deletion.
+   */
+  const purgeAllocation: CloudAllocationController["Service"]["purgeAllocation"] = (request) =>
+    mutex.withPermits(1)(
+      Effect.gen(function* () {
+        yield* requireWritable;
+        const existing = yield* readDeletion({ allocationId: request.allocationId }).pipe(
+          Effect.mapError(persistenceError),
+        );
+        const recorded = existing[0]?.deletion;
+        if (recorded !== undefined) return recorded;
+        const allocation = yield* readAllocation(request.allocationId);
+        if (allocation === undefined) {
+          return yield* controllerError(
+            "allocation-not-found",
+            `Cloud allocation '${request.allocationId}' does not exist.`,
+          );
+        }
+        if (allocation.deletion?.status !== "requested") {
+          return yield* controllerError(
+            "invalid-request",
+            `Cloud allocation '${request.allocationId}' has no delete to complete.`,
+          );
+        }
+        const deletion = {
+          agentId: allocation.control?.agentId ?? CloudAgentId.make(`agent:${allocation.id}`),
+          allocationId: allocation.id,
+          deletedAt: request.deletedAt,
+          purgedResultIds: request.purgedResultIds,
+          snapshots: "policy-expiry",
+        } satisfies CloudAgentDeletion;
+        yield* sql
+          .withTransaction(
+            Effect.gen(function* () {
+              yield* sql`
+                DELETE FROM cloud_allocation_events
+                WHERE allocation_id = ${allocation.id}
+              `;
+              yield* sql`
+                INSERT INTO cloud_agent_deletions (allocation_id, deleted_at, deletion_json)
+                VALUES (${allocation.id}, ${deletion.deletedAt}, ${encodeDeletion(deletion)})
+              `;
+            }),
+          )
+          .pipe(Effect.mapError(persistenceError));
+        yield* PubSub.publish(changes, yield* readSnapshot);
+        yield* Effect.logInfo("Cloud agent permanently deleted.", {
+          allocationId: deletion.allocationId,
+          agentId: deletion.agentId,
+          purgedResults: deletion.purgedResultIds.length,
+        });
+        return deletion;
+      }),
+    );
+
   const setAdmission: CloudAllocationController["Service"]["setAdmission"] = (control) =>
     mutex.withPermits(1)(
       Effect.gen(function* () {
@@ -745,6 +862,7 @@ export const make = Effect.fn("CloudAllocationController.make")(function* (input
 
   return CloudAllocationController.of({
     dispatch,
+    purgeAllocation,
     snapshot,
     stream,
     setAdmission,
@@ -775,6 +893,9 @@ const CloudAllocationPolicyConfig = Config.all({
   idleReleaseSeconds: Config.int("T3CODE_CLOUD_IDLE_RELEASE_SECONDS").pipe(
     Config.withDefault(DEFAULT_IDLE_RELEASE_SECONDS),
   ),
+  conversationRetentionDays: Config.int("T3CODE_CLOUD_CONVERSATION_RETENTION_DAYS").pipe(
+    Config.withDefault(DEFAULT_CONVERSATION_RETENTION_DAYS),
+  ),
   workerPrices: Config.string("T3CODE_CLOUD_WORKER_PRICES").pipe(
     Config.withDefault("t3.medium=0.0496"),
   ),
@@ -804,6 +925,7 @@ export const layer = Layer.effect(
       maxInputWaitSeconds: policy.maxInputWaitSeconds,
       previewGraceSeconds: policy.previewGraceSeconds,
       idleReleaseSeconds: policy.idleReleaseSeconds,
+      conversationRetentionDays: policy.conversationRetentionDays,
       allowedInstanceTypes: workerPriceAssumptions.map((assumption) => assumption.instanceType),
     });
     return yield* make({

@@ -9,10 +9,35 @@ import {
 } from "@t3tools/contracts";
 
 import { hasAgentSettled } from "./cloudHibernationPolicy.ts";
+import { snapshotRetentionFrom } from "./cloudRetentionPolicy.ts";
 
 function assertNever(value: never): never {
   throw new Error(`Unhandled allocation variant: ${String(value)}`);
 }
+
+/**
+ * Commands that would give a deleting agent more life. Cleanup, cancellation,
+ * and failure receipts stay allowed, because a delete still has to release the
+ * compute it is waiting on.
+ */
+const BLOCKED_WHILE_DELETING = new Set<RunAllocationCommand["type"]>([
+  "allocation.launch-started",
+  "allocation.launch-retry-scheduled",
+  "allocation.instance-launched",
+  "allocation.worker-booted",
+  "allocation.worker-assigned",
+  "allocation.worker-registered",
+  "allocation.agent-started",
+  "allocation.preview-published",
+  "allocation.idle",
+  "allocation.hibernate",
+  "allocation.runtime-restored",
+  "allocation.snapshot-expire",
+  "allocation.follow-up",
+  "allocation.retry",
+  "allocation.agent-archive",
+  "allocation.agent-unarchive",
+]);
 
 function eventBase(
   allocation: RunAllocation,
@@ -71,7 +96,8 @@ export function decideRunAllocationCommand(
     allocation === undefined ||
     allocation.id !== command.allocationId ||
     allocation.handledCommandIds.includes(command.commandId) ||
-    allocation.attempt !== command.attempt
+    allocation.attempt !== command.attempt ||
+    (allocation.deletion !== undefined && BLOCKED_WHILE_DELETING.has(command.type))
   ) {
     return [];
   }
@@ -257,6 +283,10 @@ export function decideRunAllocationCommand(
         },
       ];
     }
+    case "allocation.snapshot-expire":
+      return allocation.idleState.status === "hibernated"
+        ? [{ ...base, type: "allocation.snapshot-expired" }]
+        : [];
     case "allocation.agent-archive":
       return allocation.archivedAt === undefined &&
         allocation.agentOutcome.status !== "not-started" &&
@@ -267,6 +297,12 @@ export function decideRunAllocationCommand(
       return allocation.archivedAt === undefined
         ? []
         : [{ ...base, type: "allocation.agent-unarchived" }];
+    case "allocation.agent-delete":
+      return allocation.deletion === undefined &&
+        allocation.agentOutcome.status !== "not-started" &&
+        allocation.agentOutcome.status !== "running"
+        ? [{ ...base, type: "allocation.agent-deletion-requested" }]
+        : [];
     case "allocation.cleanup-started":
       return allocation.cleanupState.status === "requested"
         ? [{ ...base, type: command.type }]
@@ -458,6 +494,7 @@ export function projectRunAllocationEvent(
     case "allocation.agent-started":
       return projectUpdate(allocation, event, {
         agentOutcome: { status: "running", startedAt: event.occurredAt },
+        snapshotRetention: snapshotRetentionFrom({ lastActiveAt: event.occurredAt }),
       });
     case "allocation.agent-succeeded":
       return projectUpdate(allocation, event, {
@@ -517,6 +554,20 @@ export function projectRunAllocationEvent(
     case "allocation.runtime-restored":
       return projectUpdate(allocation, event, {
         idleState: { status: "busy", restore: event.restore },
+        snapshotRetention: snapshotRetentionFrom({ lastActiveAt: event.occurredAt }),
+      });
+    /**
+     * The disk outlived its inactivity window. Cleanup terminates the stopped
+     * guest, and the conversation stays: a later follow-up places a fresh
+     * runtime instead of restoring a snapshot that no longer exists.
+     */
+    case "allocation.snapshot-expired":
+      return projectUpdate(allocation, event, {
+        idleState: { status: "busy" },
+        cleanupState:
+          allocation.cleanupState.status === "not-requested"
+            ? { status: "requested", requestedAt: event.occurredAt }
+            : allocation.cleanupState,
       });
     case "allocation.cancellation-requested":
       return projectUpdate(allocation, event, {
@@ -568,6 +619,10 @@ export function projectRunAllocationEvent(
     case "allocation.agent-archived":
       return projectUpdate(allocation, event, {
         archivedAt: event.occurredAt,
+        // Archiving releases the runtime claim, so the stopped guest it was
+        // holding goes with it. Unarchiving then restores eligibility without
+        // waking anything, because there is no snapshot left to restore.
+        idleState: { status: "busy" },
         cleanupState:
           allocation.cleanupState.status === "not-requested"
             ? { status: "requested", requestedAt: event.occurredAt }
@@ -578,6 +633,15 @@ export function projectRunAllocationEvent(
       void archivedAt;
       return projectUpdate(unarchived, event, {});
     }
+    case "allocation.agent-deletion-requested":
+      return projectUpdate(allocation, event, {
+        deletion: { status: "requested", requestedAt: event.occurredAt },
+        idleState: { status: "busy" },
+        cleanupState:
+          allocation.cleanupState.status === "not-requested"
+            ? { status: "requested", requestedAt: event.occurredAt }
+            : allocation.cleanupState,
+      });
     case "allocation.cleanup-started":
       return projectUpdate(allocation, event, {
         cleanupState: { status: "running", startedAt: event.occurredAt },
