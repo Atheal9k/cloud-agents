@@ -790,101 +790,46 @@ Acceptance criteria:
 - Agent-requested Builds from CA-59 are draft until the user Saves. A failed
   draft never replaces the last active Build.
 
-### CA-59: Run Cursor's agent-led first-time environment setup
+### CA-59: Run the repository-owned agent-led environment setup
 
 Dependencies: CA-41, CA-42, CA-49, CA-51.
 
-Description: When no effective environment exists, or the user asks to make a
-repository fully usable for Cloud Agents, T3 must run Cursor's `env-setup` /
-`create-environment` skill rather than a custom setup wizard. Later
-inspect/update/migrate work uses the matching env-setup references: create,
-update repository-managed, update DB-managed, and migrate to builds.
+Description: Ship and invoke the repository-owned Cloud Agent environment
+skill package. The package, not a prompt copy or custom setup wizard, is the
+source of truth for agent behavior:
 
-Ship the skills and MCP tools as first-class product behavior. Agents follow
-the skill text; they do not invent a parallel flow.
+- [Environment setup skill](../../.agents/skills/env-setup/SKILL.md)
+- [Create or fully set up an environment](../../.agents/skills/env-setup/references/create-environment.md)
+- [Update a repository-managed environment](../../.agents/skills/env-setup/references/update-repo-managed-environment.md)
+- [Update a DB-managed environment](../../.agents/skills/env-setup/references/update-db-managed-environment.md)
+- [Migrate an environment to builds](../../.agents/skills/env-setup/references/migrate-to-builds.md)
 
 Acceptance criteria:
 
-- T3 ships an `env-setup` skill and a `create-environment` reference equivalent
-  to Cursor's Cloud Agent environment skills, including update and migrate
-  references. Agents load them for environment create, inspect, improve, and
-  build.
-- First-time create, before any tool call, sends this opener as plain chat
-  with the blank line preserved, verbatim except the product name in the
-  "Cursor will:" line may say T3:
-
-  Environments let agents run, test, verify, and demo changes like an engineer. Setup is free, agent-led, and takes 5-20 minutes. Cursor will:
-  1. Explore, install, and verify your application
-  2. Ask for secrets or network access as needed
-  3. Prompt you to review and save the configuration
-
-  Interrupt anytime to steer the agent or ask questions.
-
-  If the skill is resumed after work started, do not resend the opener or
-  recreate todos.
-
-- Immediately after the opener, the agent creates exactly this five-item
-  checklist, in this order, with the first item `in_progress` and the rest
-  `pending`. Titles are verbatim and must not be renamed, reordered, split, or
-  merged:
-
-  1. `Understand the codebase`
-  2. `Generate setup script`
-  3. `Take a snapshot`
-  4. `Verify build in a subagent`
-  5. `Verify success and show card`
-
-  Keep at most one `in_progress` item. Mark completed only after success. Keep
-  the current item `in_progress` while blocked on required user action. Mark
-  `Verify build in a subagent` `cancelled` only when build selection or
-  subagents are unavailable, and disclose the skip.
-
-- Discovery inspects products and services, README, CONTRIBUTING, AGENTS.md,
-  manifests, hooks, Docker/Compose/devcontainer, canonical
-  lint/typecheck/test/build/dev-server commands, existing
-  `.cursor/environment.json`, secrets, test accounts, egress domains, and
-  current third-party docs. Prefer the repository's pinned tools and
-  lockfiles. Do not upgrade dependencies or rewrite lockfiles unless the user
-  asks. Do not create `AGENTS.md` if it is missing.
-- Design uses the default base image unless a stable toolchain is missing.
-  Custom Dockerfiles are deterministic, non-interactive, include `git` and
-  `curl`, target x86_64 Debian/Ubuntu unless docs say otherwise, and do not
-  copy the whole repository. Nested Docker and Tailscale userspace networking
-  are validated, not copied from stale recipes. Commands split as `install`
-  (idempotent, terminating), `start` (per-boot, returns), and `terminals`
-  (named long-running processes).
-- Local validation installs system deps, runs `install` twice, starts
-  `start`/`terminals`, runs lint/typecheck/test/build for the agreed scope,
-  and exercises a real hello-world product action. Capture command evidence
-  and, for GUI products, a screenshot or short recording. Do not change
-  application code to hide environment failures.
-- Blockers use `request-environment-setup-actions` as soon as a required
-  secret, test login, egress domain, or external action is confirmed missing.
-  Only `add_secrets`, `add_egress_allowlist_domain`, and `external_action` are
-  allowed. Test-login username/password/OTP go in `add_secrets`. Do not
-  snapshot, trigger a build, propose, or ask the user to Save while required
-  blockers remain. If the user declines a required action, setup stays
-  incomplete.
-- After local success, take a VM snapshot and wait until READY. When build
-  tools exist, trigger a draft Build with READY `snapshot` plus the
-  install/start scripts, wait for `SUCCEEDED`/`FAILED`, inspect logs, then
-  verify that exact Build in a fresh cloud subagent (`environment: "cloud"`,
-  `cloud_requested_environment_build_id`). Propose scripts with that
-  `buildId`, never the raw snapshot id. If build tools are unavailable,
-  snapshot then propose without claiming a Build was tested. A proposal does
-  not save.
-- Saving is a user action in the Environment panel. After proposal, the
-  success summary uses Cursor's Save card: opening sentence, **What was done**
-  bullets, Validation table (including Install idempotence twice and Fresh
-  Cloud Agent only when the subagent ran), Setup details only when
-  `environment-info` returns a non-empty `url`, and **Click Save in the
-  Environment panel on the right.** Never imply a draft was saved.
-- `env-setup` inspect/update flows choose create vs repository-managed vs
-  DB-managed vs migrate-to-builds from `environment-info`
-  (`environmentJsonPath` present vs null). Editing config does not rebuild or
-  migrate an already running agent. Web, desktop, command palette, and
-  settings all start the same create skill; a dashboard form is not a
-  substitute.
+- Cloud Agents discover `env-setup` and resolve all four references relative
+  to its skill directory. Packaging and focused tests fail when the skill or a
+  referenced workflow is missing.
+- When no effective environment exists, or the user asks to make a repository
+  fully usable, the agent loads the skill and the create reference before its
+  first tool call. It follows the reference's verbatim opener, exact five-item
+  checklist, blocker ordering, local validation, snapshot, draft Build,
+  fresh-agent verification, proposal, and Save handoff.
+- `environment-info` selects later workflows. Migration intent selects the
+  migrate reference first. Otherwise a non-empty `environmentJsonPath` selects
+  the repository-managed reference, while a null or absent path selects the
+  DB-managed reference. A greenfield repository selects the create reference.
+- The environment and Build tools from CA-51 expose every operation named by
+  the selected reference. T3 may map Cursor-style tool names to its MCP names,
+  but the mapping must preserve arguments, receipts, blocker behavior, and
+  draft-versus-saved semantics.
+- Web, desktop, Settings, the command palette, and any keybinding entry point
+  start the same skill workflow. A dashboard form or duplicated hard-coded
+  prompt is not a substitute.
+- Focused integration coverage exercises one successful create through Save,
+  one required-action pause and resume, one failed draft Build that leaves the
+  last successful Build active, and routing for repository-managed,
+  DB-managed, and migrate flows. Tests verify that configuration changes affect
+  newly started agents and never claim to rebuild or migrate the running agent.
 
 ### CA-43: Hibernate idle agents and wake from snapshots
 

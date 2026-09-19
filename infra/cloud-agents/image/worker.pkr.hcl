@@ -148,6 +148,7 @@ source "amazon-ebs" "worker" {
     ClaudeCodeVersion             = var.claude_code_version
     TailscaleVersion              = var.tailscale_version
     GitHubCliVersion              = var.github_cli_version
+    DockerComposeVersion          = var.docker_compose_version
   }
 }
 
