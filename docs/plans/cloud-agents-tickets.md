@@ -769,6 +769,8 @@ reopening completed proof tickets.
 
 ### CA-40: Split durable agents, runs, and ephemeral runtimes
 
+Status: Done on 19 September 2026 in [PR #27](https://github.com/Atheal9k/cloud-agents/pull/27).
+
 Dependencies: CA-02, CA-08, CA-11, CA-14, CA-15.
 
 Description: Introduce Cursor's observable control-plane model while retaining
