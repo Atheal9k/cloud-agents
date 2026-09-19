@@ -50,9 +50,9 @@ describe("cloud agents API model", () => {
     expect(
       validateCreateAgentRequest({
         prompt: { text: "Work" },
-        customSubagents: [{ name: "explore", description: "x", prompt: "y" }],
+        customSubagents: [{ name: "reviewer", description: "x", prompt: "y".repeat(40_000) }],
       })?.message,
-    ).toContain("built-in");
+    ).toContain("prompt size bound");
   });
 
   it("paginates newest-first without a null nextCursor", () => {

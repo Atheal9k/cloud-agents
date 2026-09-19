@@ -317,6 +317,28 @@ Compute is metered across these transitions by summing the intervals a guest
 was running, rather than from launch to cleanup. An open conversation would
 otherwise report days of compute it never used.
 
+## MCP servers, hooks, and custom subagents
+
+Cloud runs admit team, personal, and API MCP servers against the environment
+allowlist and the CA-49 egress policy. HTTP and SSE credentials, including
+per-user OAuth, stay on the controller and the guest only receives a proxied
+URL plus a session token. stdio servers execute in the runtime. Failures are
+isolated, redacted, and cannot widen egress or secret access. See
+[`cloudExtensibilityPolicy`](../../apps/server/src/cloud/cloudExtensibilityPolicy.ts).
+
+Repository `.cursor/hooks.json` command hooks run in the guest for supported
+tool, file, and lifecycle events. `~/.cursor/hooks.json` is unavailable in the
+guest (there is no operator home). During early read-only environment setup
+(`install`), only `beforeReadFile` may run; mutating hooks wait until runtime.
+
+API custom subagents are bounded in count and prompt size, cannot shadow
+built-ins (`explore`, `debug`, `shell`, `computerUse`), inherit a permission
+set that is never wider than the parent, and emit usage on the run.
+
+The built-in diagnostics MCP is always admitted. T3 names are canonical; the
+`cursor-cloud-` prefixes are aliases with the same arguments so the env-setup
+skill can call either.
+
 ## Retention, archive, and deletion
 
 Live compute, the disk an idle agent left behind, the conversation, and the

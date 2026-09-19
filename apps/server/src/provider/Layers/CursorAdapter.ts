@@ -560,23 +560,11 @@ export function makeCursorAdapter(
             runtimeMode: input.runtimeMode,
             ...(resumeSessionId ? { resumeSessionId } : {}),
             clientInfo: { name: "t3-code", version: "0.0.0" },
-            ...(mcpSession
-              ? {
-                  mcpServers: [
-                    {
-                      type: "http" as const,
-                      name: "t3-code",
-                      url: mcpSession.endpoint,
-                      headers: [
-                        {
-                          name: "Authorization",
-                          value: mcpSession.authorizationHeader,
-                        },
-                      ],
-                    },
-                  ],
-                }
-              : {}),
+                    ...(mcpSession
+                      ? {
+                          mcpServers: McpProviderSession.acpProtocolMcpServersFromSession(mcpSession),
+                        }
+                      : {}),
             ...acpNativeLoggers,
           }).pipe(
             Effect.provideService(Crypto.Crypto, crypto),

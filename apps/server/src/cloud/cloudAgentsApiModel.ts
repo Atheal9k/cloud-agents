@@ -11,6 +11,7 @@ import {
   CLOUD_AGENTS_API_MAX_PAGE_LIMIT,
   CLOUD_AGENTS_API_MAX_REPOS,
   CLOUD_AGENTS_API_MAX_SUBAGENTS,
+  CLOUD_CUSTOM_SUBAGENT_MAX_PROMPT_BYTES,
   CLOUD_AGENTS_API_NAME_MAX_CHARS,
   CLOUD_AGENTS_API_RATE_LIMIT_PER_MINUTE,
   CLOUD_AGENTS_API_REPOSITORY_RATE_LIMIT_PER_HOUR,
@@ -284,6 +285,12 @@ export function validateCreateAgentRequest(
       return apiError("invalid_request", `Custom subagent names must be unique ('${subagent.name}').`);
     }
     names.add(subagent.name);
+    if (utf8Bytes(subagent.prompt) > CLOUD_CUSTOM_SUBAGENT_MAX_PROMPT_BYTES) {
+      return apiError(
+        "invalid_request",
+        `Custom subagent '${subagent.name}' exceeds the prompt size bound.`,
+      );
+    }
   }
   return undefined;
 }
