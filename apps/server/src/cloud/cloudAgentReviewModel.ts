@@ -80,9 +80,7 @@ export function inspectRuntimeSnapshot(allocation: RunAllocation): CloudSnapshot
   };
 }
 
-export function inspectSessionAvailability(
-  allocation: RunAllocation,
-): {
+export function inspectSessionAvailability(allocation: RunAllocation): {
   readonly preview: CloudSessionAvailability;
   readonly terminal: CloudSessionAvailability;
 } {
@@ -131,7 +129,9 @@ export function inspectPublication(
   return {
     status: "present",
     outcome: record.outcome,
-    ...(record.outcome.status === "published" ? { pullRequestUrl: record.outcome.pullRequestUrl } : {}),
+    ...(record.outcome.status === "published"
+      ? { pullRequestUrl: record.outcome.pullRequestUrl }
+      : {}),
   };
 }
 

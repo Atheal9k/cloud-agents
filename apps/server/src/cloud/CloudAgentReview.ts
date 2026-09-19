@@ -110,7 +110,9 @@ export const make = Effect.fn("CloudAgentReview.make")(function* () {
     if (agent === undefined) {
       return yield* reviewError("agent-not-found", `Cloud agent '${agentId}' was not found.`);
     }
-    const allocation = snapshot.allocations.find((candidate) => candidate.id === agent.allocationId);
+    const allocation = snapshot.allocations.find(
+      (candidate) => candidate.id === agent.allocationId,
+    );
     if (allocation === undefined) {
       return yield* reviewError(
         "agent-not-found",
@@ -131,14 +133,15 @@ export const make = Effect.fn("CloudAgentReview.make")(function* () {
     const retained =
       Option.isSome(status) && status.value.status === "retained" ? status.value : undefined;
     const nowMillis = DateTime.toEpochMillis(yield* DateTime.now);
-    const expired =
-      retained !== undefined && Date.parse(retained.manifest.expiresAt) <= nowMillis;
+    const expired = retained !== undefined && Date.parse(retained.manifest.expiresAt) <= nowMillis;
     const missingResult = retained === undefined || expired;
     const texts = missingResult
       ? ([undefined, undefined, undefined] as const)
       : yield* Effect.all(
           [
-            results.readTextPrefix(resultId, "diff", CLOUD_REVIEW_DIFF_PREVIEW_CHARS).pipe(Effect.option),
+            results
+              .readTextPrefix(resultId, "diff", CLOUD_REVIEW_DIFF_PREVIEW_CHARS)
+              .pipe(Effect.option),
             results
               .readTextPrefix(resultId, "verification", CLOUD_REVIEW_DIFF_PREVIEW_CHARS)
               .pipe(Effect.option),
@@ -244,13 +247,15 @@ export const make = Effect.fn("CloudAgentReview.make")(function* () {
         );
       }
       case "delete-pr":
-        yield* publication.deletePullRequest(allocation.id, allocation.attempt).pipe(
-          Effect.mapError((error) =>
-            error.reason === "publication-not-found" || error.reason === "pr-not-published"
-              ? reviewError("publication-not-found", error.message)
-              : reviewError("github-failed", error.message),
-          ),
-        );
+        yield* publication
+          .deletePullRequest(allocation.id, allocation.attempt)
+          .pipe(
+            Effect.mapError((error) =>
+              error.reason === "publication-not-found" || error.reason === "pr-not-published"
+                ? reviewError("publication-not-found", error.message)
+                : reviewError("github-failed", error.message),
+            ),
+          );
         break;
       case "wake": {
         if (agent.status === "ARCHIVED") {
@@ -313,9 +318,7 @@ export const make = Effect.fn("CloudAgentReview.make")(function* () {
     return yield* loadReview(next.allocation, input.agentId);
   });
 
-  const share = Effect.fn("CloudAgentReview.share")(function* (
-    input: CloudAgentReviewShareInput,
-  ) {
+  const share = Effect.fn("CloudAgentReview.share")(function* (input: CloudAgentReviewShareInput) {
     yield* locate(input.agentId);
     const nowMillis = DateTime.toEpochMillis(yield* DateTime.now);
     const token = NodeCrypto.randomBytes(32).toString("base64url");

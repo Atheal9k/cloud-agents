@@ -225,10 +225,7 @@ export function pageHistory(input: {
   const start =
     input.cursor === undefined
       ? 0
-      : Math.max(
-          0,
-          input.items.findIndex((item) => item.id === input.cursor) + 1,
-        );
+      : Math.max(0, input.items.findIndex((item) => item.id === input.cursor) + 1);
   const items: CloudAgentsApiHistoryItem[] = [];
   let bytes = 0;
   for (let index = start; index < input.items.length; index += 1) {

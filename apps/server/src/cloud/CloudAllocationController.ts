@@ -33,6 +33,7 @@ import {
   RunAllocationId,
   type RunAllocation,
   type RunAllocationCommand,
+  type CloudScmAccessPolicy,
 } from "@t3tools/contracts";
 import * as Config from "effect/Config";
 import * as Context from "effect/Context";
@@ -48,12 +49,14 @@ import * as SqlSchema from "effect/unstable/sql/SqlSchema";
 
 import * as ServerConfig from "../config.ts";
 import { subscribeBeforeSnapshot } from "../utils/subscribeBeforeSnapshot.ts";
+import { resolveAwsWorkerConfig } from "./awsWorkerConfig.ts";
 import { projectCloudControlPlane } from "./cloudControlPlane.ts";
 import * as CloudEnvironmentBuildCatalog from "./CloudEnvironmentBuildCatalog.ts";
 import { isCloudEnvironmentBuildStale } from "./cloudEnvironmentBuildPolicy.ts";
 import * as CloudEnvironmentCatalog from "./CloudEnvironmentCatalog.ts";
 import * as CloudMacHostCatalog from "./CloudMacHostCatalog.ts";
 import * as CloudWarmPoolCatalog from "./CloudWarmPoolCatalog.ts";
+import { evaluateCloudScmAccess } from "./cloudSecurityPolicy.ts";
 import { planWarmPoolCapacity, warmPoolInventories } from "./cloudWarmPoolPolicy.ts";
 import * as ControllerSettings from "./controllerSettings.ts";
 import {
@@ -214,6 +217,8 @@ export const make = Effect.fn("CloudAllocationController.make")(function* (input
   readonly limits?: CloudAllocationLimits;
   readonly workerPriceAssumptions?: ReadonlyArray<CloudWorkerPriceAssumption>;
   readonly region?: string;
+  /** CA-49 repository ceiling. Absent leaves every repository reachable. */
+  readonly scmPolicy?: CloudScmAccessPolicy;
 }) {
   const sql = yield* SqlClient.SqlClient;
   const environments = yield* CloudEnvironmentCatalog.make();
@@ -226,6 +231,7 @@ export const make = Effect.fn("CloudAllocationController.make")(function* (input
   const changes = yield* PubSub.unbounded<CloudAllocationSnapshot>();
   const mutex = yield* Semaphore.make(1);
   const limits = input.limits ?? DEFAULT_LIMITS;
+  const scmPolicy = input.scmPolicy;
   const workerPriceAssumptions = input.workerPriceAssumptions ?? DEFAULT_WORKER_PRICE_ASSUMPTIONS;
 
   const readEventsByAllocation = SqlSchema.findAll({
@@ -533,6 +539,25 @@ export const make = Effect.fn("CloudAllocationController.make")(function* (input
       if (admitted.status === "rejected") {
         return controllerError("invalid-request", admitted.message);
       }
+    }
+    /**
+     * The repository ceiling is checked before a worker is ever launched, so a
+     * blocked or ungranted repository cannot be cloned by a running guest. The
+     * triggering user's own reach narrows it further when the client sends it.
+     */
+    if (command.type === "allocation.launch" && scmPolicy !== undefined) {
+      const repository = command.target.repository;
+      const access = command.target.access;
+      const decision = evaluateCloudScmAccess({
+        policy: scmPolicy,
+        request: {
+          repository,
+          scope: access?.scope ?? "write",
+          userRepositories: access?.userRepositories ?? [repository],
+          userScope: access?.userScope ?? "write",
+        },
+      });
+      if (!decision.allowed) return controllerError("invalid-request", decision.message);
     }
     if (
       command.type !== "allocation.launch" &&
@@ -1002,12 +1027,16 @@ export const layer = Layer.effect(
       conversationRetentionDays: policy.conversationRetentionDays,
       allowedInstanceTypes: workerPriceAssumptions.map((assumption) => assumption.instanceType),
     });
+    // A malformed repository ceiling must stop the controller rather than
+    // quietly admit runs with no ceiling at all.
+    const security = yield* resolveAwsWorkerConfig().pipe(Effect.orDie);
     return yield* make({
       enabled: serverConfig.cloudControllerEnabled === true,
       mode: serverConfig.cloudControllerMode ?? "local",
       limits,
       workerPriceAssumptions,
       region: policy.region,
+      scmPolicy: security.security.scm,
     });
   }),
 );

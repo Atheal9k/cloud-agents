@@ -330,10 +330,12 @@ export const make = Effect.fn("CloudAgentsApi.make")(function* () {
     }
     if (agent === undefined || allocation === undefined) {
       const deleted = current.deletions?.some((row) => row.agentId === agentId) === true;
-      return yield* Effect.fail(apiError(
-        "agent_not_found",
-        deleted ? `Agent '${agentId}' was not found.` : `Agent '${agentId}' was not found.`,
-      ));
+      return yield* Effect.fail(
+        apiError(
+          "agent_not_found",
+          deleted ? `Agent '${agentId}' was not found.` : `Agent '${agentId}' was not found.`,
+        ),
+      );
     }
     const runs = (current.runs ?? []).filter((run) => run.agentId === agentId);
     const payload = decodeRecord(owned.recordJson);
@@ -361,7 +363,9 @@ export const make = Effect.fn("CloudAgentsApi.make")(function* () {
             yield* publication.status(allocation.id, allocation.attempt).pipe(Effect.option),
           );
     const prUrl =
-      published?.outcome.status === "published" ? published.outcome.pullRequestUrl : repos?.[0]?.prUrl;
+      published?.outcome.status === "published"
+        ? published.outcome.pullRequestUrl
+        : repos?.[0]?.prUrl;
     return publicGit(agent, repos, prUrl);
   });
 
@@ -386,7 +390,9 @@ export const make = Effect.fn("CloudAgentsApi.make")(function* () {
             ...(principal.userFirstName === undefined
               ? {}
               : { userFirstName: principal.userFirstName }),
-            ...(principal.userLastName === undefined ? {} : { userLastName: principal.userLastName }),
+            ...(principal.userLastName === undefined
+              ? {}
+              : { userLastName: principal.userLastName }),
           }),
     });
 
@@ -421,10 +427,9 @@ export const make = Effect.fn("CloudAgentsApi.make")(function* () {
       if (input.body.agentId !== undefined) {
         const existing = current.agents?.find((agent) => agent.id === input.body.agentId);
         if (existing !== undefined) {
-          return yield* Effect.fail(apiError(
-            "agent_id_conflict",
-            `Agent '${input.body.agentId}' already exists.`,
-          ));
+          return yield* Effect.fail(
+            apiError("agent_id_conflict", `Agent '${input.body.agentId}' already exists.`),
+          );
         }
       }
       const occurredAt = DateTime.formatIso(yield* DateTime.now);
@@ -515,11 +520,15 @@ export const make = Effect.fn("CloudAgentsApi.make")(function* () {
             ...(input.body.workOnCurrentBranch === undefined
               ? {}
               : { workOnCurrentBranch: input.body.workOnCurrentBranch }),
-            ...(input.body.autoCreatePR === undefined ? {} : { autoCreatePR: input.body.autoCreatePR }),
+            ...(input.body.autoCreatePR === undefined
+              ? {}
+              : { autoCreatePR: input.body.autoCreatePR }),
           })},
           ${occurredAt}
         )
-      `.pipe(Effect.mapError(() => apiError("internal_error", "Could not persist the agent record.")));
+      `.pipe(
+        Effect.mapError(() => apiError("internal_error", "Could not persist the agent record.")),
+      );
       const located = yield* locate(input.principal, agentId);
       const run = located.runs.find((candidate) => candidate.id === runId) ?? located.runs[0];
       if (run === undefined) {
@@ -585,10 +594,14 @@ export const make = Effect.fn("CloudAgentsApi.make")(function* () {
       if (invalid !== undefined) return yield* Effect.fail(invalid);
       const located = yield* locate(input.principal, input.agentId);
       if (located.agent.status === "ARCHIVED") {
-        return yield* Effect.fail(apiError("agent_archived", `Agent '${input.agentId}' is archived.`));
+        return yield* Effect.fail(
+          apiError("agent_archived", `Agent '${input.agentId}' is archived.`),
+        );
       }
       if (located.runs.some((run) => isActiveRunStatus(run.status))) {
-        return yield* Effect.fail(apiError("agent_busy", `Agent '${input.agentId}' already has an active run.`));
+        return yield* Effect.fail(
+          apiError("agent_busy", `Agent '${input.agentId}' already has an active run.`),
+        );
       }
       const occurredAt = DateTime.formatIso(yield* DateTime.now);
       const runId = CloudRunId.make(`run-${NodeCrypto.randomUUID()}`);
@@ -609,8 +622,7 @@ export const make = Effect.fn("CloudAgentsApi.make")(function* () {
             title,
             selectedRef: previous?.selectedRef ?? located.agent.baseCommit,
             unansweredRequestSeconds:
-              previous?.unansweredRequestSeconds ??
-              CloudProviderUnansweredRequestSeconds.make(900),
+              previous?.unansweredRequestSeconds ?? CloudProviderUnansweredRequestSeconds.make(900),
             turn: {
               commandId,
               messageId,
@@ -631,7 +643,9 @@ export const make = Effect.fn("CloudAgentsApi.make")(function* () {
       const refreshed = yield* locate(input.principal, input.agentId);
       const run = refreshed.runs.find((candidate) => candidate.id === runId);
       if (run === undefined) {
-        return yield* Effect.fail(apiError("internal_error", "The follow-up run was not recorded."));
+        return yield* Effect.fail(
+          apiError("internal_error", "The follow-up run was not recorded."),
+        );
       }
       yield* seedStatus(run, Date.parse(occurredAt) || epochNowMs());
       return { run: publicRun(run) };
@@ -685,7 +699,9 @@ export const make = Effect.fn("CloudAgentsApi.make")(function* () {
         return yield* Effect.fail(apiError("run_not_found", `Run '${input.runId}' was not found.`));
       }
       if (!isActiveRunStatus(run.status)) {
-        return yield* Effect.fail(apiError("run_not_cancellable", `Run '${input.runId}' cannot be cancelled.`));
+        return yield* Effect.fail(
+          apiError("run_not_cancellable", `Run '${input.runId}' cannot be cancelled.`),
+        );
       }
       const occurredAt = DateTime.formatIso(yield* DateTime.now);
       yield* allocations
@@ -736,10 +752,9 @@ export const make = Effect.fn("CloudAgentsApi.make")(function* () {
         type === "allocation.agent-delete" &&
         located.runs.some((run) => isActiveRunStatus(run.status))
       ) {
-        return yield* Effect.fail(apiError(
-          "agent_busy",
-          `Agent '${input.agentId}' still has an active run.`,
-        ));
+        return yield* Effect.fail(
+          apiError("agent_busy", `Agent '${input.agentId}' still has an active run.`),
+        );
       }
       const occurredAt = DateTime.formatIso(yield* DateTime.now);
       yield* allocations
@@ -755,10 +770,12 @@ export const make = Effect.fn("CloudAgentsApi.make")(function* () {
         const after = yield* snapshot;
         const allocation = after.allocations.find((row) => row.id === located.allocation.id);
         if (allocation !== undefined && isDeletionPurgeReady(allocation)) {
-          const purged = yield* results.purgeAllocation({
-            allocationId: allocation.id,
-            attempts: Array.from({ length: allocation.attempt }, (_, index) => index + 1),
-          }).pipe(Effect.orElseSucceed(() => []));
+          const purged = yield* results
+            .purgeAllocation({
+              allocationId: allocation.id,
+              attempts: Array.from({ length: allocation.attempt }, (_, index) => index + 1),
+            })
+            .pipe(Effect.orElseSucceed(() => []));
           yield* allocations
             .purgeAllocation({
               allocationId: allocation.id,
@@ -829,17 +846,16 @@ export const make = Effect.fn("CloudAgentsApi.make")(function* () {
         worker: workerEvents,
         controller: controllerEvents,
       });
-      const withStatus =
-        merged.some((event) => event.event === "status")
-          ? merged
-          : [
-              {
-                event: "status" as const,
-                data: { runId: run.id, status: run.status },
-                createdAtMs: Date.parse(run.createdAt) || input.nowMs,
-              },
-              ...merged,
-            ];
+      const withStatus = merged.some((event) => event.event === "status")
+        ? merged
+        : [
+            {
+              event: "status" as const,
+              data: { runId: run.id, status: run.status },
+              createdAtMs: Date.parse(run.createdAt) || input.nowMs,
+            },
+            ...merged,
+          ];
       let events = maybeHeartbeat({
         events: withStatus,
         nowMs: input.nowMs,
@@ -940,9 +956,7 @@ export const make = Effect.fn("CloudAgentsApi.make")(function* () {
       let snapshot: OrchestrationThreadDetailSnapshot | undefined;
       if (reconnect.source === "worker-cursor" && workerClient !== undefined) {
         snapshot = Option.getOrUndefined(
-          yield* workerClient
-            .threadDetail(located.allocation, workerWindow)
-            .pipe(Effect.option),
+          yield* workerClient.threadDetail(located.allocation, workerWindow).pipe(Effect.option),
         );
       } else {
         snapshot = yield* retainedSnapshot(located.allocation);

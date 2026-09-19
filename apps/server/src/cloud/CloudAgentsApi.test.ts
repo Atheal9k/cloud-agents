@@ -116,9 +116,9 @@ it.effect("creates, isolates, cancels, archives, and deletes cloud agents", () =
     expect(
       (yield* api.listAgents({ principal: userPrincipal, urlOrigin: "http://localhost" })).items,
     ).toHaveLength(1);
-    expect((yield* api.usage({ principal: userPrincipal, agentId: created.agent.id })).runs).toEqual(
-      [expect.objectContaining({ id: created.run.id })],
-    );
+    expect(
+      (yield* api.usage({ principal: userPrincipal, agentId: created.agent.id })).runs,
+    ).toEqual([expect.objectContaining({ id: created.run.id })]);
 
     yield* api.cancelRun({
       principal: userPrincipal,

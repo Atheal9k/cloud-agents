@@ -22,6 +22,7 @@ import { CloudProviderTurnInput, CloudProviderUnansweredRequestSeconds } from ".
 import { CloudEnvironment, CloudEnvironmentVersionReference } from "./cloudEnvironment.ts";
 import { CloudEnvironmentBuild, CloudEnvironmentBuildReference } from "./cloudEnvironmentBuild.ts";
 import { CloudMacHost } from "./cloudMacIos.ts";
+import { CloudScmScope } from "./cloudSecurity.ts";
 import {
   CloudRuntimePlacement,
   CloudWarmGuest,
@@ -41,10 +42,23 @@ export const RunWorkerProfile = Schema.Struct({
 });
 export type RunWorkerProfile = typeof RunWorkerProfile.Type;
 
+/**
+ * `access` is what the person who triggered the run can do in the SCM. It is
+ * optional because older clients do not send it; when it is missing the
+ * controller narrows to the target repository alone rather than assuming more.
+ */
+export const RunRepositoryAccess = Schema.Struct({
+  scope: CloudScmScope,
+  userRepositories: Schema.Array(TrimmedNonEmptyString),
+  userScope: CloudScmScope,
+});
+export type RunRepositoryAccess = typeof RunRepositoryAccess.Type;
+
 export const RunRepositoryTarget = Schema.Struct({
   repository: TrimmedNonEmptyString,
   baseCommit: TrimmedNonEmptyString,
   branch: TrimmedNonEmptyString,
+  access: Schema.optionalKey(RunRepositoryAccess),
 });
 export type RunRepositoryTarget = typeof RunRepositoryTarget.Type;
 

@@ -17,10 +17,20 @@ import {
   type CloudReadinessConfigSource,
   type CloudReadinessEnvironment,
   type CloudReadinessReport,
+  type CloudSecretDefinition,
+  type CloudSecurityPosture,
+  type CloudSecurityReport,
 } from "@t3tools/contracts";
 
-import type { ResolvedAwsWorkerConfig } from "./awsWorkerConfig.ts";
+import type { CloudControllerSecurityConfig, ResolvedAwsWorkerConfig } from "./awsWorkerConfig.ts";
 import { isCloudEnvironmentBuildStale } from "./cloudEnvironmentBuildPolicy.ts";
+import {
+  cloudEgressExceptions,
+  cloudEgressPolicyInputFromConfig,
+  resolveCloudEgressPolicy,
+  resolveCloudSecretBindings,
+  verifyCloudEncryptionPosture,
+} from "./cloudSecurityPolicy.ts";
 import { runtimeParity } from "./firecrackerPlacement.ts";
 
 interface CheckDescriptor {
@@ -137,6 +147,95 @@ function environmentSummary(
     egressMode: environment.current.effectivePolicy.egressMode,
     egressAllowlist: environment.current.effectivePolicy.egressAllowlist,
     secrets: environment.current.effectivePolicy.secrets,
+  };
+}
+
+/**
+ * An environment's saved scope says who its secrets belong to: a personal
+ * environment resolves the owner's `user` secrets, a team one the team's.
+ */
+function secretPrincipals(source: CloudEnvironmentSource): {
+  readonly userId: string;
+  readonly teamId?: string;
+} {
+  if (source.type === "saved" && source.scope === "personal") return { userId: source.owner };
+  if (source.type === "saved" && source.scope === "team") {
+    return { userId: "", teamId: source.owner };
+  }
+  return { userId: "" };
+}
+
+function securityPosture(
+  environment: CloudEnvironment,
+  security: CloudControllerSecurityConfig,
+  controllerUrl: string | undefined,
+): CloudSecurityPosture {
+  const version = environment.current;
+  const definitions: ReadonlyArray<CloudSecretDefinition> = version.secretReferences.map(
+    (secret) => ({
+      name: secret.name,
+      reference: secret.reference,
+      availability: secret.availability,
+      scope: secret.scope ?? "environment",
+      ...(secret.owner === undefined ? {} : { owner: secret.owner }),
+      ...(secret.scope === undefined || secret.scope === "environment"
+        ? { environmentId: version.environmentId }
+        : {}),
+    }),
+  );
+  const principals = secretPrincipals(version.source);
+  const resolveFor = (phase: "build" | "runtime") =>
+    resolveCloudSecretBindings({
+      definitions,
+      phase,
+      environmentId: version.environmentId,
+      userId: principals.userId,
+      ...(principals.teamId === undefined ? {} : { teamId: principals.teamId }),
+    }).bindings;
+
+  return {
+    environmentId: environment.id,
+    egress: resolveCloudEgressPolicy({
+      team: security.egress,
+      // The catalog has already applied the config's defaults, so reading the
+      // effective policy keeps this from defaulting a second time.
+      environment: cloudEgressPolicyInputFromConfig(version.effectivePolicy),
+      exceptions: cloudEgressExceptions({
+        controllerHost: controllerHostOf(controllerUrl),
+        scmHosts: security.scmHosts,
+        artifactHosts: security.artifactHosts,
+      }),
+    }),
+    buildSecrets: resolveFor("build"),
+    runtimeSecrets: resolveFor("runtime"),
+    // An environment's own repositories are what its agents are granted; a
+    // protected repository outside that list still needs an explicit grant.
+    scm: {
+      ...security.scm,
+      grantedRepositories: version.repositories.map((entry) => entry.repository),
+    },
+  };
+}
+
+/** A missing or unparsable controller URL still needs a name to refuse on. */
+function controllerHostOf(controllerUrl: string | undefined): string {
+  if (controllerUrl === undefined) return "controller.invalid";
+  try {
+    return new URL(controllerUrl).host;
+  } catch {
+    return "controller.invalid";
+  }
+}
+
+export function buildCloudSecurityReport(input: {
+  readonly config: ResolvedAwsWorkerConfig;
+  readonly environments: ReadonlyArray<CloudEnvironment>;
+}): CloudSecurityReport {
+  return {
+    encryption: verifyCloudEncryptionPosture(input.config.security.encryption),
+    environments: input.environments.map((environment) =>
+      securityPosture(environment, input.config.security, input.config.controllerUrl),
+    ),
   };
 }
 
@@ -267,6 +366,10 @@ export function buildCloudReadinessReport(input: CloudReadinessModelInput): Clou
       defaults: snapshot.controller.defaults ?? {},
       allowedInstanceTypes: snapshot.limits.allowedInstanceTypes,
     },
+    security: buildCloudSecurityReport({
+      config,
+      environments: snapshot.environments ?? [],
+    }),
     checks,
   };
 }
