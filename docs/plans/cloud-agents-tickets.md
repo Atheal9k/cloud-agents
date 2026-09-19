@@ -179,7 +179,7 @@ stay last until you choose to pick them up.
 | 9    | ~~CA-05~~, ~~CA-37~~, ~~CA-47~~  | AWS settings UI; Android worker profile; public Cloud Agents API.                          |
 | 10   | ~~CA-49~~                        | Shared secret, identity, encryption, and network policy.                                   |
 | 11   | ~~CA-12~~, ~~CA-13~~, CA-26      | Environment recipes; event-stream performance; local/cloud handoff.                        |
-| 12   | CA-36, CA-51, CA-55              | Preview leases; provider extensibility; usage and audit accounting.                        |
+| 12   | CA-36, CA-51, ~~CA-55~~          | Preview leases; provider extensibility; usage and audit accounting.                        |
 | 13   | CA-32, CA-50                     | Private dependency networking; source-control and collaboration entry points.              |
 | 14   | CA-56, CA-58                     | Multi-repository environments; self-hosted pools.                                          |
 | 15   | CA-28, CA-39, CA-57, CA-59       | Scheduling; simulator display; commit signing; repository-owned environment setup.         |
@@ -1185,6 +1185,8 @@ Acceptance criteria:
 ### CA-55: Add usage, spend limits, and administrative audit
 
 Dependencies: CA-18, CA-40, CA-47, CA-49.
+
+Status: Done on 19 September 2026 in [PR #46](https://github.com/Atheal9k/cloud-agents/pull/46).
 
 Description: Replace a one-instance cost estimate with per-run model,
 runtime, storage, artifact, and automation accounting.
