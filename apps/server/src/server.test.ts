@@ -149,7 +149,14 @@ import * as ServerLifecycleEvents from "./serverLifecycleEvents.ts";
 import * as ServerRuntimeStartup from "./serverRuntimeStartup.ts";
 import * as ServiceLauncherClient from "./cloud/serviceLauncherClient.ts";
 import * as SharedBrowserGateway from "./cloud/SharedBrowserGateway.ts";
+import * as CloudAgentsApi from "./cloud/CloudAgentsApi.ts";
+import * as CloudAgentsApiKeys from "./cloud/CloudAgentsApiKeys.ts";
+import { cloudAgentsApiRateLimitsLayer } from "./cloud/CloudAgentsApiHttp.ts";
+import * as CloudAgentReview from "./cloud/CloudAgentReview.ts";
+import * as CloudArtifactAccess from "./cloud/CloudArtifactAccess.ts";
+import * as CloudEnvironmentBuildRunner from "./cloud/CloudEnvironmentBuildRunner.ts";
 import * as CloudHandoff from "./cloud/CloudHandoff.ts";
+import * as CloudReadiness from "./cloud/CloudReadiness.ts";
 import * as SharedBrowserAgentHandoff from "./cloud/SharedBrowserAgentHandoff.ts";
 import * as SharedBrowserHost from "./cloud/SharedBrowserHost.ts";
 import * as ServerSettings from "./serverSettings.ts";
@@ -1217,6 +1224,17 @@ const buildAppUnderTest = (options?: {
           Layer.mock(CloudHandoff.CloudHandoff)({
             preview: () => Effect.die("Cloud handoff not stubbed in this test"),
             execute: () => Effect.die("Cloud handoff not stubbed in this test"),
+          }),
+          // Cloud services the `/v1*` and websocket routes resolve up front. Their own tests cover
+          // the behavior, so unimplemented methods here defect if a router test ever reaches them.
+          Layer.mock(CloudAgentsApi.CloudAgentsApi)({}),
+          Layer.mock(CloudAgentsApiKeys.CloudAgentsApiKeys)({}),
+          cloudAgentsApiRateLimitsLayer,
+          Layer.mock(CloudReadiness.CloudReadiness)({}),
+          Layer.mock(CloudArtifactAccess.CloudArtifactAccess)({}),
+          Layer.mock(CloudAgentReview.CloudAgentReviewService)({}),
+          Layer.mock(CloudEnvironmentBuildRunner.CloudEnvironmentBuildRunner)({
+            snapshotPath: (snapshotId) => snapshotId,
           }),
         ),
       ),
