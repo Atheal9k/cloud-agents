@@ -184,7 +184,7 @@ stay last until you choose to pick them up.
 | 14   | ~~CA-56~~, ~~CA-58~~             | Multi-repository environments; self-hosted pools.                                          |
 | 15   | CA-28, ~~CA-39~~, ~~CA-57~~, ~~CA-59~~ | Scheduling; simulator display; commit signing; repository-owned environment setup.         |
 | 16   | CA-29, CA-30, CA-33              | GitHub triggers; persistent assistants; remote administration UI.                          |
-| 17   | CA-52                            | Subscription wake and CI autofix.                                                          |
+| 17   | ~~CA-52~~                        | Subscription wake and CI autofix.                                                          |
 | 18   | CA-53                            | Generalized automations.                                                                   |
 | 19   | CA-54                            | Outbound webhooks and typed SDKs.                                                          |
 | 20   | CA-31, CA-20                     | Deferred: provider adapters; native T3 mobile controls.                                    |
@@ -1128,6 +1128,8 @@ Acceptance criteria:
   silently widen runtime network or secret access.
 
 ### CA-52: Wake agents from subscriptions and CI autofix
+
+Status: Done on 19 September 2026 in [PR #60](https://github.com/Atheal9k/cloud-agents/pull/60).
 
 Dependencies: CA-29, CA-40, CA-43, CA-47, CA-50.
 

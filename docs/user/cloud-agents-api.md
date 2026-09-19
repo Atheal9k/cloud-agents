@@ -51,6 +51,8 @@ profile fields only for user keys. Each principal sees only the agents it create
 - `GET /v1/usage-report?periodStart=&periodEnd=` — dimensional usage export without prompts or
   secret values, including invoice variance when invoices have been recorded.
 - `POST /v1/agents/{id}/archive` and `POST /v1/agents/{id}/unarchive` (idempotent)
+- `POST /v1/agents/{id}/subscriptions` — attach a GitHub, Slack, Linear, or timer
+  subscription that can wake an idle agent
 - `DELETE /v1/agents/{id}` — permanent delete
 - `GET /v1/me`, `GET /v1/models`, `GET /v1/repositories`
 
@@ -136,6 +138,27 @@ Work stops when either configured limit is reached, even when a repair pushes a
 new head commit. Failed, cancelled, or expired runs appear as unresolved
 activities. Triggers never merge changes automatically.
 
+## Subscriptions and CI autofix
+
+`POST /v1/agents/{id}/subscriptions` attaches an event source to a durable agent
+so it can receive follow-ups while idle. Supported kinds are GitHub pull
+requests and CI, Slack threads and channels, Linear issues and comments, and
+one-shot timers or looping cron. List and cancel with
+`GET|DELETE /v1/agents/{id}/subscriptions/{subscriptionId}`. Deliver an event
+with `POST /v1/agents/{id}/subscriptions/{subscriptionId}/events`. Read
+persisted outcomes from `GET /v1/agents/{id}/subscriptions/{subscriptionId}/receipts`.
+
+Delivery targets the durable agent, coalesces bursts in a 30-second window, and
+is idempotent on `deliveryId`. A successful receipt has `acknowledged: true` only
+after the follow-up run is persisted. Failed wake or placement is retryable and
+does not acknowledge. Idle agents remain listable and cancellable. Archive
+disables subscriptions without deleting their audit receipts; unarchive restores
+them. Wake is limited to 180 days of inactivity.
+
+GitHub CI autofix (`kind: "github_ci"`) follows only agent-created pull requests
+and skips human pushes, explicit user follow-ups, failures already present on
+the base revision, and work after 10 repair attempts.
+
 Self-hosted machines and team pools use the older `/v0/private-workers` paths. See
 [Self-hosted machines and team pools](./cloud-agents-self-hosted.md).
 
@@ -172,7 +195,8 @@ Error bodies are `{ "code", "message" }` with stable codes including `unauthoriz
 `invalid_request`, `agent_id_conflict`, `agent_busy`, `agent_archived`,
 `agent_not_found`, `run_not_found`, `run_not_cancellable`, `invalid_last_event_id`,
 `stream_expired`, `rate_limited`, `spend_limit_exceeded`, `follow_up_forbidden`,
-`scm_access_denied`, `self_hosted_disabled`, and `self_hosted_required`.
+`scm_access_denied`, `self_hosted_disabled`, `self_hosted_required`, `schedule_not_found`,
+and `subscription_not_found`.
 
 Every response includes `X-Request-Id` and `X-RateLimit-*` headers. Repositories
 are limited to 1 request per minute and 30 per hour per principal. Other routes
