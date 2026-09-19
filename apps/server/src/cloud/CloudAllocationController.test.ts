@@ -1,4 +1,4 @@
-import { RunAllocationCommand } from "@t3tools/contracts";
+import { CloudEnvironmentSaveInput, RunAllocationCommand } from "@t3tools/contracts";
 import { expect, it } from "@effect/vitest";
 import * as Effect from "effect/Effect";
 import * as Schema from "effect/Schema";
@@ -9,6 +9,7 @@ import { SqlitePersistenceMemory } from "../persistence/Layers/Sqlite.ts";
 import { make } from "./CloudAllocationController.ts";
 
 const decodeCommand = Schema.decodeSync(RunAllocationCommand);
+const decodeEnvironmentSave = Schema.decodeSync(CloudEnvironmentSaveInput);
 
 const launchInput = {
   type: "allocation.launch",
@@ -110,6 +111,86 @@ it.effect("persists allocation events and rebuilds the catalog after restart", (
     });
     expect(snapshot.limits.maxRunSeconds).toBe(3 * 24 * 60 * 60);
     expect(snapshot.allocations).toEqual([launched]);
+  }).pipe(Effect.provide(SqlitePersistenceMemory)),
+);
+
+it.effect("pins the resolved environment version when an agent starts", () =>
+  Effect.gen(function* () {
+    const controller = yield* make({ enabled: true });
+    const environment = decodeEnvironmentSave({
+      environmentId: "web-environment",
+      name: "Web",
+      source: { type: "saved", scope: "personal", owner: "victor" },
+      repositories: [{ repository: "t3tools/t3code", defaultRef: "main" }],
+      config: { image: "node:24" },
+      secretReferences: [],
+      occurredAt: "2026-09-17T02:55:00.000Z",
+    });
+    yield* controller.saveEnvironment(environment);
+    const first = yield* controller.dispatch(launch);
+    yield* controller.saveEnvironment(
+      decodeEnvironmentSave({
+        ...environment,
+        expectedVersion: 1,
+        config: { image: "node:24.8" },
+        occurredAt: "2026-09-17T03:01:00.000Z",
+      }),
+    );
+    const second = yield* controller.dispatch(
+      decodeCommand({
+        ...launchInput,
+        commandId: "command-launch-version-2",
+        allocationId: "allocation-version-2",
+      }),
+    );
+
+    expect(first.environment).toMatchObject({
+      environmentId: "web-environment",
+      version: 1,
+    });
+    expect(second.environment).toMatchObject({
+      environmentId: "web-environment",
+      version: 2,
+    });
+    expect((yield* controller.snapshot).environments?.[0]?.history).toHaveLength(2);
+  }).pipe(Effect.provide(SqlitePersistenceMemory)),
+);
+
+it.effect("surfaces the environment catalog's reason instead of a generic failure", () =>
+  Effect.gen(function* () {
+    const controller = yield* make({ enabled: true });
+    yield* controller.saveEnvironment(
+      decodeEnvironmentSave({
+        environmentId: "committed-environment",
+        name: "Committed",
+        source: {
+          type: "repository",
+          repository: "t3tools/t3code",
+          path: ".cursor/environment.json",
+          commit: "abc123",
+        },
+        repositories: [{ repository: "t3tools/t3code", defaultRef: "main" }],
+        config: { image: "node:24" },
+        secretReferences: [],
+        occurredAt: "2026-09-17T02:55:00.000Z",
+      }),
+    );
+    const error = yield* controller
+      .saveEnvironment(
+        decodeEnvironmentSave({
+          environmentId: "dashboard-environment",
+          name: "Dashboard",
+          source: { type: "saved", scope: "personal", owner: "victor" },
+          repositories: [{ repository: "t3tools/t3code", defaultRef: "main" }],
+          config: { image: "node:20" },
+          secretReferences: [],
+          occurredAt: "2026-09-17T02:56:00.000Z",
+        }),
+      )
+      .pipe(Effect.flip);
+
+    expect(error.reason).toBe("repository-environment-exists");
+    expect(error.message).toContain(".cursor/environment.json");
   }).pipe(Effect.provide(SqlitePersistenceMemory)),
 );
 

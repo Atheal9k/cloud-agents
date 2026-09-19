@@ -3,6 +3,12 @@ import {
   CloudAllocationControllerError,
   CloudAllocationLimits,
   type CloudAllocationSnapshot,
+  type CloudEnvironment,
+  type CloudEnvironmentError,
+  type CloudEnvironmentResolution,
+  type CloudEnvironmentResolutionInput,
+  type CloudEnvironmentRestoreInput,
+  type CloudEnvironmentSaveInput,
   type CloudRunUsage,
   CloudWorkerPriceAssumption,
   RunAllocationEvent,
@@ -25,6 +31,7 @@ import * as SqlSchema from "effect/unstable/sql/SqlSchema";
 import * as ServerConfig from "../config.ts";
 import { subscribeBeforeSnapshot } from "../utils/subscribeBeforeSnapshot.ts";
 import { projectCloudControlPlane } from "./cloudControlPlane.ts";
+import * as CloudEnvironmentCatalog from "./CloudEnvironmentCatalog.ts";
 import {
   decideRunAllocationCommand,
   projectRunAllocationEvent,
@@ -74,6 +81,18 @@ export class CloudAllocationController extends Context.Service<
     readonly setAdmission: (
       input: CloudAdmissionControlInput,
     ) => Effect.Effect<CloudAllocationSnapshot, CloudAllocationControllerError>;
+    readonly saveEnvironment: (
+      input: CloudEnvironmentSaveInput,
+    ) => Effect.Effect<CloudEnvironment, CloudAllocationControllerError | CloudEnvironmentError>;
+    readonly restoreEnvironment: (
+      input: CloudEnvironmentRestoreInput,
+    ) => Effect.Effect<CloudEnvironment, CloudAllocationControllerError | CloudEnvironmentError>;
+    readonly resolveEnvironment: (
+      input: CloudEnvironmentResolutionInput,
+    ) => Effect.Effect<
+      CloudEnvironmentResolution | null,
+      CloudAllocationControllerError | CloudEnvironmentError
+    >;
   }
 >()("t3/cloud/CloudAllocationController") {}
 
@@ -126,6 +145,7 @@ export const make = Effect.fn("CloudAllocationController.make")(function* (input
   readonly workerPriceAssumptions?: ReadonlyArray<CloudWorkerPriceAssumption>;
 }) {
   const sql = yield* SqlClient.SqlClient;
+  const environments = yield* CloudEnvironmentCatalog.make();
   const changes = yield* PubSub.unbounded<CloudAllocationSnapshot>();
   const mutex = yield* Semaphore.make(1);
   const limits = input.limits ?? DEFAULT_LIMITS;
@@ -284,10 +304,11 @@ export const make = Effect.fn("CloudAllocationController.make")(function* (input
 
   const readSnapshot = Effect.gen(function* () {
     yield* requireEnabled;
-    const [rows, admission, now] = yield* Effect.all([
+    const [rows, admission, now, environmentCatalog] = yield* Effect.all([
       readAllEventRows({}),
       readAdmission({}),
       DateTime.now,
+      environments.list,
     ]).pipe(Effect.mapError(persistenceError));
     const grouped = new Map<RunAllocationId, Array<RunAllocationEvent>>();
     for (const row of rows) {
@@ -322,6 +343,7 @@ export const make = Effect.fn("CloudAllocationController.make")(function* (input
       agents: controlPlane.agents,
       runs: controlPlane.runs,
       runtimeAttempts: controlPlane.runtimeAttempts,
+      environments: environmentCatalog,
       usage: allocations.map((allocation) =>
         usageForAllocation(allocation, grouped.get(allocation.id) ?? [], now),
       ),
@@ -516,7 +538,17 @@ export const make = Effect.fn("CloudAllocationController.make")(function* (input
             );
           }
         }
-        const events = decideRunAllocationCommand(current, command);
+        const resolved =
+          command.type === "allocation.launch" && current === undefined
+            ? yield* environments
+                .resolve({ repository: command.target.repository })
+                .pipe(Effect.mapError(persistenceError))
+            : null;
+        const events = decideRunAllocationCommand(
+          current,
+          command,
+          resolved === null ? undefined : resolved.reference,
+        );
         if (events.length === 0) {
           if (current === undefined) {
             return yield* controllerError(
@@ -578,6 +610,23 @@ export const make = Effect.fn("CloudAllocationController.make")(function* (input
       }),
     );
 
+  const publishEnvironmentChange = <A>(effect: Effect.Effect<A, CloudEnvironmentError>) =>
+    mutex.withPermits(1)(
+      Effect.gen(function* () {
+        yield* requireEnabled;
+        const result = yield* effect;
+        yield* PubSub.publish(changes, yield* readSnapshot);
+        return result;
+      }),
+    );
+
+  const saveEnvironment: CloudAllocationController["Service"]["saveEnvironment"] = (input) =>
+    publishEnvironmentChange(environments.save(input));
+  const restoreEnvironment: CloudAllocationController["Service"]["restoreEnvironment"] = (input) =>
+    publishEnvironmentChange(environments.restore(input));
+  const resolveEnvironment: CloudAllocationController["Service"]["resolveEnvironment"] = (input) =>
+    environments.resolve(input);
+
   const snapshot = mutex.withPermits(1)(readSnapshot);
   const stream = Stream.unwrap(
     subscribeBeforeSnapshot(changes, readSnapshot, mutex).pipe(
@@ -585,7 +634,15 @@ export const make = Effect.fn("CloudAllocationController.make")(function* (input
     ),
   );
 
-  return CloudAllocationController.of({ dispatch, snapshot, stream, setAdmission });
+  return CloudAllocationController.of({
+    dispatch,
+    snapshot,
+    stream,
+    setAdmission,
+    saveEnvironment,
+    restoreEnvironment,
+    resolveEnvironment,
+  });
 });
 
 const CloudAllocationPolicyConfig = Config.all({

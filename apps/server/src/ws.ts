@@ -2679,6 +2679,24 @@ const makeWsRpcLayer = (
             cloudAllocations.setAdmission(input),
             { "rpc.aggregate": "cloud-allocation" },
           ),
+        [WS_METHODS.cloudEnvironmentSave]: (input) =>
+          observeRpcEffect(
+            WS_METHODS.cloudEnvironmentSave,
+            cloudAllocations.saveEnvironment(input),
+            { "rpc.aggregate": "cloud-environment" },
+          ),
+        [WS_METHODS.cloudEnvironmentRestore]: (input) =>
+          observeRpcEffect(
+            WS_METHODS.cloudEnvironmentRestore,
+            cloudAllocations.restoreEnvironment(input),
+            { "rpc.aggregate": "cloud-environment" },
+          ),
+        [WS_METHODS.cloudEnvironmentResolve]: (input) =>
+          observeRpcEffect(
+            WS_METHODS.cloudEnvironmentResolve,
+            cloudAllocations.resolveEnvironment(input),
+            { "rpc.aggregate": "cloud-environment" },
+          ),
         [WS_METHODS.pullRequestsList]: (input) =>
           observeRpcEffect(WS_METHODS.pullRequestsList, pullRequests.list(input), {
             "rpc.aggregate": "pull-requests",
