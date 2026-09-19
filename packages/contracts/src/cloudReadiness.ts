@@ -238,6 +238,12 @@ export const CloudGuidedSetupInput = Schema.Struct({
   owner: Schema.optionalKey(TrimmedNonEmptyString),
   repository: TrimmedNonEmptyString,
   defaultRef: TrimmedNonEmptyString,
+  /** Extra checkouts prepared in the same Build. Default ref applies when omitted. */
+  additionalRepositories: Schema.optionalKey(
+    Schema.Array(
+      Schema.Struct({ repository: TrimmedNonEmptyString, defaultRef: TrimmedNonEmptyString }),
+    ),
+  ),
   base: CloudGuidedSetupBase,
   install: Schema.optionalKey(Schema.String),
   start: Schema.optionalKey(Schema.String),

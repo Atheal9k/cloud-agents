@@ -173,6 +173,15 @@ export const make = Effect.fn("DeviceDisplayGateway.make")(function* () {
       yield* Effect.forEach(closing, (connection) => Deferred.await(connection.closed));
     });
 
+  /** A handoff that did not complete leaves nobody driving, which the viewer shows. */
+  const releaseControlAfterFailedHandoff = Ref.update(
+    state,
+    (latest): DeviceDisplayState => ({
+      ...latest,
+      control: { owner: "none", reason: "handoff-failed" },
+    }),
+  );
+
   const purgeExpired = Effect.fn("DeviceDisplayGateway.purgeExpired")(function* () {
     yield* semaphore
       .withPermits(1)(
@@ -291,21 +300,14 @@ export const make = Effect.fn("DeviceDisplayGateway.make")(function* () {
         yield* Ref.set(state, { ...current, viewers: reservedViewers, control });
         yield* closeConnections(current, input.viewerId);
         yield* handoff.pause(input.threadId).pipe(
-          Effect.tapError(() =>
-            Ref.update(state, (latest) => ({
-              ...latest,
-              control: { owner: "none", reason: "handoff-failed" },
-            })),
+          Effect.tapError(() => releaseControlAfterFailedHandoff),
+          Effect.mapError(() =>
+            gatewayError("handoff-failed", "The agent would not release the device for a human."),
           ),
         );
-        yield* host.setInputEnabled(input.threadId, true).pipe(
-          Effect.tapError(() =>
-            Ref.update(state, (latest) => ({
-              ...latest,
-              control: { owner: "none", reason: "handoff-failed" },
-            })),
-          ),
-        );
+        yield* host
+          .setInputEnabled(input.threadId, true)
+          .pipe(Effect.tapError(() => releaseControlAfterFailedHandoff));
         return grant(refreshed, control);
       }),
     );
@@ -331,7 +333,13 @@ export const make = Effect.fn("DeviceDisplayGateway.make")(function* () {
           ...current,
           control: { owner: "none", reason: "handoff-failed" },
         });
-        yield* handoff.resume(input.threadId);
+        yield* handoff
+          .resume(input.threadId)
+          .pipe(
+            Effect.mapError(() =>
+              gatewayError("handoff-failed", "The agent could not take the device back."),
+            ),
+          );
         const next = yield* Ref.get(state);
         yield* Ref.set(state, { ...next, control: { owner: "agent" } });
         return grant(viewer, { owner: "agent" });

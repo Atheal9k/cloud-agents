@@ -96,6 +96,19 @@ it.effect("rejects admission beyond the durable queue bound", () =>
   }).pipe(Effect.provide(SqlitePersistenceMemory)),
 );
 
+it.effect("inlines env-setup on first launch when no environment exists", () =>
+  Effect.gen(function* () {
+    const controller = yield* make({ enabled: true });
+    const allocation = yield* controller.dispatch(launch);
+
+    expect(allocation.execution?.turn.prompt).toContain(
+      "Repository-owned env-setup skill (inline before any tool call)",
+    );
+    expect(allocation.execution?.turn.prompt).toContain("Fix the cloud launch flow");
+    expect(allocation.execution?.turn.prompt).toContain("references/create-environment.md");
+  }).pipe(Effect.provide(SqlitePersistenceMemory)),
+);
+
 it.effect("rejects macOS iOS admission in us-west-1 instead of placing elsewhere", () =>
   Effect.gen(function* () {
     const controller = yield* make({
@@ -1016,6 +1029,82 @@ it.effect("never gives a run wider repository access than the user who triggered
 
     expect(error.reason).toBe("invalid-request");
     expect(error.message).toContain("triggering user's 'read' access");
+  }).pipe(Effect.provide(SqlitePersistenceMemory)),
+);
+
+it.effect("checks every additional repository and refuses long-running multi-repo launches", () =>
+  Effect.gen(function* () {
+    const controller = yield* make({
+      enabled: true,
+      scmPolicy: {
+        protectedRepositories: [],
+        blockedRepositories: ["acme/secrets"],
+        grantedRepositories: [],
+        maxScope: "write",
+        credentialTtlSeconds: 3_600,
+      },
+    });
+    yield* controller.setDefaults({
+      defaults: { longRunning: true },
+      occurredAt: "2026-09-19T12:00:00.000Z",
+    });
+
+    const extraBlocked = yield* controller
+      .dispatch(
+        decodeCommand({
+          ...launchInput,
+          commandId: "command-extra-blocked",
+          allocationId: "allocation-extra-blocked",
+          target: {
+            ...launchInput.target,
+            additionalRepositories: [
+              {
+                repository: "acme/secrets",
+                baseCommit: "main",
+                branch: "cursor/one",
+              },
+            ],
+          },
+        }),
+      )
+      .pipe(Effect.flip);
+    expect(extraBlocked.message).toContain("blocklist");
+
+    const longRunning = yield* controller
+      .dispatch(
+        decodeCommand({
+          ...launchInput,
+          commandId: "command-multi-long",
+          allocationId: "allocation-multi-long",
+          target: {
+            ...launchInput.target,
+            additionalRepositories: [
+              {
+                repository: "t3tools/docs",
+                baseCommit: "main",
+                branch: "cursor/one",
+              },
+            ],
+          },
+        }),
+      )
+      .pipe(Effect.flip);
+    expect(longRunning.message).toContain("Long-running");
+
+    const scratch = yield* controller.dispatch(
+      decodeCommand({
+        ...launchInput,
+        commandId: "command-scratch",
+        allocationId: "allocation-scratch",
+        target: {
+          repository: "scratch/workspace",
+          baseCommit: "main",
+          branch: "main",
+          workspaceKind: "scratch",
+        },
+      }),
+    );
+    expect(scratch.target.workspaceKind).toBe("scratch");
   }).pipe(Effect.provide(SqlitePersistenceMemory)),
 );
 

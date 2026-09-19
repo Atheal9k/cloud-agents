@@ -80,6 +80,7 @@ function draft(overrides: Partial<CloudGuidedSetupDraft> = {}): CloudGuidedSetup
     owner: "victor",
     repository: "t3tools/t3code",
     defaultRef: "main",
+    additionalRepositories: "",
     baseKind: "image",
     image: "ubuntu:24.04",
     dockerfile: "Dockerfile",
@@ -202,12 +203,29 @@ describe("validateCloudGuidedSetupDraft", () => {
     expect(result.status).toBe("valid");
     if (result.status !== "valid") return;
     expect(isGuidedSetupInput(result.input)).toBe(true);
+    expect(result.input.repository).toBe("t3tools/t3code");
     expect(result.input).toMatchObject({
       expectedVersion: 1,
       base: { kind: "image", image: "ubuntu:24.04" },
       install: "pnpm install",
     });
     expect(result.input).not.toHaveProperty("start");
+  });
+
+  it("parses additional repositories that share the environment Build", () => {
+    const result = validateCloudGuidedSetupDraft({
+      draft: draft({ additionalRepositories: "t3tools/api main\nt3tools/infra release" }),
+      buildId: "build:primary:2",
+      expectedVersion: 1,
+      occurredAt: NOW,
+    });
+
+    expect(result.status).toBe("valid");
+    if (result.status !== "valid") return;
+    expect(result.input.additionalRepositories).toEqual([
+      { repository: "t3tools/api", defaultRef: "main" },
+      { repository: "t3tools/infra", defaultRef: "release" },
+    ]);
   });
 
   it("refuses an owned scope with no owner", () => {

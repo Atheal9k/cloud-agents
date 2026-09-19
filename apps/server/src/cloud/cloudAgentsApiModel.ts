@@ -12,6 +12,7 @@ import {
   CLOUD_AGENTS_API_MAX_REPOS,
   CLOUD_AGENTS_API_MAX_SUBAGENTS,
   CLOUD_CUSTOM_SUBAGENT_MAX_PROMPT_BYTES,
+  CLOUD_SCRATCH_DRAFT_NAME_PATTERN,
   CLOUD_AGENTS_API_NAME_MAX_CHARS,
   CLOUD_AGENTS_API_RATE_LIMIT_PER_MINUTE,
   CLOUD_AGENTS_API_REPOSITORY_RATE_LIMIT_PER_HOUR,
@@ -38,6 +39,8 @@ import {
 } from "@t3tools/contracts";
 import type { CloudAgent, CloudRun, CloudRunStatus } from "@t3tools/contracts";
 
+import { parseCloudRepositoryUrl } from "./cloudCollaborationPolicy.ts";
+
 export class CloudAgentsApiFailure {
   readonly _tag = "CloudAgentsApiFailure";
   readonly code: CloudAgentsApiErrorCode;
@@ -54,10 +57,7 @@ export class CloudAgentsApiFailure {
   }
 }
 
-export function apiError(
-  code: CloudAgentsApiErrorCode,
-  message: string,
-): CloudAgentsApiFailure {
+export function apiError(code: CloudAgentsApiErrorCode, message: string): CloudAgentsApiFailure {
   return new CloudAgentsApiFailure(code, message, statusForCode(code));
 }
 
@@ -85,6 +85,9 @@ export function statusForCode(code: CloudAgentsApiErrorCode): number {
     case "self_hosted_disabled":
     case "self_hosted_required":
       return 409;
+    case "follow_up_forbidden":
+    case "scm_access_denied":
+      return 403;
     case "internal_error":
       return 500;
   }
@@ -139,7 +142,10 @@ const BUILTIN_SUBAGENTS = new Set<string>(CLOUD_AGENTS_API_BUILTIN_SUBAGENTS);
 function validatePrompt(prompt: CloudAgentsApiPrompt): CloudAgentsApiFailure | undefined {
   const images = prompt.images ?? [];
   if (images.length > CLOUD_AGENTS_API_MAX_IMAGES) {
-    return apiError("invalid_request", `A prompt may include at most ${CLOUD_AGENTS_API_MAX_IMAGES} images.`);
+    return apiError(
+      "invalid_request",
+      `A prompt may include at most ${CLOUD_AGENTS_API_MAX_IMAGES} images.`,
+    );
   }
   for (const image of images) {
     if ("data" in image) {
@@ -216,7 +222,10 @@ function validateEnvVars(
 ): CloudAgentsApiFailure | undefined {
   if (envVars === undefined) return undefined;
   if (agentId !== undefined) {
-    return apiError("invalid_request", "envVars cannot be combined with a client-supplied agentId.");
+    return apiError(
+      "invalid_request",
+      "envVars cannot be combined with a client-supplied agentId.",
+    );
   }
   const entries = Object.entries(envVars);
   if (entries.length > CLOUD_AGENTS_API_MAX_ENV_VARS) {
@@ -253,7 +262,11 @@ export function validateCreateAgentRequest(
       `Agent names must be at most ${CLOUD_AGENTS_API_NAME_MAX_CHARS} characters.`,
     );
   }
-  if (request.repos !== undefined && request.env?.type === "cloud" && request.env.name !== undefined) {
+  if (
+    request.repos !== undefined &&
+    request.env?.type === "cloud" &&
+    request.env.name !== undefined
+  ) {
     return apiError(
       "invalid_request",
       "repos is mutually exclusive with a named cloud environment.",
@@ -263,6 +276,18 @@ export function validateCreateAgentRequest(
     return apiError(
       "invalid_request",
       `A request may include at most ${CLOUD_AGENTS_API_MAX_REPOS} repositories.`,
+    );
+  }
+  if (request.scratch !== undefined && request.repos !== undefined && request.repos.length > 0) {
+    return apiError("invalid_request", "scratch is mutually exclusive with repos.");
+  }
+  if (
+    request.scratch?.name !== undefined &&
+    !CLOUD_SCRATCH_DRAFT_NAME_PATTERN.test(request.scratch.name)
+  ) {
+    return apiError(
+      "invalid_request",
+      "Scratch repository names use letters, digits, hyphens, and underscores, up to 100 characters.",
     );
   }
   const envVarError = validateEnvVars(request.envVars, request.agentId);
@@ -285,7 +310,10 @@ export function validateCreateAgentRequest(
       );
     }
     if (names.has(subagent.name)) {
-      return apiError("invalid_request", `Custom subagent names must be unique ('${subagent.name}').`);
+      return apiError(
+        "invalid_request",
+        `Custom subagent names must be unique ('${subagent.name}').`,
+      );
     }
     names.add(subagent.name);
     if (utf8Bytes(subagent.prompt) > CLOUD_CUSTOM_SUBAGENT_MAX_PROMPT_BYTES) {
@@ -310,17 +338,12 @@ export function titleFromPrompt(text: string, name?: string): string {
   return (firstLine || "Cloud task").slice(0, CLOUD_AGENTS_API_NAME_MAX_CHARS);
 }
 
-export function parseRepositoryUrl(url: string): { ownerName: string; hostPath: string } | undefined {
-  try {
-    const parsed = new URL(url);
-    if (parsed.protocol !== "https:" && parsed.protocol !== "http:") return undefined;
-    const parts = parsed.pathname.replace(/\.git$/u, "").split("/").filter((part) => part.length > 0);
-    if (parts.length < 2) return undefined;
-    const ownerName = `${parts[0]}/${parts[1]}`;
-    return { ownerName, hostPath: `${parsed.host}/${ownerName}` };
-  } catch {
-    return undefined;
-  }
+export function parseRepositoryUrl(
+  url: string,
+): { ownerName: string; hostPath: string } | undefined {
+  const parsed = parseCloudRepositoryUrl(url);
+  if (parsed === undefined) return undefined;
+  return { ownerName: parsed.repository, hostPath: parsed.hostPath };
 }
 
 export function interactionMode(
@@ -371,7 +394,11 @@ export function sumTokenUsage(
 }
 
 export function agentUsageFromRuns(
-  runs: ReadonlyArray<{ readonly id: string; usage?: CloudAgentsApiTokenUsage; usageUuid?: string }>,
+  runs: ReadonlyArray<{
+    readonly id: string;
+    usage?: CloudAgentsApiTokenUsage;
+    usageUuid?: string;
+  }>,
 ): CloudAgentsApiAgentUsage {
   const items = runs.map((run) => ({
     id: run.id,
@@ -386,6 +413,7 @@ export interface CloudAgentsApiAgentRecord {
   readonly repos?: ReadonlyArray<CloudAgentsApiRepoInput>;
   readonly workOnCurrentBranch?: boolean;
   readonly autoCreatePR?: boolean;
+  readonly skipReviewerRequest?: boolean;
   readonly urlOrigin: string;
 }
 
@@ -394,15 +422,25 @@ export function publicGit(
   repos: ReadonlyArray<CloudAgentsApiRepoInput> | undefined,
   prUrl?: string,
 ): CloudAgentsApiGit | undefined {
+  if (agent.repository === "scratch/workspace" && (repos === undefined || repos.length === 0)) {
+    return undefined;
+  }
   if (agent.branches.length === 0 && repos === undefined) return undefined;
-  const repoUrl =
-    repos?.[0] === undefined
-      ? `github.com/${agent.repository}`
-      : (parseRepositoryUrl(repos[0].url)?.hostPath ?? repos[0].url.replace(/^https?:\/\//u, ""));
+  const branch = agent.branches[0];
+  if (repos !== undefined && repos.length > 0) {
+    return {
+      branches: repos.map((repo) => ({
+        repoUrl: parseRepositoryUrl(repo.url)?.hostPath ?? repo.url.replace(/^https?:\/\//u, ""),
+        ...(branch === undefined ? {} : { branch }),
+        ...(prUrl === undefined ? {} : { prUrl }),
+      })),
+    };
+  }
+  const repoUrl = `github.com/${agent.repository}`;
   return {
-    branches: agent.branches.map((branch) => ({
+    branches: agent.branches.map((name) => ({
       repoUrl,
-      branch,
+      branch: name,
       ...(prUrl === undefined ? {} : { prUrl }),
     })),
   };
@@ -428,6 +466,9 @@ export function publicAgent(
       ? {}
       : { workOnCurrentBranch: record.workOnCurrentBranch }),
     ...(record.autoCreatePR === undefined ? {} : { autoCreatePR: record.autoCreatePR }),
+    ...(record.skipReviewerRequest === undefined
+      ? {}
+      : { skipReviewerRequest: record.skipReviewerRequest }),
     url: `${record.urlOrigin}/cloud-agents/${agent.id}`,
     createdAt: agent.createdAt,
     updatedAt: agent.updatedAt,
@@ -479,7 +520,9 @@ export function publicRun(
       ? run.completedAt
       : undefined;
   const durationMs =
-    completedAt === undefined ? undefined : Math.max(0, Date.parse(completedAt) - Date.parse(run.createdAt));
+    completedAt === undefined
+      ? undefined
+      : Math.max(0, Date.parse(completedAt) - Date.parse(run.createdAt));
   return {
     id: run.id,
     agentId: run.agentId,

@@ -79,6 +79,7 @@ const fixture = Effect.fn("CloudEnvironmentBuildRunner.fixture")(function* () {
     readBranch: () => Effect.succeed(null),
     findPullRequest: () => Effect.succeed(null),
     createDraftPullRequest: () => Effect.die("This fixture never publishes."),
+    createDraftRepository: () => Effect.die("This fixture never creates repositories."),
     closePullRequest: () => Effect.die("This fixture never deletes a pull request."),
     syncPrivateGitDependencies: ({ cwd, kinds }) =>
       Effect.gen(function* () {
@@ -385,6 +386,49 @@ it.effect(
       );
       expect(yield* context.fs.exists(context.path.join(workspace, ".npmrc"))).toBe(false);
       expect(yield* context.fs.exists(context.path.join(workspace, "install.ok"))).toBe(true);
+    }).pipe(Effect.scoped, TestClock.withLive, Effect.provide(TestLayer)),
+  120_000,
+);
+
+it.effect(
+  "clones every configured repository as a sibling in one Build",
+  () =>
+    Effect.gen(function* () {
+      const context = yield* fixture();
+      const environment = yield* context.environments.save(
+        decodeSave({
+          environmentId: "environment-build-multi",
+          name: "Multi-repo Build",
+          source: { type: "saved", scope: "personal", owner: "victor" },
+          repositories: [
+            { repository: "acme/web", defaultRef: "main" },
+            { repository: "acme/api", defaultRef: "main" },
+          ],
+          config: { image: "node:24-bookworm", install: INSTALL },
+          secretReferences: [{ name: "NPM_TOKEN", reference: "secret/npm", availability: "build" }],
+          occurredAt: "2026-09-19T03:00:00.000Z",
+        }),
+      );
+      const build = yield* context.runner.run({
+        buildId: CloudEnvironmentBuildId.make("build-multi"),
+        version: environment.current,
+        trigger: "manual",
+        draft: false,
+        occurredAt: "2026-09-19T03:01:00.000Z",
+        secretValues: { "secret/npm": "npm-build-token" },
+      });
+
+      assert(build.outcome.status === "succeeded");
+      expect(build.gitSetup).toEqual([
+        { repository: "acme/web", defaultRef: "main", commit: context.headCommit },
+        { repository: "acme/api", defaultRef: "main", commit: context.headCommit },
+      ]);
+      const tree = context.runner.snapshotPath(build.outcome.snapshot.id);
+      expect(yield* context.fs.exists(context.path.join(tree, "acme-web", "README.md"))).toBe(true);
+      expect(yield* context.fs.exists(context.path.join(tree, "acme-api", "README.md"))).toBe(true);
+      expect(
+        yield* context.fs.readFileString(context.path.join(tree, "acme-web", "install.ok")),
+      ).toBe("installed\n");
     }).pipe(Effect.scoped, TestClock.withLive, Effect.provide(TestLayer)),
   120_000,
 );

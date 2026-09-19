@@ -119,6 +119,13 @@ function ChatRouteGlobalShortcuts() {
         return;
       }
 
+      if (command === "cloud.setupEnvironment") {
+        event.preventDefault();
+        event.stopPropagation();
+        openCloudLaunchDialog({ kind: "env-setup" });
+        return;
+      }
+
       if (command === "cloud.reviewAgents" || command === "cloud.handoff") {
         event.preventDefault();
         event.stopPropagation();

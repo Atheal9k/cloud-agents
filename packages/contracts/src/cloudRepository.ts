@@ -100,6 +100,15 @@ export const CloudRepositoryPreparationInput = Schema.Struct({
   selectedRef: TrimmedNonEmptyString,
   deadline: IsoDateTime,
   recipe: CloudRepositoryRecipe,
+  workspaceKind: Schema.optionalKey(Schema.Literals(["repositories", "scratch"])),
+  additionalRepositories: Schema.optionalKey(
+    Schema.Array(
+      Schema.Struct({
+        repository: TrimmedNonEmptyString,
+        selectedRef: TrimmedNonEmptyString,
+      }),
+    ),
+  ),
 });
 export type CloudRepositoryPreparationInput = typeof CloudRepositoryPreparationInput.Type;
 
@@ -125,6 +134,16 @@ export const CloudRepositoryPreparationRecord = Schema.Struct({
     }),
   ),
   preparedAt: IsoDateTime,
+  additionalWorkspaces: Schema.optionalKey(
+    Schema.Array(
+      Schema.Struct({
+        repository: TrimmedNonEmptyString,
+        resolvedCommit: Schema.String.check(Schema.isPattern(/^[0-9a-f]{40,64}$/)),
+        outputBranch: TrimmedNonEmptyString,
+        workspacePath: TrimmedNonEmptyString,
+      }),
+    ),
+  ),
 });
 export type CloudRepositoryPreparationRecord = typeof CloudRepositoryPreparationRecord.Type;
 

@@ -123,6 +123,7 @@ import { ProviderInstanceRegistry } from "./provider/Services/ProviderInstanceRe
 import { makeProviderInstallation } from "./provider/providerInstallation.ts";
 import * as ServerSelfUpdate from "./cloud/selfUpdate.ts";
 import * as CloudAllocationController from "./cloud/CloudAllocationController.ts";
+import * as CloudCollaboration from "./cloud/CloudCollaboration.ts";
 import * as CloudArtifactAccess from "./cloud/CloudArtifactAccess.ts";
 import * as CloudAgentReview from "./cloud/CloudAgentReview.ts";
 import * as CloudHandoff from "./cloud/CloudHandoff.ts";
@@ -520,6 +521,7 @@ const makeWsRpcLayer = (
       const currentSessionId = currentSession.sessionId;
       const crypto = yield* Crypto.Crypto;
       const sql = yield* SqlClient.SqlClient;
+      const cloudCollaboration = yield* CloudCollaboration.CloudCollaboration;
       const projectionSnapshotQuery = yield* ProjectionSnapshotQuery.ProjectionSnapshotQuery;
       /** A reference's host-level link key; the project's own host where the ref names none. */
       const resolvePullRequestSyncKey = (reference: PullRequestRef) =>
@@ -2806,6 +2808,26 @@ const makeWsRpcLayer = (
           observeRpcEffect(WS_METHODS.cloudAccountingListAudit, cloudAllocations.listAudit(input), {
             "rpc.aggregate": "cloud-accounting",
           }),
+        [WS_METHODS.cloudCollaborationListScm]: () =>
+          observeRpcEffect(
+            WS_METHODS.cloudCollaborationListScm,
+            cloudCollaboration.listConnections(),
+            { "rpc.aggregate": "cloud-collaboration" },
+          ),
+        [WS_METHODS.cloudCollaborationConnectScm]: (input) =>
+          observeRpcEffect(
+            WS_METHODS.cloudCollaborationConnectScm,
+            cloudCollaboration.connect(input),
+            { "rpc.aggregate": "cloud-collaboration" },
+          ),
+        [WS_METHODS.cloudCollaborationDisconnectScm]: (input) =>
+          observeRpcEffect(
+            WS_METHODS.cloudCollaborationDisconnectScm,
+            cloudCollaboration.disconnect(input.connectionId).pipe(
+              Effect.map(() => ({ id: input.connectionId })),
+            ),
+            { "rpc.aggregate": "cloud-collaboration" },
+          ),
         [WS_METHODS.cloudReadinessGet]: (_input) =>
           observeRpcEffect(WS_METHODS.cloudReadinessGet, cloudReadiness.report, {
             "rpc.aggregate": "cloud-readiness",

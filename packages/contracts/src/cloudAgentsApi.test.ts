@@ -23,6 +23,7 @@ describe("cloud agents API contracts", () => {
         mode: "plan",
         model: { id: "gpt-5.6-sol", params: [{ id: "fast", value: "true" }] },
         repos: [{ url: "https://github.com/acme/app", startingRef: "main" }],
+        scratch: { name: "demo-app", visibility: "private" },
         envVars: { CI: "1" },
         mcpServers: [{ name: "docs", type: "http", url: "https://example.com/mcp" }],
         customSubagents: [{ name: "reviewer", description: "Reviews", prompt: "Review the diff" }],

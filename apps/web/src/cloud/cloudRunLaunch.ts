@@ -1,5 +1,7 @@
 import {
   CloudAgentId,
+  CLOUD_ENV_SETUP_USER_REQUEST,
+  CLOUD_SCRATCH_WORKSPACE_REPOSITORY,
   CloudProviderUnansweredRequestSeconds,
   CloudRunId,
   CommandId,
@@ -24,6 +26,7 @@ import type { ProviderInstanceEntry } from "../providerInstances";
 
 export interface CloudRunLaunchDraft {
   readonly repository: string;
+  readonly additionalRepositories: ReadonlyArray<string>;
   readonly selectedRef: string;
   readonly task: string;
   readonly providerInstanceId: string;
@@ -35,6 +38,8 @@ export interface CloudRunLaunchDraft {
   readonly workerProfile: "linux-web" | "linux-android";
   readonly publication: "review-only" | "automatic-draft-pr";
   readonly baseBranch: string;
+  readonly branchBehavior: "new-cursor-branch" | "current-branch" | "starting-ref" | "continue-pr";
+  readonly skipReviewerRequest: boolean;
 }
 
 const DEFAULT_CLOUD_RUN_MINUTES = 3 * 24 * 60;
@@ -49,7 +54,14 @@ export function cloudRunProjectOptions(
 ): ReadonlyArray<CloudRunProjectOption> {
   const seenRepositories = new Set<string>();
   return projects.flatMap((project) => {
-    if (project.repositoryIdentity?.provider !== "github") return [];
+    if (
+      project.repositoryIdentity?.provider !== "github" &&
+      project.repositoryIdentity?.provider !== "gitlab" &&
+      project.repositoryIdentity?.provider !== "bitbucket" &&
+      project.repositoryIdentity?.provider !== "azure-devops"
+    ) {
+      return [];
+    }
     const repository = sourceControlRepositorySelector(project.repositoryIdentity);
     if (repository === null) return [];
     const key = repository.toLowerCase();
@@ -88,6 +100,7 @@ export function createInitialCloudRunDraft(
   const ref = defaults?.ref ?? "main";
   return {
     repository: repository === "" ? (defaults?.repository ?? "") : repository,
+    additionalRepositories: [],
     selectedRef: ref,
     task: "",
     providerInstanceId: provider?.instanceId ?? "",
@@ -103,7 +116,13 @@ export function createInitialCloudRunDraft(
     workerProfile: "linux-web",
     publication: "automatic-draft-pr",
     baseBranch: ref,
+    branchBehavior: "new-cursor-branch",
+    skipReviewerRequest: false,
   };
+}
+
+export function cloudEnvSetupLaunchDraft(draft: CloudRunLaunchDraft): CloudRunLaunchDraft {
+  return { ...draft, task: CLOUD_ENV_SETUP_USER_REQUEST };
 }
 
 export function reconcileCloudRunLaunchInstanceType(
@@ -117,8 +136,6 @@ export function reconcileCloudRunLaunchInstanceType(
 export type CloudRunLaunchValidation =
   | { readonly status: "valid"; readonly command: RunAllocationCommand }
   | { readonly status: "invalid"; readonly message: string };
-
-const REPOSITORY_PATTERN = /^[A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+$/;
 
 function minutes(value: string): number | null {
   const parsed = Number(value);
@@ -141,8 +158,14 @@ export function buildCloudRunLaunchCommand(input: {
   readonly requestId: string;
 }): CloudRunLaunchValidation {
   const task = input.draft.task.trim();
+  const scratch = input.draft.repository.trim() === CLOUD_SCRATCH_WORKSPACE_REPOSITORY;
   const repository = input.draft.repository.trim();
-  const selectedRef = input.draft.selectedRef.trim();
+  const additionalRepositories = input.draft.additionalRepositories
+    .map((entry) => entry.trim())
+    .filter((entry) => entry.length > 0 && entry !== repository);
+  const selectedRef = scratch
+    ? input.draft.selectedRef.trim() || "main"
+    : input.draft.selectedRef.trim();
   const providerInstanceId = input.draft.providerInstanceId.trim();
   const model = input.draft.model.trim();
   const baseBranch = input.draft.baseBranch.trim();
@@ -150,13 +173,25 @@ export function buildCloudRunLaunchCommand(input: {
   const inputWaitMinutes = minutes(input.draft.inputWaitMinutes);
 
   if (repository.length === 0) {
-    return { status: "invalid", message: "Choose a project linked to a GitHub repository." };
+    return {
+      status: "invalid",
+      message: "Choose a project linked to a source-control repository.",
+    };
   }
-  if (!REPOSITORY_PATTERN.test(repository)) {
-    return { status: "invalid", message: "Repository must use the owner/name format." };
+  if (!scratch && (repository.includes(" ") || repository.includes(".."))) {
+    return { status: "invalid", message: "Repository must be a source-control path." };
   }
-  if (selectedRef.length === 0) {
+  if (!scratch && selectedRef.length === 0) {
     return { status: "invalid", message: "Choose a branch, tag, or commit to start from." };
+  }
+  if (scratch && input.draft.publication === "automatic-draft-pr") {
+    return {
+      status: "invalid",
+      message: "Create a draft repository before opening pull requests from scratch.",
+    };
+  }
+  if (additionalRepositories.length > 0 && input.draft.publication === "automatic-draft-pr") {
+    // Coordinated PRs still use the same draft-PR intent; the controller publishes each changed repo.
   }
   if (task.length === 0) {
     return { status: "invalid", message: "Describe the task before launching." };
@@ -200,6 +235,11 @@ export function buildCloudRunLaunchCommand(input: {
   const threadId = ThreadId.make(`thread-${input.requestId}-1`);
   const messageId = MessageId.make(`message-${input.requestId}`);
   const title = titleForTask(task);
+  const skipReviewerRequest = input.draft.skipReviewerRequest === true;
+  const branch =
+    input.draft.branchBehavior === "new-cursor-branch"
+      ? `cursor/${input.requestId.replace(/[^A-Za-z0-9-]/gu, "").slice(0, 12)}`
+      : selectedRef;
   const publication: RunPublicationIntent =
     input.draft.publication === "review-only"
       ? { mode: "review-only" }
@@ -208,6 +248,7 @@ export function buildCloudRunLaunchCommand(input: {
           baseBranch,
           title,
           body: "Started from the T3 Code cloud launch dialog.",
+          ...(skipReviewerRequest ? { skipReviewerRequest: true } : {}),
         };
 
   return {
@@ -221,7 +262,17 @@ export function buildCloudRunLaunchCommand(input: {
       target: {
         repository,
         baseCommit: selectedRef,
-        branch: `cloud/${input.requestId.slice(0, 12)}`,
+        branch: scratch ? "main" : branch,
+        ...(scratch ? { workspaceKind: "scratch" as const } : {}),
+        ...(additionalRepositories.length === 0
+          ? {}
+          : {
+              additionalRepositories: additionalRepositories.map((entry) => ({
+                repository: entry,
+                baseCommit: selectedRef,
+                branch,
+              })),
+            }),
       },
       publication,
       control: {

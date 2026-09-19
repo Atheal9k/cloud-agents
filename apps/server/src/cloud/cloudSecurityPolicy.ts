@@ -437,10 +437,29 @@ export function evaluateCloudScmAccess(input: {
   if (repositoryListed(policy.blockedRepositories, repository)) {
     return deny("blocked", `'${repository}' is on the environment's repository blocklist.`);
   }
+  if (
+    request.installRepositories !== undefined &&
+    !repositoryListed(request.installRepositories, repository)
+  ) {
+    return deny(
+      "outside-install-access",
+      `'${repository}' is outside the connected source-control installation.`,
+    );
+  }
   if (!repositoryListed(request.userRepositories, repository)) {
     return deny(
       "outside-user-access",
       `The user who triggered this run cannot reach '${repository}'.`,
+    );
+  }
+  if (
+    request.configuredRepositories !== undefined &&
+    request.configuredRepositories.length > 0 &&
+    !repositoryListed(request.configuredRepositories, repository)
+  ) {
+    return deny(
+      "outside-configured-scope",
+      `'${repository}' is outside this agent's configured repository scope.`,
     );
   }
   if (

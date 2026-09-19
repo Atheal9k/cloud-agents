@@ -39,7 +39,10 @@ export function cloudGuidedSetupSaveInput(input: CloudGuidedSetupInput): CloudEn
     ...(input.expectedVersion === undefined ? {} : { expectedVersion: input.expectedVersion }),
     name: input.name,
     source: source(input),
-    repositories: [{ repository: input.repository, defaultRef: input.defaultRef }],
+    repositories: [
+      { repository: input.repository, defaultRef: input.defaultRef },
+      ...(input.additionalRepositories ?? []),
+    ],
     config: config(input),
     secretReferences: input.secretReferences,
     occurredAt: input.occurredAt,

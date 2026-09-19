@@ -33,6 +33,10 @@ import { OrchestrationEngineService } from "../orchestration/Services/Orchestrat
 import { ProviderRegistry } from "../provider/Services/ProviderRegistry.ts";
 import { SharedBrowserHost } from "./SharedBrowserHost.ts";
 import { DeviceDisplayHost } from "./DeviceDisplayHost.ts";
+import {
+  installCloudEnvSetupSkillPackage,
+  loadCloudEnvSetupSkillPackage,
+} from "./cloudEnvSetupSkill.ts";
 
 const QUALIFIED_DRIVERS = new Set([
   ProviderDriverKind.make("codex"),
@@ -137,6 +141,7 @@ function activityRequestId(event: OrchestrationEvent): ApprovalRequestId | undef
 
 const build = Effect.fn("CloudProviderExecution.build")(function* (input?: {
   readonly maxInputWaitSeconds?: number;
+  readonly skillsHome?: string;
   readonly prepareSharedBrowser?: (threadId: ThreadId) => Effect.Effect<void, SharedBrowserError>;
   readonly prepareDeviceDisplay?: (threadId: ThreadId) => Effect.Effect<void, DeviceDisplayError>;
 }) {
@@ -303,6 +308,16 @@ const build = Effect.fn("CloudProviderExecution.build")(function* (input?: {
       );
     }
     yield* preflightTurn(request.turn);
+    if (input?.skillsHome !== undefined && input.skillsHome.length > 0) {
+      try {
+        installCloudEnvSetupSkillPackage({
+          skill: loadCloudEnvSetupSkillPackage(),
+          home: input.skillsHome,
+        });
+      } catch {
+        yield* Effect.logWarning("Could not install the env-setup skill into the guest home.");
+      }
+    }
     if (input?.prepareSharedBrowser !== undefined) {
       yield* input.prepareSharedBrowser(request.threadId).pipe(
         Effect.catch((error) =>
@@ -482,6 +497,7 @@ const build = Effect.fn("CloudProviderExecution.build")(function* (input?: {
 
 export const make = Effect.fn("CloudProviderExecution.make")(function* (input?: {
   readonly maxInputWaitSeconds?: number;
+  readonly skillsHome?: string;
   readonly prepareSharedBrowser?: (threadId: ThreadId) => Effect.Effect<void, SharedBrowserError>;
   readonly prepareDeviceDisplay?: (threadId: ThreadId) => Effect.Effect<void, DeviceDisplayError>;
 }) {
@@ -498,8 +514,12 @@ export const layer = Layer.effect(
     const maxInputWaitSeconds = yield* Config.int("T3CODE_CLOUD_MAX_INPUT_WAIT_SECONDS").pipe(
       Config.withDefault(15 * 60),
     );
+    const skillsHome = yield* Config.string("T3CODE_CLOUD_ENV_SETUP_HOME").pipe(
+      Config.withDefault(process.env.HOME ?? ""),
+    );
     const built = yield* build({
       maxInputWaitSeconds,
+      ...(skillsHome.length > 0 ? { skillsHome } : {}),
       ...(Option.isSome(sharedBrowserHost) && sharedBrowserHost.value.available
         ? {
             prepareSharedBrowser: (threadId: ThreadId) =>
