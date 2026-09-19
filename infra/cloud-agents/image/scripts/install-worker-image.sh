@@ -166,8 +166,10 @@ install -m 0755 /tmp/cloud-agent-github-credentials /opt/t3/bin/cloud-agent-gith
 install -m 0755 /tmp/cloud-agent-prepare-repository /opt/t3/bin/cloud-agent-prepare-repository
 install -m 0755 /tmp/cloud-agent-worker-cleanup /opt/t3/bin/cloud-agent-worker-cleanup
 install -m 0755 /tmp/cloud-agent-codex-auth-sync /opt/t3/bin/cloud-agent-codex-auth-sync
+install -m 0755 /tmp/cloud-agent-worker-credentials /opt/t3/bin/cloud-agent-worker-credentials
 install -m 0644 /tmp/cloud-agent-worker.service /etc/systemd/system/cloud-agent-worker.service
 install -m 0644 /tmp/cloud-agent-worker-registration.service /etc/systemd/system/cloud-agent-worker-registration.service
+install -m 0644 /tmp/cloud-agent-worker-credentials.service /etc/systemd/system/cloud-agent-worker-credentials.service
 install -m 0644 /tmp/cloud-agent-codex-auth-sync.service /etc/systemd/system/cloud-agent-codex-auth-sync.service
 install -m 0644 /tmp/cloud-agent-codex-auth-sync.path /etc/systemd/system/cloud-agent-codex-auth-sync.path
 install -m 0644 /tmp/cloud-agent-codex-auth-sync.timer /etc/systemd/system/cloud-agent-codex-auth-sync.timer
@@ -220,4 +222,5 @@ rpm --query --all | sort >/opt/t3/worker-os-packages.txt
 chmod 0644 /opt/t3/worker-os-packages.txt
 
 systemctl daemon-reload
-systemctl disable cloud-agent-worker.service cloud-agent-worker-registration.service
+systemctl disable cloud-agent-worker.service cloud-agent-worker-registration.service \
+  cloud-agent-worker-credentials.service

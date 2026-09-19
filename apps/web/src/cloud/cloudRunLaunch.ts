@@ -247,12 +247,16 @@ export type CloudRunDisplayState =
   | "finalizing"
   | "failed"
   | "cleanup"
+  | "idle"
+  | "hibernated"
+  | "waking"
   | "complete";
 
 type CloudRunStateSource = {
   readonly allocationState: { readonly status: RunAllocation["allocationState"]["status"] };
   readonly agentOutcome: { readonly status: RunAllocation["agentOutcome"]["status"] };
   readonly cleanupState: { readonly status: RunAllocation["cleanupState"]["status"] };
+  readonly idleState: { readonly status: RunAllocation["idleState"]["status"] };
 };
 
 export function cloudRunDisplayState(allocation: CloudRunStateSource): CloudRunDisplayState {
@@ -270,6 +274,12 @@ export function cloudRunDisplayState(allocation: CloudRunStateSource): CloudRunD
     return "cleanup";
   }
   if (allocation.cleanupState.status === "succeeded") return "complete";
+  // An idle or hibernated agent has finished its turn and is waiting for the
+  // next one. Reporting it as finalizing or complete would read as an ended
+  // conversation, which is exactly what it is not.
+  if (allocation.idleState.status === "hibernated") return "hibernated";
+  if (allocation.idleState.status === "idle") return "idle";
+  if (allocation.idleState.status === "waking") return "waking";
   if (
     allocation.agentOutcome.status === "succeeded" ||
     allocation.agentOutcome.status === "cancelled"

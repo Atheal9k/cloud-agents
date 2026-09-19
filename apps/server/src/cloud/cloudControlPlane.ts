@@ -111,8 +111,21 @@ export function projectCloudControlPlane(
         case "allocation.preview-withdrawn":
         case "allocation.cleanup-started":
         case "allocation.cleanup-failed":
+        case "allocation.went-idle":
+        case "allocation.runtime-restored":
           if (runtime !== undefined) {
             runtimes.set(event.attempt, { ...runtime, updatedAt: event.occurredAt });
+          }
+          break;
+        case "allocation.hibernated":
+          // The guest is stopped with its disk intact, so the runtime is not
+          // released: a later attempt restores this exact snapshot.
+          if (runtime !== undefined) {
+            runtimes.set(event.attempt, {
+              ...runtimeBase(runtime, event.occurredAt),
+              status: "HIBERNATED",
+              snapshot: event.snapshot,
+            });
           }
           break;
         case "allocation.worker-assigned":

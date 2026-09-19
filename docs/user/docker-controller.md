@@ -120,14 +120,15 @@ The cloud queue uses `T3CODE_CLOUD_AWS_REGION` and `T3CODE_CLOUD_PROJECT` to fin
 launch template created by `infra/cloud-agents`. Their defaults are `us-west-1` and
 `t3-cloud-agents`. Set both when your OpenTofu `aws_region` or `name_prefix` differs. The AWS
 identity in the credential overlay must be allowed to describe launch templates and instances,
-launch workers with the project and worker tags, and terminate workers carrying those tags.
+launch workers with the project and worker tags, and stop, start, re-tag, and terminate workers
+carrying those tags.
 
 The personal controller admits one active worker. Configure its waiting queue and time limits with
 `T3CODE_CLOUD_MAX_QUEUE_DEPTH`, `T3CODE_CLOUD_MAX_RUN_SECONDS`,
-`T3CODE_CLOUD_MAX_INPUT_WAIT_SECONDS`, and `T3CODE_CLOUD_PREVIEW_GRACE_SECONDS`. The defaults are
-8 waiting jobs, a 3-day run, a 15-minute unanswered input request, and a 15-minute preview grace
-period. Requests with a longer run or an unapproved instance type fail before AWS launches
-anything.
+`T3CODE_CLOUD_MAX_INPUT_WAIT_SECONDS`, `T3CODE_CLOUD_PREVIEW_GRACE_SECONDS`, and
+`T3CODE_CLOUD_IDLE_RELEASE_SECONDS`. The defaults are 8 waiting jobs, a 3-day run, a 15-minute
+unanswered input request, a 15-minute preview grace period, and a 1-hour idle release. Requests
+with a longer run or an unapproved instance type fail before AWS launches anything.
 
 `T3CODE_CLOUD_WORKER_PRICES` is a comma-separated allowlist in `instance-type=hourly-usd` form.
 For example, `t3.medium=0.0496` allows only `t3.medium` and estimates one worker hour at $0.0496.
@@ -298,10 +299,15 @@ control** interrupts the active provider turn before human input is granted. **R
 revokes human input first, then starts a follow-up so Codex can inspect the changed browser state.
 Closing the panel releases viewer access without stopping a browser that Codex still needs.
 
-After Codex finishes, the worker stays available for the configured preview grace period, 15
-minutes by default. The hard run deadline still wins. The controller captures the transcript,
-diff, verification output, workspace checkpoint, and declared artifacts before cleanup. Saved
-results remain readable after the worker terminates and expire after seven days.
+After Codex finishes, the agent goes idle. The controller flushes the worker's database,
+workspace, and provider home, then starts the idle-release timer, 1 hour by default. A follow-up
+inside that window reuses the same worker. After it, the worker is stopped with its disk kept and
+the run shows as **Hibernated**; a later follow-up starts it again and reports what came back, so
+the filesystem returning does not imply the provider resumed its own session. The preview is
+withdrawn on its own grace period, 15 minutes by default, and the hard run deadline still applies
+to a run in flight. The controller captures the transcript, diff, verification output, workspace
+checkpoint, and declared artifacts, and saved results remain readable after the worker is gone and
+expire after seven days.
 
 **Stop** cancels provider work and requests cleanup. It does not delete an already opened pull
 request or a saved result. Retry creates a new allocation attempt after the prior attempt is

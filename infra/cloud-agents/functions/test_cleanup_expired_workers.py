@@ -72,6 +72,15 @@ class CleanupExpiredWorkersTest(unittest.TestCase):
                                 },
                             ),
                             instance(
+                                "i-hibernated",
+                                now - 86_400,
+                                {
+                                    **owned,
+                                    "CloudAgentExpiresAtEpoch": str(now - 3_600),
+                                    "CloudAgentHibernated": "true",
+                                },
+                            ),
+                            instance(
                                 "i-controller",
                                 now - 3_601,
                                 {
@@ -107,6 +116,9 @@ class CleanupExpiredWorkersTest(unittest.TestCase):
             {"Name": "tag:Ephemeral", "Values": ["true"]},
             fake_ec2.paginator.filters,
         )
+        # A stopped snapshot holds an idle agent's disk. Its run deadline has
+        # long passed, so the backstop must read the tag rather than the clock.
+        self.assertNotIn("i-hibernated", fake_ec2.terminated[0])
 
 
 if __name__ == "__main__":

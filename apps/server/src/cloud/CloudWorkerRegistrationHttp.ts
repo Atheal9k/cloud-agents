@@ -1,4 +1,5 @@
 import {
+  AuthOrchestrationOperateScope,
   EnvironmentCloudEndpointUnavailableError,
   EnvironmentHttpApi,
   EnvironmentHttpBadRequestError,
@@ -9,6 +10,12 @@ import {
 import * as Effect from "effect/Effect";
 import * as HttpApiBuilder from "effect/unstable/httpapi/HttpApiBuilder";
 
+import {
+  annotateEnvironmentRequest,
+  failEnvironmentInternal,
+  requireEnvironmentScope,
+} from "../auth/http.ts";
+import { flushCloudRuntimeState } from "./CloudWorkerFlush.ts";
 import * as CloudWorkerRegistration from "./CloudWorkerRegistration.ts";
 
 function bearerCredential(authorization: string | undefined): string | null {
@@ -44,18 +51,35 @@ export const cloudWorkerRegistrationHttpApiLayer = HttpApiBuilder.group(
   "cloudWorkers",
   Effect.fnUntraced(function* (handlers) {
     const registrations = yield* CloudWorkerRegistration.CloudWorkerRegistration;
-    return handlers.handle("register", ({ headers, payload }) => {
-      const credential = bearerCredential(headers.authorization);
-      if (credential === null) {
-        return Effect.fail(
-          new EnvironmentHttpUnauthorizedError({
-            message: "A worker registration bearer credential is required.",
+    return (
+      handlers
+        .handle("register", ({ headers, payload }) => {
+          const credential = bearerCredential(headers.authorization);
+          if (credential === null) {
+            return Effect.fail(
+              new EnvironmentHttpUnauthorizedError({
+                message: "A worker registration bearer credential is required.",
+              }),
+            );
+          }
+          return registrations
+            .register(credential, payload)
+            .pipe(Effect.mapError(mapRegistrationError));
+        })
+        // Served by the guest for its own controller: it flushes the state the
+        // conversation needs before the controller starts the idle-release timer.
+        .handle(
+          "flush",
+          Effect.fn("environment.cloudWorkers.flush")(function* (args) {
+            yield* annotateEnvironmentRequest(args.endpoint.name);
+            yield* requireEnvironmentScope(AuthOrchestrationOperateScope);
+            return yield* flushCloudRuntimeState(args.payload).pipe(
+              Effect.catchCause((cause) =>
+                failEnvironmentInternal("cloud_runtime_flush_failed", cause),
+              ),
+            );
           }),
-        );
-      }
-      return registrations
-        .register(credential, payload)
-        .pipe(Effect.mapError(mapRegistrationError));
-    });
+        )
+    );
   }),
 );

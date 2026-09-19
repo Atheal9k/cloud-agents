@@ -16,6 +16,7 @@ const limits: CloudAllocationLimits = {
   maxRunSeconds: 7_200,
   maxInputWaitSeconds: 900,
   previewGraceSeconds: 900,
+  idleReleaseSeconds: 3_600,
   allowedInstanceTypes: ["t3.medium"],
 };
 
@@ -187,26 +188,42 @@ describe("cloud run launch", () => {
       "queued" | "registering" | "ready",
       "not-started" | "running" | "succeeded",
       "not-requested" | "running" | "succeeded",
-      "provisioning" | "setup" | "waiting" | "running" | "finalizing" | "cleanup" | "complete",
+      "busy" | "idle" | "hibernated" | "waking",
+      (
+        | "provisioning"
+        | "setup"
+        | "waiting"
+        | "running"
+        | "finalizing"
+        | "cleanup"
+        | "idle"
+        | "hibernated"
+        | "waking"
+        | "complete"
+      ),
     ]
   > = [
-    ["queued", "not-started", "not-requested", "provisioning"],
-    ["registering", "not-started", "not-requested", "setup"],
-    ["ready", "not-started", "not-requested", "waiting"],
-    ["ready", "running", "not-requested", "running"],
-    ["ready", "succeeded", "not-requested", "finalizing"],
-    ["ready", "succeeded", "running", "cleanup"],
-    ["ready", "succeeded", "succeeded", "complete"],
+    ["queued", "not-started", "not-requested", "busy", "provisioning"],
+    ["registering", "not-started", "not-requested", "busy", "setup"],
+    ["ready", "not-started", "not-requested", "busy", "waiting"],
+    ["ready", "running", "not-requested", "busy", "running"],
+    ["ready", "succeeded", "not-requested", "busy", "finalizing"],
+    ["ready", "succeeded", "not-requested", "idle", "idle"],
+    ["ready", "succeeded", "not-requested", "hibernated", "hibernated"],
+    ["queued", "not-started", "not-requested", "waking", "waking"],
+    ["ready", "succeeded", "running", "busy", "cleanup"],
+    ["ready", "succeeded", "succeeded", "busy", "complete"],
   ];
 
   it.each(displayCases)(
-    "maps %s/%s/%s to %s",
-    (allocationState, agentOutcome, cleanupState, expected) => {
+    "maps %s/%s/%s/%s to %s",
+    (allocationState, agentOutcome, cleanupState, idleState, expected) => {
       expect(
         cloudRunDisplayState({
           allocationState: { status: allocationState },
           agentOutcome: { status: agentOutcome },
           cleanupState: { status: cleanupState },
+          idleState: { status: idleState },
         }),
       ).toBe(expected);
     },
@@ -218,7 +235,19 @@ describe("cloud run launch", () => {
         allocationState: { status: "ready" },
         agentOutcome: { status: "failed" },
         cleanupState: { status: "running" },
+        idleState: { status: "busy" },
       }),
     ).toBe("failed");
+  });
+
+  it("reports a cancelled hibernated agent as cleaning up, not hibernated", () => {
+    expect(
+      cloudRunDisplayState({
+        allocationState: { status: "ready" },
+        agentOutcome: { status: "succeeded" },
+        cleanupState: { status: "requested" },
+        idleState: { status: "hibernated" },
+      }),
+    ).toBe("cleanup");
   });
 });

@@ -3,6 +3,7 @@ import {
   DispatchResult,
   OrchestrationThreadDetailSnapshot,
   ProjectId,
+  RunRuntimeFlush,
   type ClientOrchestrationCommand,
   type RunAllocation,
 } from "@t3tools/contracts";
@@ -19,7 +20,7 @@ export type CloudWorkerTurnStatus = "running" | "succeeded" | "failed";
 export class CloudWorkerRunClientError extends Schema.TaggedError<CloudWorkerRunClientError>()(
   "CloudWorkerRunClientError",
   {
-    stage: Schema.Literals(["start", "status"]),
+    stage: Schema.Literals(["start", "status", "flush"]),
     message: Schema.String,
   },
 ) {}
@@ -31,6 +32,10 @@ export class CloudWorkerRunClient extends Context.Service<
     readonly status: (
       allocation: RunAllocation,
     ) => Effect.Effect<CloudWorkerTurnStatus, CloudWorkerRunClientError>;
+    /** Brings the guest's durable state to a consistent point after a settle. */
+    readonly flush: (
+      allocation: RunAllocation,
+    ) => Effect.Effect<RunRuntimeFlush, CloudWorkerRunClientError>;
   }
 >()("t3/cloud/CloudWorkerRunClient") {}
 
@@ -184,7 +189,33 @@ export const make = Effect.fn("CloudWorkerRunClient.make")(function* () {
     return turn.state === "completed" ? "succeeded" : "failed";
   });
 
-  return CloudWorkerRunClient.of({ start, status });
+  const flush: CloudWorkerRunClient["Service"]["flush"] = Effect.fn("CloudWorkerRunClient.flush")(
+    function* (allocation) {
+      const run = readyRun(allocation);
+      if (run === null) {
+        return yield* clientError("flush", "The allocation has no ready worker execution route.");
+      }
+      return yield* HttpClientRequest.post(
+        requestUrl(run.route.httpBaseUrl, "/api/cloud/workers/flush"),
+      ).pipe(
+        HttpClientRequest.bearerToken(run.route.accessToken),
+        HttpClientRequest.bodyJson({
+          allocationId: allocation.id,
+          attempt: allocation.attempt,
+          threadId: run.execution.threadId,
+        }),
+        Effect.flatMap(client.execute),
+        Effect.timeout("60 seconds"),
+        Effect.flatMap(HttpClientResponse.filterStatusOk),
+        Effect.flatMap(HttpClientResponse.schemaBodyJson(RunRuntimeFlush)),
+        Effect.mapError(() =>
+          clientError("flush", "The worker could not flush its runtime state."),
+        ),
+      );
+    },
+  );
+
+  return CloudWorkerRunClient.of({ start, status, flush });
 });
 
 export const layer = Layer.effect(CloudWorkerRunClient, make());
