@@ -3,6 +3,7 @@ import * as NodeCrypto from "node:crypto";
 
 import {
   CLOUD_AGENTS_API_STREAM_RETENTION_SECONDS,
+  CloudAgentScheduleCreateRequest,
   CloudAgentsApiCreateAgentRequest,
   CloudAgentsApiCreateRunRequest,
   type CloudAgentsApiPrincipal,
@@ -17,6 +18,7 @@ import { HttpRouter, HttpServerRequest, HttpServerResponse } from "effect/unstab
 
 import * as CloudAgentsApi from "./CloudAgentsApi.ts";
 import * as CloudAgentsApiKeys from "./CloudAgentsApiKeys.ts";
+import * as CloudAgentSchedules from "./CloudAgentSchedules.ts";
 import {
   CloudAgentsApiFailure,
   defaultMinuteLimit,
@@ -31,6 +33,7 @@ import {
 
 const decodeCreateAgent = Schema.decodeUnknownEffect(CloudAgentsApiCreateAgentRequest);
 const decodeCreateRun = Schema.decodeUnknownEffect(CloudAgentsApiCreateRunRequest);
+const decodeSchedule = Schema.decodeUnknownEffect(CloudAgentScheduleCreateRequest);
 
 type LimitState = {
   minute: Map<string, RateLimitWindow>;
@@ -104,6 +107,7 @@ const consume = (
 const handleV1 = (deps: {
   readonly api: CloudAgentsApi.CloudAgentsApi["Service"];
   readonly keys: CloudAgentsApiKeys.CloudAgentsApiKeys["Service"];
+  readonly schedules: CloudAgentSchedules.CloudAgentSchedules["Service"];
   readonly limits: Ref.Ref<LimitState>;
 }) =>
   Effect.gen(function* () {
@@ -140,6 +144,7 @@ const handleV1 = (deps: {
     }
     return yield* dispatchV1({
       api: deps.api,
+      schedules: deps.schedules,
       principal,
       request,
       url,
@@ -172,6 +177,7 @@ const handleV1 = (deps: {
 
 const dispatchV1 = (input: {
   readonly api: CloudAgentsApi.CloudAgentsApi["Service"];
+  readonly schedules: CloudAgentSchedules.CloudAgentSchedules["Service"];
   readonly principal: CloudAgentsApiPrincipal;
   readonly request: HttpServerRequest.HttpServerRequest;
   readonly url: URL;
@@ -180,7 +186,7 @@ const dispatchV1 = (input: {
   readonly meta: Record<string, string>;
 }) =>
   Effect.gen(function* () {
-    const { api, principal, request, url, origin, nowMs, meta } = input;
+    const { api, schedules, principal, request, url, origin, nowMs, meta } = input;
     const method = request.method.toUpperCase();
     const path = url.pathname.replace(/\/$/u, "") || "/";
     const parts = path.split("/").filter((part) => part.length > 0);
@@ -201,8 +207,65 @@ const dispatchV1 = (input: {
     }
     if (method === "GET" && path === "/v1/usage-report") {
       const periodStart = url.searchParams.get("periodStart") ?? "1970-01-01T00:00:00.000Z";
-      const periodEnd = url.searchParams.get("periodEnd") ?? new Date().toISOString();
+      const periodEnd =
+        url.searchParams.get("periodEnd") ?? DateTime.formatIso(DateTime.nowUnsafe());
       return jsonResponse(200, yield* api.usageReport({ periodStart, periodEnd }), meta);
+    }
+    if (method === "POST" && path === "/v1/schedules") {
+      const definition = yield* decodeSchedule(yield* jsonBody).pipe(
+        Effect.mapError(
+          () => new CloudAgentsApiFailure("invalid_request", "Invalid schedule request.", 400),
+        ),
+      );
+      return jsonResponse(
+        200,
+        yield* schedules.create({ principal, definition, urlOrigin: origin }),
+        meta,
+      );
+    }
+    if (method === "GET" && path === "/v1/schedules") {
+      return jsonResponse(200, yield* schedules.list({ principal }), meta);
+    }
+    if (method === "GET" && path === "/v1/schedule-activities") {
+      const limit = parseLimitParam(url.searchParams.get("limit"));
+      if (limit instanceof CloudAgentsApiFailure) return errorResponse(limit, meta);
+      const scheduleId = url.searchParams.get("scheduleId");
+      return jsonResponse(
+        200,
+        yield* schedules.listActivities({
+          principal,
+          limit,
+          ...(scheduleId === null ? {} : { scheduleId }),
+        }),
+        meta,
+      );
+    }
+    if (parts[0] === "v1" && parts[1] === "schedules" && parts[2] !== undefined) {
+      const scheduleId = parts[2];
+      if (method === "GET" && parts.length === 3) {
+        return jsonResponse(200, yield* schedules.get({ principal, scheduleId }), meta);
+      }
+      if (method === "PUT" && parts.length === 3) {
+        const definition = yield* decodeSchedule(yield* jsonBody).pipe(
+          Effect.mapError(
+            () => new CloudAgentsApiFailure("invalid_request", "Invalid schedule request.", 400),
+          ),
+        );
+        return jsonResponse(
+          200,
+          yield* schedules.replace({ principal, scheduleId, definition, urlOrigin: origin }),
+          meta,
+        );
+      }
+      if (method === "DELETE" && parts.length === 3) {
+        return jsonResponse(200, yield* schedules.remove({ principal, scheduleId }), meta);
+      }
+      if (method === "POST" && parts.length === 4 && parts[3] === "pause") {
+        return jsonResponse(200, yield* schedules.pause({ principal, scheduleId }), meta);
+      }
+      if (method === "POST" && parts.length === 4 && parts[3] === "resume") {
+        return jsonResponse(200, yield* schedules.resume({ principal, scheduleId }), meta);
+      }
     }
     if (method === "POST" && path === "/v1/agents") {
       const body = yield* decodeCreateAgent(yield* jsonBody).pipe(
@@ -358,7 +421,8 @@ export const cloudAgentsApiRouteLayer = Layer.unwrap(
   Effect.gen(function* () {
     const api = yield* CloudAgentsApi.CloudAgentsApi;
     const keys = yield* CloudAgentsApiKeys.CloudAgentsApiKeys;
+    const schedules = yield* CloudAgentSchedules.CloudAgentSchedules;
     const limits = yield* CloudAgentsApiRateLimits;
-    return HttpRouter.add("*", "/v1*", handleV1({ api, keys, limits }));
+    return HttpRouter.add("*", "/v1*", handleV1({ api, keys, schedules, limits }));
   }),
 );

@@ -147,6 +147,10 @@ export class CloudAgentsApi extends Context.Service<
       readonly principal: CloudAgentsApiPrincipal;
       readonly body: CloudAgentsApiCreateAgentRequest;
       readonly urlOrigin: string;
+      readonly limits?: {
+        readonly runSeconds: number;
+        readonly inputWaitSeconds: number;
+      };
     }) => Effect.Effect<CloudAgentsApiCreateAgentResponse, CloudAgentsApiFailure>;
     readonly listAgents: (input: {
       readonly principal: CloudAgentsApiPrincipal;
@@ -165,6 +169,12 @@ export class CloudAgentsApi extends Context.Service<
       readonly principal: CloudAgentsApiPrincipal;
       readonly agentId: string;
       readonly body: CloudAgentsApiCreateRunRequest;
+      /** Stable internal key used by scheduled admission retries. */
+      readonly requestId?: string;
+      readonly limits?: {
+        readonly runSeconds: number;
+        readonly inputWaitSeconds: number;
+      };
     }) => Effect.Effect<CloudAgentsApiCreateRunResponse, CloudAgentsApiFailure>;
     readonly listRuns: (input: {
       readonly principal: CloudAgentsApiPrincipal;
@@ -470,7 +480,8 @@ export const make = Effect.fn("CloudAgentsApi.make")(function* () {
       const workOnCurrentBranch = input.body.workOnCurrentBranch === true;
       const branch = workOnCurrentBranch ? selectedRef : `cloud/${agentId.slice(-12)}`;
       const env = defaultEnv(input.body);
-      const policy = defaults.selfHostedMode ?? (selfHosted === undefined ? "off" : yield* selfHosted.policy);
+      const policy =
+        defaults.selfHostedMode ?? (selfHosted === undefined ? "off" : yield* selfHosted.policy);
       if (selfHosted !== undefined && defaults.selfHostedMode !== undefined) {
         yield* selfHosted.setPolicy(defaults.selfHostedMode);
       }
@@ -481,7 +492,10 @@ export const make = Effect.fn("CloudAgentsApi.make")(function* () {
       const models = yield* listModels;
       const modelId = input.body.model?.id ?? defaults.model ?? models[0]?.id ?? "default";
       const instanceType = current.limits.allowedInstanceTypes[0] ?? "t3.medium";
-      const runSeconds = Math.min(current.limits.maxRunSeconds, 3 * 24 * 60 * 60);
+      const runSeconds = Math.min(
+        current.limits.maxRunSeconds,
+        input.limits?.runSeconds ?? 3 * 24 * 60 * 60,
+      );
       const autoCreatePR = input.body.autoCreatePR === true;
       yield* allocations
         .dispatch({
@@ -505,7 +519,7 @@ export const make = Effect.fn("CloudAgentsApi.make")(function* () {
             title,
             selectedRef,
             unansweredRequestSeconds: CloudProviderUnansweredRequestSeconds.make(
-              Math.min(900, current.limits.maxInputWaitSeconds),
+              Math.min(input.limits?.inputWaitSeconds ?? 900, current.limits.maxInputWaitSeconds),
             ),
             turn: {
               commandId,
@@ -532,7 +546,12 @@ export const make = Effect.fn("CloudAgentsApi.make")(function* () {
           profile:
             env.type === "cloud"
               ? { id: "linux-web", os: "linux", arch: "x64", instanceType }
-              : { id: SELF_HOSTED_WORKER_PROFILE_ID, os: "linux", arch: "x64", instanceType: "self-hosted" },
+              : {
+                  id: SELF_HOSTED_WORKER_PROFILE_ID,
+                  os: "linux",
+                  arch: "x64",
+                  instanceType: "self-hosted",
+                },
           principal: principalFromApiKey(input.principal),
           deadlines: {
             launchBy: deadline(startedAt, Math.min(120, runSeconds)),
@@ -704,9 +723,16 @@ export const make = Effect.fn("CloudAgentsApi.make")(function* () {
         );
       }
       const occurredAt = DateTime.formatIso(yield* DateTime.now);
-      const runId = CloudRunId.make(`run-${NodeCrypto.randomUUID()}`);
-      const commandId = CommandId.make(`cmd-${NodeCrypto.randomUUID()}`);
-      const messageId = MessageId.make(`msg-${NodeCrypto.randomUUID()}`);
+      const requestedLimits = input.limits;
+      const controller = requestedLimits === undefined ? undefined : yield* snapshot;
+      const startedAt = Date.parse(occurredAt);
+      const runSeconds =
+        controller === undefined || requestedLimits === undefined
+          ? undefined
+          : Math.min(controller.limits.maxRunSeconds, requestedLimits.runSeconds);
+      const runId = CloudRunId.make(`run-${input.requestId ?? NodeCrypto.randomUUID()}`);
+      const commandId = CommandId.make(`cmd-${input.requestId ?? NodeCrypto.randomUUID()}`);
+      const messageId = MessageId.make(`msg-${input.requestId ?? NodeCrypto.randomUUID()}`);
       const title = titleFromPrompt(input.body.prompt.text);
       const previous = located.allocation.execution;
       yield* allocations
@@ -721,8 +747,11 @@ export const make = Effect.fn("CloudAgentsApi.make")(function* () {
             threadId: previous?.threadId ?? ThreadId.make(`thread-${input.agentId}`),
             title,
             selectedRef: previous?.selectedRef ?? located.agent.baseCommit,
-            unansweredRequestSeconds:
-              previous?.unansweredRequestSeconds ?? CloudProviderUnansweredRequestSeconds.make(900),
+            unansweredRequestSeconds: CloudProviderUnansweredRequestSeconds.make(
+              controller === undefined || requestedLimits === undefined
+                ? (previous?.unansweredRequestSeconds ?? 900)
+                : Math.min(controller.limits.maxInputWaitSeconds, requestedLimits.inputWaitSeconds),
+            ),
             turn: {
               commandId,
               messageId,
@@ -737,7 +766,16 @@ export const make = Effect.fn("CloudAgentsApi.make")(function* () {
               createdAt: occurredAt,
             },
           },
-          deadlines: located.allocation.deadlines,
+          deadlines:
+            runSeconds === undefined
+              ? located.allocation.deadlines
+              : {
+                  launchBy: deadline(startedAt, Math.min(120, runSeconds)),
+                  bootBy: deadline(startedAt, Math.min(300, runSeconds)),
+                  registerBy: deadline(startedAt, Math.min(420, runSeconds)),
+                  expiresAt: deadline(startedAt, runSeconds),
+                  cleanupBy: deadline(startedAt, runSeconds + 600),
+                },
           principal: principalFromApiKey(input.principal),
         })
         .pipe(Effect.mapError(mapControllerError));

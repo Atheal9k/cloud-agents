@@ -57,6 +57,7 @@ export const CloudAgentsApiErrorCode = Schema.Literals([
   "spend_limit_exceeded",
   "self_hosted_disabled",
   "self_hosted_required",
+  "schedule_not_found",
   "internal_error",
 ]);
 export type CloudAgentsApiErrorCode = typeof CloudAgentsApiErrorCode.Type;
