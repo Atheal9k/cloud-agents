@@ -11,7 +11,10 @@ import {
 } from "@t3tools/contracts";
 import { describe, expect, it } from "@effect/vitest";
 
-import type { ResolvedAwsWorkerConfig } from "./awsWorkerConfig.ts";
+import {
+  defaultCloudControllerSecurityConfig,
+  type ResolvedAwsWorkerConfig,
+} from "./awsWorkerConfig.ts";
 import { buildCloudReadinessReport } from "./cloudReadinessModel.ts";
 
 const NOW = "2026-09-19T12:00:00.000Z";
@@ -26,6 +29,10 @@ function config(overrides: Partial<ResolvedAwsWorkerConfig> = {}): ResolvedAwsWo
     region: "us-west-1",
     project: "t3-cloud-agents",
     runtimeKind: "firecracker",
+    security: defaultCloudControllerSecurityConfig({
+      region: "us-west-1",
+      runtimeKind: "firecracker",
+    }),
     controllerAccountId: "111111111111",
     executionAccountId: "222222222222",
     hypervisors: [
@@ -293,5 +300,86 @@ describe("buildCloudReadinessReport", () => {
     expect(report.runtime.kind).toBe("ec2-fallback");
     expect(report.runtime.parity).toBe("ec2-migration-fallback");
     expect(report.runtime.slots.hosts).toBe(0);
+  });
+});
+
+describe("security posture", () => {
+  it("resolves each environment's egress against the controller ceiling", () => {
+    const report = buildCloudReadinessReport({
+      config: config({
+        controllerUrl: "https://controller.example.com",
+        security: {
+          ...defaultCloudControllerSecurityConfig({
+            region: "us-west-1",
+            runtimeKind: "firecracker",
+          }),
+          egress: {
+            mode: "default_with_allowlist",
+            allowlist: ["registry.npmjs.org"],
+            adminLocked: true,
+          },
+        },
+      }),
+      snapshot: snapshot(),
+      outcomes: new Map(),
+      now: NOW,
+    });
+
+    const posture = report.security?.environments[0];
+    expect(posture?.egress).toMatchObject({
+      mode: "allowlist_only",
+      allowlist: ["registry.npmjs.org"],
+      adminLocked: true,
+    });
+    expect(posture?.egress.exceptions.map((entry) => entry.host)).toContain(
+      "controller.example.com",
+    );
+    expect(posture?.scm.grantedRepositories).toEqual(["t3tools/t3code"]);
+  });
+
+  it("splits build-time secrets from runtime secrets and never sends a value", () => {
+    const report = buildCloudReadinessReport({
+      config: config(),
+      snapshot: snapshot(),
+      outcomes: new Map(),
+      now: NOW,
+    });
+
+    const posture = report.security?.environments[0];
+    expect(posture?.buildSecrets.map((secret) => secret.name)).toEqual(["NPM_TOKEN"]);
+    expect(posture?.runtimeSecrets).toEqual([]);
+    expect(posture?.buildSecrets[0]).toMatchObject({
+      reference: "secret://npm",
+      scope: "environment",
+      redacted: false,
+    });
+  });
+
+  it("reports the EC2 fallback's missing per-agent disk key as blocking", () => {
+    const firecracker = buildCloudReadinessReport({
+      config: config(),
+      snapshot: snapshot(),
+      outcomes: new Map(),
+      now: NOW,
+    });
+    const fallback = buildCloudReadinessReport({
+      config: config({
+        runtimeKind: "ec2-fallback",
+        hypervisors: [],
+        security: defaultCloudControllerSecurityConfig({
+          region: "us-west-1",
+          runtimeKind: "ec2-fallback",
+        }),
+      }),
+      snapshot: snapshot(),
+      outcomes: new Map(),
+      now: NOW,
+    });
+
+    expect(firecracker.security?.encryption.ok).toBe(true);
+    expect(fallback.security?.encryption.ok).toBe(false);
+    expect(fallback.security?.encryption.findings.map((finding) => finding.id)).toContain(
+      "missing-per-agent-key",
+    );
   });
 });

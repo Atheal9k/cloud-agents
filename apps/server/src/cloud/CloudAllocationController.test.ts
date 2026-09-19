@@ -939,3 +939,77 @@ it.effect("stops admission without disturbing defaults, runs, or review", () =>
     expect(reopened.controller.defaults).toEqual({ ref: "release" });
   }).pipe(Effect.provide(SqlitePersistenceMemory)),
 );
+
+it.effect("refuses to launch a run against a blocked or ungranted repository", () =>
+  Effect.gen(function* () {
+    const controller = yield* make({
+      enabled: true,
+      scmPolicy: {
+        protectedRepositories: ["t3tools/payments"],
+        blockedRepositories: ["t3tools/secrets"],
+        grantedRepositories: [],
+        maxScope: "write",
+        credentialTtlSeconds: 3_600,
+      },
+    });
+    const launchAgainst = (repository: string, commandId: string, allocationId: string) =>
+      decodeCommand({
+        ...launchInput,
+        commandId,
+        allocationId,
+        target: { ...launchInput.target, repository },
+      });
+
+    const blocked = yield* controller
+      .dispatch(launchAgainst("t3tools/secrets", "command-blocked", "allocation-blocked"))
+      .pipe(Effect.flip);
+    expect(blocked.reason).toBe("invalid-request");
+    expect(blocked.message).toContain("blocklist");
+
+    const protectedRepo = yield* controller
+      .dispatch(launchAgainst("t3tools/payments", "command-protected", "allocation-protected"))
+      .pipe(Effect.flip);
+    expect(protectedRepo.message).toContain("protected");
+
+    const allowed = yield* controller.dispatch(
+      launchAgainst("t3tools/t3code", "command-allowed", "allocation-allowed"),
+    );
+    expect(allowed.id).toBe("allocation-allowed");
+  }).pipe(Effect.provide(SqlitePersistenceMemory)),
+);
+
+it.effect("never gives a run wider repository access than the user who triggered it", () =>
+  Effect.gen(function* () {
+    const controller = yield* make({
+      enabled: true,
+      scmPolicy: {
+        protectedRepositories: [],
+        blockedRepositories: [],
+        grantedRepositories: [],
+        maxScope: "write",
+        credentialTtlSeconds: 3_600,
+      },
+    });
+
+    const error = yield* controller
+      .dispatch(
+        decodeCommand({
+          ...launchInput,
+          commandId: "command-user-scope",
+          allocationId: "allocation-user-scope",
+          target: {
+            ...launchInput.target,
+            access: {
+              scope: "write",
+              userRepositories: ["t3tools/t3code"],
+              userScope: "read",
+            },
+          },
+        }),
+      )
+      .pipe(Effect.flip);
+
+    expect(error.reason).toBe("invalid-request");
+    expect(error.message).toContain("triggering user's 'read' access");
+  }).pipe(Effect.provide(SqlitePersistenceMemory)),
+);

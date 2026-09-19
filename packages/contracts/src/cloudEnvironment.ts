@@ -10,6 +10,7 @@ import {
   PositiveInt,
   TrimmedNonEmptyString,
 } from "./baseSchemas.ts";
+import { CloudSecretScope } from "./cloudSecurity.ts";
 
 const CursorEnvironmentBuild = Schema.Struct({
   dockerfile: Schema.optionalKey(TrimmedNonEmptyString),
@@ -110,6 +111,10 @@ export const CloudEnvironmentSecretReference = Schema.Struct({
   name: TrimmedNonEmptyString,
   reference: TrimmedNonEmptyString,
   availability: Schema.Literals(["build", "runtime", "runtime-redacted"]),
+  /** CA-49 scope. Absent means the secret belongs to this environment alone. */
+  scope: Schema.optionalKey(CloudSecretScope),
+  /** The user or team a `user`/`team` scoped secret belongs to. */
+  owner: Schema.optionalKey(TrimmedNonEmptyString),
 });
 export type CloudEnvironmentSecretReference = typeof CloudEnvironmentSecretReference.Type;
 
