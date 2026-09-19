@@ -1273,6 +1273,8 @@ Acceptance criteria:
 
 ### CA-38: Build and launch iOS apps on EC2 Mac workers
 
+Status: Done on 19 September 2026 in [PR #36](https://github.com/Atheal9k/cloud-agents/pull/36).
+
 Dependencies: CA-02, CA-03, CA-04A, CA-06, CA-10, CA-14, CA-27, CA-40,
 CA-41, CA-42, CA-43.
 
