@@ -5,6 +5,7 @@ import {
   CloudEnvironmentId,
   CloudEnvironmentVersionId,
   IsoDateTime,
+  NonNegativeInt,
   PortSchema,
   PositiveInt,
   TrimmedNonEmptyString,
@@ -105,12 +106,27 @@ export const CloudEnvironmentRepository = Schema.Struct({
 });
 export type CloudEnvironmentRepository = typeof CloudEnvironmentRepository.Type;
 
+export const CloudEnvironmentSecretScope = Schema.Literals(["user", "team", "environment"]);
+export type CloudEnvironmentSecretScope = typeof CloudEnvironmentSecretScope.Type;
+
 export const CloudEnvironmentSecretReference = Schema.Struct({
   name: TrimmedNonEmptyString,
   reference: TrimmedNonEmptyString,
+  /**
+   * `runtime` is an ordinary environment variable. `runtime-redacted` is still
+   * injected at boot but stripped from logs. `build` is Build-only.
+   */
   availability: Schema.Literals(["build", "runtime", "runtime-redacted"]),
+  /** Defaults to environment. User secrets never enter a shared Build. */
+  scope: Schema.optionalKey(CloudEnvironmentSecretScope),
 });
 export type CloudEnvironmentSecretReference = typeof CloudEnvironmentSecretReference.Type;
+
+export function cloudEnvironmentSecretScope(
+  secret: CloudEnvironmentSecretReference,
+): CloudEnvironmentSecretScope {
+  return secret.scope ?? "environment";
+}
 
 export const CloudEnvironmentSavedSource = Schema.Union([
   Schema.Struct({
@@ -227,6 +243,12 @@ export const CloudEnvironment = Schema.Struct({
   /** Newest first, including the current version. */
   history: Schema.Array(CloudEnvironmentVersionSummary).pipe(Schema.check(Schema.isMinLength(1))),
   activeBuildId: Schema.optionalKey(CloudEnvironmentBuildId),
+  /**
+   * How long an active Build stays usable before a run refreshes it. Absent
+   * when decoding snapshots from controllers older than CA-05, which means the
+   * shipped default applies.
+   */
+  staleBuildThresholdSeconds: Schema.optionalKey(NonNegativeInt),
   createdAt: IsoDateTime,
   updatedAt: IsoDateTime,
 });

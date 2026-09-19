@@ -1,5 +1,6 @@
 import {
   type CloudAdmissionControlInput,
+  type CloudControllerDefaultsInput,
   CloudAgentDeletion,
   CloudAgentId,
   CloudAllocationControllerError,
@@ -114,6 +115,9 @@ export class CloudAllocationController extends Context.Service<
     readonly stream: Stream.Stream<CloudAllocationSnapshot, CloudAllocationControllerError>;
     readonly setAdmission: (
       input: CloudAdmissionControlInput,
+    ) => Effect.Effect<CloudAllocationSnapshot, CloudAllocationControllerError>;
+    readonly setDefaults: (
+      input: CloudControllerDefaultsInput,
     ) => Effect.Effect<CloudAllocationSnapshot, CloudAllocationControllerError>;
     readonly saveEnvironment: (
       input: CloudEnvironmentSaveInput,
@@ -467,6 +471,7 @@ export const make = Effect.fn("CloudAllocationController.make")(function* (input
                 stoppedAt: controllerSettings.admissionUpdatedAt ?? DateTime.formatIso(now),
               },
         writability: ControllerSettings.writabilityFromRow(controllerSettings),
+        defaults: ControllerSettings.defaultsFromRow(controllerSettings),
       },
       limits,
       workerPriceAssumptions,
@@ -859,6 +864,25 @@ export const make = Effect.fn("CloudAllocationController.make")(function* (input
       }),
     );
 
+  /** Defaults are a hint for new runs, so they stay writable while admission
+      is stopped but not while the state is fenced. */
+  const setDefaults: CloudAllocationController["Service"]["setDefaults"] = (control) =>
+    mutex.withPermits(1)(
+      Effect.gen(function* () {
+        yield* requireWritable;
+        yield* settings
+          .writeDefaults({
+            defaultModel: control.defaults.model ?? null,
+            defaultRepository: control.defaults.repository ?? null,
+            defaultRef: control.defaults.ref ?? null,
+          })
+          .pipe(Effect.mapError(persistenceError));
+        const snapshot = yield* readSnapshot;
+        yield* PubSub.publish(changes, snapshot);
+        return snapshot;
+      }),
+    );
+
   const publishEnvironmentChange = <A>(effect: Effect.Effect<A, CloudEnvironmentError>) =>
     mutex.withPermits(1)(
       Effect.gen(function* () {
@@ -915,6 +939,7 @@ export const make = Effect.fn("CloudAllocationController.make")(function* (input
     snapshot,
     stream,
     setAdmission,
+    setDefaults,
     refresh,
     saveBuild,
     cancelBuild,

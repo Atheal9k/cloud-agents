@@ -85,6 +85,14 @@ export class CloudRunResults extends Context.Service<
       resultId: CloudRunResultId,
       file: TextResultFile,
     ) => Effect.Effect<string, CloudResultError>;
+    readonly readTextPrefix: (
+      resultId: CloudRunResultId,
+      file: TextResultFile,
+      maxChars: number,
+    ) => Effect.Effect<
+      { readonly text: string; readonly truncated: boolean; readonly sizeChars: number },
+      CloudResultError
+    >;
     readonly resolveDownload: (
       resultId: CloudRunResultId,
       fileId: string,
@@ -766,23 +774,64 @@ export const make = Effect.fn("CloudRunResults.make")(function* (input: CloudRun
 
   const status: CloudRunResults["Service"]["status"] = readStatus;
 
+  const resultFilePath = (resultId: CloudRunResultId, file: TextResultFile) => {
+    const fileName =
+      file === "diff" ? DIFF_FILE : file === "transcript" ? TRANSCRIPT_FILE : VERIFICATION_FILE;
+    return path.join(resultDirectory(path, input.resultsRoot, resultId), fileName);
+  };
+
   const readText: CloudRunResults["Service"]["readText"] = Effect.fn("CloudRunResults.readText")(
     function* (resultId, file) {
-      const fileName =
-        file === "diff" ? DIFF_FILE : file === "transcript" ? TRANSCRIPT_FILE : VERIFICATION_FILE;
-      return yield* fs
-        .readFileString(path.join(resultDirectory(path, input.resultsRoot, resultId), fileName))
-        .pipe(
-          Effect.mapError(() =>
-            resultError({
-              reason: "result-not-found",
-              message: "The requested retained result file does not exist.",
-              retryable: false,
-            }),
-          ),
-        );
+      return yield* fs.readFileString(resultFilePath(resultId, file)).pipe(
+        Effect.mapError(() =>
+          resultError({
+            reason: "result-not-found",
+            message: "The requested retained result file does not exist.",
+            retryable: false,
+          }),
+        ),
+      );
     },
   );
+
+  const readTextPrefix: CloudRunResults["Service"]["readTextPrefix"] = Effect.fn(
+    "CloudRunResults.readTextPrefix",
+  )(function* (resultId, file, maxChars) {
+    const filePath = resultFilePath(resultId, file);
+    const info = yield* fs.stat(filePath).pipe(
+      Effect.mapError(() =>
+        resultError({
+          reason: "result-not-found",
+          message: "The requested retained result file does not exist.",
+          retryable: false,
+        }),
+      ),
+    );
+    const sizeChars = Number(info.size);
+    const take = Math.min(Math.max(0, sizeChars), Math.max(0, maxChars) + 1);
+    const chunk = yield* Effect.scoped(
+      fs.open(filePath, { flag: "r" }).pipe(
+        Effect.flatMap((handle) => handle.readAlloc(take)),
+        Effect.mapError(() =>
+          resultError({
+            reason: "result-not-found",
+            message: "The requested retained result file does not exist.",
+            retryable: false,
+          }),
+        ),
+      ),
+    );
+    const text = Option.match(chunk, {
+      onNone: () => "",
+      onSome: (bytes) => new TextDecoder().decode(bytes),
+    });
+    const truncated = sizeChars > maxChars;
+    return {
+      text: truncated ? text.slice(0, maxChars) : text,
+      truncated,
+      sizeChars,
+    };
+  });
 
   const resolveDownload: CloudRunResults["Service"]["resolveDownload"] = Effect.fn(
     "CloudRunResults.resolveDownload",
@@ -1075,6 +1124,7 @@ export const make = Effect.fn("CloudRunResults.make")(function* (input: CloudRun
     capture,
     status,
     readText,
+    readTextPrefix,
     resolveDownload,
     startContinuation,
     purgeAllocation,

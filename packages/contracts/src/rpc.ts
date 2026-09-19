@@ -275,9 +275,17 @@ import {
   CloudAdmissionControlInput,
   CloudAllocationControllerError,
   CloudAllocationSnapshot,
+  CloudControllerDefaultsInput,
   RunAllocation,
   RunAllocationCommand,
 } from "./cloudAllocation.ts";
+import {
+  CloudGuidedSetupInput,
+  CloudGuidedSetupResult,
+  CloudReadinessCheckInput,
+  CloudReadinessError,
+  CloudReadinessReport,
+} from "./cloudReadiness.ts";
 import {
   CloudArtifactAccessGrant,
   CloudArtifactAccessInput,
@@ -441,6 +449,10 @@ export const WS_METHODS = {
   cloudAllocationDispatch: "cloud.allocations.dispatch",
   cloudAllocationList: "cloud.allocations.list",
   cloudAllocationSetAdmission: "cloud.allocations.setAdmission",
+  cloudAllocationSetDefaults: "cloud.allocations.setDefaults",
+  cloudReadinessGet: "cloud.readiness.get",
+  cloudReadinessCheck: "cloud.readiness.check",
+  cloudReadinessGuidedSetup: "cloud.readiness.guidedSetup",
   cloudEnvironmentSave: "cloud.environments.save",
   cloudEnvironmentRestore: "cloud.environments.restore",
   cloudEnvironmentResolve: "cloud.environments.resolve",
@@ -751,6 +763,35 @@ const WsCloudAllocationSetAdmissionRpc = Rpc.make(WS_METHODS.cloudAllocationSetA
   payload: CloudAdmissionControlInput,
   success: CloudAllocationSnapshot,
   error: Schema.Union([CloudAllocationControllerError, EnvironmentAuthorizationError]),
+});
+
+const WsCloudAllocationSetDefaultsRpc = Rpc.make(WS_METHODS.cloudAllocationSetDefaults, {
+  payload: CloudControllerDefaultsInput,
+  success: CloudAllocationSnapshot,
+  error: Schema.Union([CloudAllocationControllerError, EnvironmentAuthorizationError]),
+});
+
+const WsCloudReadinessGetRpc = Rpc.make(WS_METHODS.cloudReadinessGet, {
+  payload: Schema.Struct({}),
+  success: CloudReadinessReport,
+  error: Schema.Union([CloudReadinessError, EnvironmentAuthorizationError]),
+});
+
+const WsCloudReadinessCheckRpc = Rpc.make(WS_METHODS.cloudReadinessCheck, {
+  payload: CloudReadinessCheckInput,
+  success: CloudReadinessReport,
+  error: Schema.Union([CloudReadinessError, EnvironmentAuthorizationError]),
+});
+
+const WsCloudReadinessGuidedSetupRpc = Rpc.make(WS_METHODS.cloudReadinessGuidedSetup, {
+  payload: CloudGuidedSetupInput,
+  success: CloudGuidedSetupResult,
+  error: Schema.Union([
+    CloudAllocationControllerError,
+    CloudEnvironmentError,
+    CloudEnvironmentBuildError,
+    EnvironmentAuthorizationError,
+  ]),
 });
 
 const WsCloudEnvironmentSaveRpc = Rpc.make(WS_METHODS.cloudEnvironmentSave, {
@@ -1654,6 +1695,10 @@ export const WsRpcGroup = RpcGroup.make(
   WsCloudEnvironmentBuildCancelRpc,
   WsCloudEnvironmentBuildSaveRpc,
   WsCloudEnvironmentBuildStaleThresholdRpc,
+  WsCloudAllocationSetDefaultsRpc,
+  WsCloudReadinessGetRpc,
+  WsCloudReadinessCheckRpc,
+  WsCloudReadinessGuidedSetupRpc,
   WsCloudArtifactsGrantRpc,
   WsCloudAgentReviewInspectRpc,
   WsCloudAgentReviewActRpc,

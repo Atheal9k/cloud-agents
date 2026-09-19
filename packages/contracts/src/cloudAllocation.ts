@@ -844,6 +844,24 @@ export const CloudAllocationControllerWritability = Schema.Union([
 ]);
 export type CloudAllocationControllerWritability = typeof CloudAllocationControllerWritability.Type;
 
+/**
+ * What a new cloud run starts from when the launcher has nothing better. Each
+ * field is independently optional so an operator can pin a repository without
+ * also pinning a model.
+ */
+export const CloudControllerDefaults = Schema.Struct({
+  model: Schema.optionalKey(TrimmedNonEmptyString),
+  repository: Schema.optionalKey(TrimmedNonEmptyString),
+  ref: Schema.optionalKey(TrimmedNonEmptyString),
+});
+export type CloudControllerDefaults = typeof CloudControllerDefaults.Type;
+
+export const CloudControllerDefaultsInput = Schema.Struct({
+  defaults: CloudControllerDefaults,
+  occurredAt: IsoDateTime,
+});
+export type CloudControllerDefaultsInput = typeof CloudControllerDefaultsInput.Type;
+
 export const CloudAllocationControllerStatus = Schema.Struct({
   mode: CloudAllocationControllerMode,
   /** A local controller can outlive clients, but not the machine hosting T3.
@@ -855,6 +873,8 @@ export const CloudAllocationControllerStatus = Schema.Struct({
   ]),
   /** Absent when decoding snapshots from controllers older than CA-04B. */
   writability: Schema.optionalKey(CloudAllocationControllerWritability),
+  /** Absent when decoding snapshots from controllers older than CA-05. */
+  defaults: Schema.optionalKey(CloudControllerDefaults),
 });
 export type CloudAllocationControllerStatus = typeof CloudAllocationControllerStatus.Type;
 

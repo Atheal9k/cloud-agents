@@ -3,6 +3,7 @@ import {
   CloudEnvironmentBuildId,
   CloudEnvironmentError,
   CloudEnvironmentId,
+  cloudEnvironmentSecretValidationMessage,
   cloudEnvironmentVersionSummary,
   type CloudEnvironmentResolution,
   type CloudEnvironmentResolutionInput,
@@ -26,6 +27,7 @@ const EnvironmentHeadRow = Schema.Struct({
   environmentId: CloudEnvironmentId,
   currentVersion: PositiveInt,
   activeBuildId: Schema.NullOr(CloudEnvironmentBuildId),
+  staleBuildThresholdSeconds: Schema.NullOr(Schema.Int),
   createdAt: Schema.String,
   updatedAt: Schema.String,
 });
@@ -127,6 +129,7 @@ export const make = Effect.fn("CloudEnvironmentCatalog.make")(function* () {
         environment_id AS "environmentId",
         current_version AS "currentVersion",
         active_build_id AS "activeBuildId",
+        stale_build_threshold_seconds AS "staleBuildThresholdSeconds",
         created_at AS "createdAt",
         updated_at AS "updatedAt"
       FROM cloud_environments
@@ -182,6 +185,9 @@ export const make = Effect.fn("CloudEnvironmentCatalog.make")(function* () {
           current,
           history: all.map(cloudEnvironmentVersionSummary),
           ...(head.activeBuildId === null ? {} : { activeBuildId: head.activeBuildId }),
+          ...(head.staleBuildThresholdSeconds === null
+            ? {}
+            : { staleBuildThresholdSeconds: head.staleBuildThresholdSeconds }),
           createdAt: head.createdAt,
           updatedAt: head.updatedAt,
         },
@@ -245,6 +251,10 @@ export const make = Effect.fn("CloudEnvironmentCatalog.make")(function* () {
             "version-conflict",
             `Environment '${input.environmentId}' does not have version ${input.expectedVersion}.`,
           );
+        }
+        const secretError = cloudEnvironmentSecretValidationMessage(input.secretReferences);
+        if (secretError !== undefined) {
+          return yield* catalogError("invalid-environment", secretError);
         }
         if (input.source.type !== "repository") {
           for (const entry of input.repositories) {

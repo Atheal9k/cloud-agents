@@ -68,6 +68,12 @@ export const RPC_REQUIRED_SCOPES = {
   [WS_METHODS.cloudAllocationDispatch]: AuthOrchestrationOperateScope,
   [WS_METHODS.cloudAllocationList]: AuthOrchestrationReadScope,
   [WS_METHODS.cloudAllocationSetAdmission]: AuthOrchestrationOperateScope,
+  [WS_METHODS.cloudAllocationSetDefaults]: AuthOrchestrationOperateScope,
+  [WS_METHODS.cloudReadinessGet]: AuthOrchestrationReadScope,
+  // The probes spend AWS calls and touch the controller's disk, so reading the
+  // report is not enough to run them.
+  [WS_METHODS.cloudReadinessCheck]: AuthOrchestrationOperateScope,
+  [WS_METHODS.cloudReadinessGuidedSetup]: AuthOrchestrationOperateScope,
   [WS_METHODS.cloudEnvironmentSave]: AuthOrchestrationOperateScope,
   [WS_METHODS.cloudEnvironmentRestore]: AuthOrchestrationOperateScope,
   [WS_METHODS.cloudEnvironmentResolve]: AuthOrchestrationReadScope,

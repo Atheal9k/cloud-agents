@@ -176,9 +176,9 @@ stay last until you choose to pick them up.
 | 6    | ~~CA-38~~, ~~CA-46~~             | macOS worker infrastructure; retention and deletion services.                              |
 | 7    | ~~CA-44~~                        | Linux fleet and Firecracker runtime infrastructure.                                        |
 | 8    | ~~CA-21~~, ~~CA-45~~             | Retained-results review UI; fleet capacity and Build pre-warming.                          |
-| 9    | CA-05, ~~CA-37~~, CA-47          | AWS settings UI; Android worker profile; public Cloud Agents API.                          |
+| 9    | ~~CA-05~~, ~~CA-37~~, ~~CA-47~~  | AWS settings UI; Android worker profile; public Cloud Agents API.                          |
 | 10   | CA-49                            | Shared secret, identity, encryption, and network policy.                                   |
-| 11   | CA-12, CA-13, ~~CA-26~~          | Environment recipes; event-stream performance; local/cloud handoff.                        |
+| 11   | ~~CA-12~~, ~~CA-13~~, ~~CA-26~~  | Environment recipes; event-stream performance; local/cloud handoff.                        |
 | 12   | CA-36, CA-51, CA-55              | Preview leases; provider extensibility; usage and audit accounting.                        |
 | 13   | CA-32, CA-50                     | Private dependency networking; source-control and collaboration entry points.              |
 | 14   | CA-56, CA-58                     | Multi-repository environments; self-hosted pools.                                          |
@@ -646,6 +646,9 @@ Acceptance criteria:
 
 Dependencies: CA-03, CA-04B, CA-19, CA-24, CA-41, CA-42, CA-44.
 
+Status: Done on 19 September 2026 in
+[PR #40](https://github.com/Atheal9k/cloud-agents/pull/40).
+
 Description: Replace manual deployment configuration with a readiness workflow
 for the controller, execution account, environments, Builds, snapshots, and
 runtime fleet.
@@ -668,6 +671,8 @@ Acceptance criteria:
 
 Dependencies: CA-10, CA-19, CA-24, CA-41, CA-42, CA-49.
 
+Status: Done on 19 September 2026 in [PR #43](https://github.com/Atheal9k/cloud-agents/pull/43).
+
 Description: Replace per-run recipes with versioned environments. Map setup to
 Build-time `install`, per-runtime services to `start` and named terminals, and
 secrets to explicit Build/runtime classes. First-time create follows CA-59.
@@ -688,6 +693,8 @@ Acceptance criteria:
 ### CA-13: Improve large-history reconnect and streaming performance
 
 Dependencies: CA-09, CA-11, CA-19, CA-24, CA-40, CA-47.
+
+Status: Done on 19 September 2026 in [PR #42](https://github.com/Atheal9k/cloud-agents/pull/42).
 
 Description: Preserve T3's authoritative live subscription while adding the
 bounded agent/run event stream required by clients and API consumers.
@@ -988,6 +995,9 @@ Acceptance criteria:
 ## Cursor-parity product, API, and security
 
 ### CA-47: Expose the Cloud Agents API and event stream
+
+Status: Done on 19 September 2026 in
+[PR #41](https://github.com/Atheal9k/cloud-agents/pull/41).
 
 Dependencies: CA-40, CA-46.
 

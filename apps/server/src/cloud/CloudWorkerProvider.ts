@@ -1,6 +1,5 @@
 import { RunAllocationAttempt, RunAllocationId, RunLaunchTemplate } from "@t3tools/contracts";
 import * as NodeCrypto from "node:crypto";
-import * as Config from "effect/Config";
 import * as Context from "effect/Context";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
@@ -8,6 +7,12 @@ import * as Option from "effect/Option";
 import * as Schema from "effect/Schema";
 
 import * as ProcessRunner from "../processRunner.ts";
+import {
+  AwsWorkerConfigError,
+  CloudRuntimeKind as CloudRuntimeKindSchema,
+  resolveAwsWorkerConfig,
+  type CloudRuntimeKind,
+} from "./awsWorkerConfig.ts";
 import { createFirecrackerFleetStore } from "./firecrackerFleet.ts";
 import { type CloudHypervisorHost, runtimeParity } from "./firecrackerPlacement.ts";
 
@@ -21,13 +26,12 @@ const AwsInstanceState = Schema.Literals([
 ]);
 export type AwsInstanceState = typeof AwsInstanceState.Type;
 
-export const CloudRuntimeKind = Schema.Literals(["firecracker", "ec2-fallback"]);
-export type CloudRuntimeKind = typeof CloudRuntimeKind.Type;
+export { CloudRuntimeKind } from "./awsWorkerConfig.ts";
 
 export const CloudWorkerInstance = Schema.Struct({
   instanceId: Schema.String,
   state: AwsInstanceState,
-  runtimeKind: Schema.optionalKey(CloudRuntimeKind),
+  runtimeKind: Schema.optionalKey(CloudRuntimeKindSchema),
 });
 export type CloudWorkerInstance = typeof CloudWorkerInstance.Type;
 
@@ -787,64 +791,21 @@ export const make = Effect.fn("CloudWorkerProvider.make")(function* (input: {
   });
 });
 
-const HypervisorHostConfig = Schema.Struct({
-  id: Schema.String,
-  accountId: Schema.String,
-  cpuMillis: Schema.Int,
-  memoryMib: Schema.Int,
-  diskGib: Schema.Int,
-  cpuOversubscribeRatio: Schema.Finite,
-  profiles: Schema.Array(Schema.String),
-  credentialsPath: Schema.String,
-  kvm: Schema.Boolean,
-});
-const decodeRuntimeKind = Schema.decodeUnknownEffect(CloudRuntimeKind);
-const decodeHypervisorFleet = Schema.decodeEffect(
-  Schema.fromJsonString(Schema.Array(HypervisorHostConfig)),
-);
-
-const AwsWorkerConfig = Config.all({
-  region: Config.string("T3CODE_CLOUD_AWS_REGION").pipe(Config.withDefault("us-west-1")),
-  project: Config.string("T3CODE_CLOUD_PROJECT").pipe(Config.withDefault("t3-cloud-agents")),
-  controllerUrl: Config.string("T3CODE_CLOUD_CONTROLLER_URL").pipe(Config.option),
-  workerRouteUrl: Config.string("T3CODE_CLOUD_WORKER_ROUTE_URL").pipe(Config.option),
-  runtimeKind: Config.string("T3CODE_CLOUD_RUNTIME").pipe(Config.option),
-  hypervisorFleet: Config.string("T3CODE_CLOUD_HYPERVISOR_FLEET").pipe(Config.option),
-});
-
 export const layer = Layer.effect(
   CloudWorkerProvider,
   Effect.gen(function* () {
-    const config = yield* AwsWorkerConfig;
-    const runtimeKind = Option.isSome(config.runtimeKind)
-      ? yield* decodeRuntimeKind(config.runtimeKind.value).pipe(
-          Effect.mapError(() =>
-            providerError(
-              "invalid-config",
-              "T3CODE_CLOUD_RUNTIME must be firecracker or ec2-fallback.",
-            ),
-          ),
-        )
-      : undefined;
-    const hypervisors = Option.isSome(config.hypervisorFleet)
-      ? yield* decodeHypervisorFleet(config.hypervisorFleet.value).pipe(
-          Effect.mapError(() =>
-            providerError(
-              "invalid-config",
-              "T3CODE_CLOUD_HYPERVISOR_FLEET must be a JSON array of hypervisor hosts.",
-            ),
-          ),
-        )
-      : undefined;
+    const config = yield* resolveAwsWorkerConfig().pipe(
+      Effect.mapError((error: AwsWorkerConfigError) =>
+        providerError("invalid-config", error.message),
+      ),
+    );
     return yield* make({
       region: config.region,
       project: config.project,
-      ...(Option.isSome(config.controllerUrl) ? { controllerUrl: config.controllerUrl.value } : {}),
-      ...(Option.isSome(config.workerRouteUrl)
-        ? { workerRouteUrl: config.workerRouteUrl.value }
-        : {}),
-      ...(runtimeKind === undefined ? {} : { runtimeKind }),
-      ...(hypervisors === undefined ? {} : { hypervisors }),
+      ...(config.controllerUrl === undefined ? {} : { controllerUrl: config.controllerUrl }),
+      ...(config.workerRouteUrl === undefined ? {} : { workerRouteUrl: config.workerRouteUrl }),
+      runtimeKind: config.runtimeKind,
+      hypervisors: config.hypervisors,
     });
   }),
 );

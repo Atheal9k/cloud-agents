@@ -81,19 +81,28 @@ export function createInitialCloudRunDraft(
     Math.floor((snapshot?.limits.maxInputWaitSeconds ?? 900) / 60),
   );
   const provider = providers[0];
+  // CA-05's controller defaults only fill a field the caller left open, so a
+  // launcher opened on a project still starts from that project.
+  const defaults = snapshot?.controller.defaults;
+  const configuredModel = defaults?.model;
+  const ref = defaults?.ref ?? "main";
   return {
-    repository,
-    selectedRef: "main",
+    repository: repository === "" ? (defaults?.repository ?? "") : repository,
+    selectedRef: ref,
     task: "",
     providerInstanceId: provider?.instanceId ?? "",
-    model: defaultModel(provider),
+    model:
+      configuredModel !== undefined &&
+      provider?.models.some((model) => model.slug === configuredModel) === true
+        ? configuredModel
+        : defaultModel(provider),
     runtimeMode: "full-access",
     runMinutes: String(Math.min(DEFAULT_CLOUD_RUN_MINUTES, maxRunMinutes)),
     inputWaitMinutes: String(Math.min(15, maxInputWaitMinutes)),
     instanceType: snapshot?.limits.allowedInstanceTypes[0] ?? "",
     workerProfile: "linux-web",
     publication: "automatic-draft-pr",
-    baseBranch: "main",
+    baseBranch: ref,
   };
 }
 
