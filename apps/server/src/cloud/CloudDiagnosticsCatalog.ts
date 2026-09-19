@@ -92,10 +92,20 @@ export class CloudDiagnosticsCatalog extends Context.Service<
       readonly environmentId?: string | undefined;
       readonly environmentJson: CloudEnvironmentConfig;
       readonly buildId?: string | undefined;
-    }) => Effect.Effect<{ readonly proposed: true; readonly buildId?: string }>;
+    }) => Effect.Effect<
+      { readonly proposed: true; readonly buildId?: string },
+      CloudDiagnosticsError
+    >;
     readonly requestSetupActions: (input: {
       readonly actions: ReadonlyArray<CloudEnvironmentSetupAction>;
     }) => Effect.Effect<{ readonly accepted: number }>;
+    readonly outstandingSetupActions: Effect.Effect<ReadonlyArray<CloudEnvironmentSetupAction>>;
+    readonly resolveSetupActions: Effect.Effect<void>;
+    readonly readProposal: (
+      environmentId?: string,
+    ) => Effect.Effect<
+      { readonly environmentJson: CloudEnvironmentConfig; readonly buildId?: string } | undefined
+    >;
     readonly runInfo: (input: {
       readonly runId?: string | undefined;
       readonly agentId?: string | undefined;
@@ -360,10 +370,17 @@ export const make = Effect.fn("CloudDiagnosticsCatalog.make")(function* () {
     input,
   ) =>
     Effect.gen(function* () {
+      const current = yield* Ref.get(state);
+      if (current.setupActions.length > 0) {
+        return yield* diagnosticsError(
+          "invalid-request",
+          "Required environment setup actions are outstanding. Do not propose or ask the user to Save.",
+        );
+      }
       const key = input.environmentId ?? "greenfield";
-      yield* Ref.update(state, (current) => ({
-        ...current,
-        proposals: new Map(current.proposals).set(key, {
+      yield* Ref.update(state, (value) => ({
+        ...value,
+        proposals: new Map(value.proposals).set(key, {
           environmentJson: input.environmentJson,
           ...(input.buildId === undefined ? {} : { buildId: input.buildId }),
         }),
@@ -379,6 +396,19 @@ export const make = Effect.fn("CloudDiagnosticsCatalog.make")(function* () {
       ...current,
       setupActions: [...current.setupActions, ...input.actions],
     })).pipe(Effect.as({ accepted: input.actions.length }));
+
+  const outstandingSetupActions: CloudDiagnosticsCatalog["Service"]["outstandingSetupActions"] =
+    Ref.get(state).pipe(Effect.map((current) => current.setupActions));
+
+  const resolveSetupActions: CloudDiagnosticsCatalog["Service"]["resolveSetupActions"] = Ref.update(
+    state,
+    (current) => ({ ...current, setupActions: [] }),
+  ).pipe(Effect.asVoid);
+
+  const readProposal: CloudDiagnosticsCatalog["Service"]["readProposal"] = (environmentId) =>
+    Ref.get(state).pipe(
+      Effect.map((current) => current.proposals.get(environmentId ?? "greenfield")),
+    );
 
   const runInfo: CloudDiagnosticsCatalog["Service"]["runInfo"] = (input) =>
     Effect.gen(function* () {
@@ -457,6 +487,9 @@ export const make = Effect.fn("CloudDiagnosticsCatalog.make")(function* () {
     buildLogs,
     proposeEnvironmentJson,
     requestSetupActions,
+    outstandingSetupActions,
+    resolveSetupActions,
+    readProposal,
     runInfo,
     runTranscript,
     runEvents,

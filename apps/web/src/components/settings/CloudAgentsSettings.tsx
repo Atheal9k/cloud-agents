@@ -16,6 +16,7 @@ import { cloudAllocations } from "../../state/cloudAllocations";
 import { usePrimaryEnvironmentId } from "../../state/environments";
 import { useServerConfigs } from "../../state/entities";
 import { useAtomCommand } from "../../state/use-atom-command";
+import { openCloudLaunchDialog } from "../../cloud/cloudLaunchDialogBus";
 import { Button } from "../ui/button";
 import { Input } from "../ui/input";
 import {
@@ -465,15 +466,16 @@ function CloudAgentsSettingsForEnvironment({
             size="xs"
             variant="outline"
             disabled={busy !== null}
-            onClick={() => openSetup(null)}
+            onClick={() => openCloudLaunchDialog({ kind: "env-setup" })}
           >
-            New environment
+            Set up with agent
           </Button>
         }
       >
         <p className="text-xs text-muted-foreground">
-          A repository-owned environment is created by the agent-led setup in its repository, not
-          here. This form writes personal, team, and default environments.
+          A repository-owned environment is created by the same env-setup skill
+          from Settings, the command palette, and the cloud setup keybinding. This
+          form only edits an already-saved personal, team, or default environment.
         </p>
         {report.environments.length === 0 ? (
           <p className="text-sm text-muted-foreground">No cloud environment is saved yet.</p>

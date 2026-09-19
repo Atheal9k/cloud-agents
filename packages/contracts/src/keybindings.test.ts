@@ -84,6 +84,12 @@ it.effect("parses keybinding rules", () =>
     });
     assert.strictEqual(parsedThemeEditor.command, "themeEditor.toggle");
 
+    const parsedCloudSetup = yield* decode(KeybindingRule, {
+      key: "mod+alt+e",
+      command: "cloud.setupEnvironment",
+    });
+    assert.strictEqual(parsedCloudSetup.command, "cloud.setupEnvironment");
+
     const parsedLocal = yield* decode(KeybindingRule, {
       key: "mod+shift+n",
       command: "chat.newLocal",

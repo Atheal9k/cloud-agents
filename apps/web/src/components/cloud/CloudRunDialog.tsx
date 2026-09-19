@@ -2,6 +2,7 @@ import { useAtomValue } from "@effect/atom-react";
 import { cloudWorkerConnectionRegistration } from "@t3tools/client-runtime/connection";
 import { squashAtomCommandFailure } from "@t3tools/client-runtime/state/runtime";
 import {
+  CLOUD_ENV_SETUP_USER_REQUEST,
   CommandId,
   type CloudAllocationSnapshot,
   cloudEnvironmentBase,
@@ -25,6 +26,7 @@ import { type FormEvent, useEffect, useMemo, useState } from "react";
 import { environmentCatalog } from "../../connection/catalog";
 import {
   buildCloudRunLaunchCommand,
+  cloudEnvSetupLaunchDraft,
   cloudRunDisplayState,
   cloudRunProjectOptions,
   controllerSummary,
@@ -473,8 +475,15 @@ function CloudRunDialogForEnvironment(props: {
 
   useEffect(
     () =>
-      onOpenCloudLaunchDialog(() => {
-        setDraft(createInitialCloudRunDraft(snapshot, providers, projectOptions[0]?.repository));
+      onOpenCloudLaunchDialog((intent) => {
+        const next = createInitialCloudRunDraft(
+          snapshot,
+          providers,
+          intent.kind === "env-setup" && intent.repository !== undefined
+            ? intent.repository
+            : projectOptions[0]?.repository,
+        );
+        setDraft(intent.kind === "env-setup" ? cloudEnvSetupLaunchDraft(next) : next);
         setRequestId(randomUUID());
         setLaunchedId(null);
         setError(null);
@@ -664,7 +673,11 @@ function CloudRunDialogForEnvironment(props: {
           <DialogHeader>
             <div className="flex items-center gap-2">
               <CloudIcon className="size-5" />
-              <DialogTitle>New cloud thread</DialogTitle>
+              <DialogTitle>
+                {draft.task === CLOUD_ENV_SETUP_USER_REQUEST
+                  ? "Set up cloud environment"
+                  : "New cloud thread"}
+              </DialogTitle>
             </div>
             <DialogDescription>{controllerSummary(snapshot)}</DialogDescription>
           </DialogHeader>

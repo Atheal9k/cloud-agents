@@ -201,10 +201,11 @@ Each readiness check runs on its own, so a failing IAM policy does not hide a he
 Set `T3CODE_CLOUD_CONTROLLER_ACCOUNT_ID` and `T3CODE_CLOUD_EXECUTION_ACCOUNT_ID` to the accounts
 OpenTofu reports so the screen can flag credentials pointing at the wrong account.
 
-**New environment** and **Edit and test** save a personal, team, or default environment version and
-immediately start a Build that tests it. The Build activates only if it succeeds, so runs keep
-booting the last successful Build while a new version is still being proved. A repository-owned
-environment is created by the agent-led setup inside its repository, not by this form.
+**Set up with agent** starts the repository-owned env-setup skill through the same cloud launch
+dialog as the command palette and the cloud setup keybinding. **Edit and test** still saves a
+personal, team, or default environment version and starts a Build that tests it. That Build
+activates only if it succeeds, so runs keep booting the last successful Build while a new version
+is still being proved.
 
 **Default model**, **Default repository**, and **Default ref** prefill a new cloud thread when the
 launcher has nothing more specific. Clearing a field removes the default rather than storing a
@@ -221,7 +222,9 @@ cloud thread**, or press <kbd>Ctrl</kbd>+<kbd>Alt</kbd>+<kbd>N</kbd> on Windows/
 <kbd>Command</kbd>+<kbd>Option</kbd>+<kbd>N</kbd> on macOS. Choose the repository ref, task,
 available provider model, permission policy, worker and time limits, and whether the result stays
 review-only or opens a draft pull request. The same dialog is available in locally served web and
-desktop clients.
+desktop clients. **Set up cloud environment** (or <kbd>Ctrl</kbd>+<kbd>Alt</kbd>+<kbd>E</kbd> /
+<kbd>Command</kbd>+<kbd>Option</kbd>+<kbd>E</kbd>) opens that dialog with the env-setup skill
+already selected.
 
 The controller continues provisioning, observing, and cleaning up the run if the client
 disconnects. Keep the controller host and Docker running. Reopen the dialog to see recent runs,

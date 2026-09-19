@@ -1,5 +1,6 @@
 import {
   CloudAgentId,
+  CLOUD_ENV_SETUP_USER_REQUEST,
   CloudProviderUnansweredRequestSeconds,
   CloudRunId,
   CommandId,
@@ -104,6 +105,10 @@ export function createInitialCloudRunDraft(
     publication: "automatic-draft-pr",
     baseBranch: ref,
   };
+}
+
+export function cloudEnvSetupLaunchDraft(draft: CloudRunLaunchDraft): CloudRunLaunchDraft {
+  return { ...draft, task: CLOUD_ENV_SETUP_USER_REQUEST };
 }
 
 export function reconcileCloudRunLaunchInstanceType(
