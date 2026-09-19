@@ -149,6 +149,7 @@ import * as ServerLifecycleEvents from "./serverLifecycleEvents.ts";
 import * as ServerRuntimeStartup from "./serverRuntimeStartup.ts";
 import * as ServiceLauncherClient from "./cloud/serviceLauncherClient.ts";
 import * as SharedBrowserGateway from "./cloud/SharedBrowserGateway.ts";
+import * as CloudHandoff from "./cloud/CloudHandoff.ts";
 import * as SharedBrowserAgentHandoff from "./cloud/SharedBrowserAgentHandoff.ts";
 import * as SharedBrowserHost from "./cloud/SharedBrowserHost.ts";
 import * as ServerSettings from "./serverSettings.ts";
@@ -1205,13 +1206,19 @@ const buildAppUnderTest = (options?: {
         ),
       ),
       Layer.provide(
-        Layer.mock(CloudCliTokenManager.CloudCliTokenManager)({
-          get: Effect.die(new Error("Unexpected T3 Connect CLI authorization request.")),
-          getExisting: Effect.succeed(Option.none()),
-          hasCredential: Effect.succeed(false),
-          clear: Effect.void,
-          ...options?.layers?.cloudCliTokenManager,
-        }),
+        Layer.mergeAll(
+          Layer.mock(CloudCliTokenManager.CloudCliTokenManager)({
+            get: Effect.die(new Error("Unexpected T3 Connect CLI authorization request.")),
+            getExisting: Effect.succeed(Option.none()),
+            hasCredential: Effect.succeed(false),
+            clear: Effect.void,
+            ...options?.layers?.cloudCliTokenManager,
+          }),
+          Layer.mock(CloudHandoff.CloudHandoff)({
+            preview: () => Effect.die("Cloud handoff not stubbed in this test"),
+            execute: () => Effect.die("Cloud handoff not stubbed in this test"),
+          }),
+        ),
       ),
       Layer.updateService(PairingGrantStore.PairingGrantStore, (grants) => {
         const subscribed = options?.onPairingChangesSubscribed;

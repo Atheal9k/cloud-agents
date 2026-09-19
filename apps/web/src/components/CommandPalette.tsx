@@ -1689,6 +1689,18 @@ function OpenCommandPaletteDialog(props: {
         await navigate({ to: "/cloud-agents" });
       },
     });
+    actionItems.push({
+      kind: "action",
+      value: "action:handoff-cloud-work",
+      searchTerms: ["cloud", "handoff", "worktree", "local", "transfer", "import"],
+      title: "Hand off local and cloud work",
+      description: "Preview selected files, then copy them without sharing a snapshot writer",
+      icon: <CloudIcon className={ITEM_ICON_CLASS} />,
+      shortcutCommand: "cloud.handoff",
+      run: async () => {
+        await navigate({ to: "/cloud-agents" });
+      },
+    });
   }
 
   if (projects.length > 0) {

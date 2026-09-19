@@ -119,7 +119,7 @@ function ChatRouteGlobalShortcuts() {
         return;
       }
 
-      if (command === "cloud.reviewAgents") {
+      if (command === "cloud.reviewAgents" || command === "cloud.handoff") {
         event.preventDefault();
         event.stopPropagation();
         void navigate({ to: "/cloud-agents" });

@@ -292,6 +292,13 @@ import {
   CloudAgentReviewShareInput,
 } from "./cloudReview.ts";
 import {
+  CloudHandoffError,
+  CloudHandoffExecuteInput,
+  CloudHandoffExecuteResult,
+  CloudHandoffPreview,
+  CloudHandoffPreviewInput,
+} from "./cloudHandoff.ts";
+import {
   CloudEnvironment,
   CloudEnvironmentError,
   CloudEnvironmentResolution,
@@ -445,6 +452,8 @@ export const WS_METHODS = {
   cloudAgentReviewInspect: "cloud.agents.inspect",
   cloudAgentReviewAct: "cloud.agents.act",
   cloudAgentReviewShare: "cloud.agents.share",
+  cloudHandoffPreview: "cloud.handoff.preview",
+  cloudHandoffExecute: "cloud.handoff.execute",
   sharedBrowserIssue: "sharedBrowser.issue",
   sharedBrowserKeepAlive: "sharedBrowser.keepAlive",
   sharedBrowserTakeControl: "sharedBrowser.takeControl",
@@ -842,6 +851,18 @@ const WsCloudAgentReviewShareRpc = Rpc.make(WS_METHODS.cloudAgentReviewShare, {
     CloudAllocationControllerError,
     EnvironmentAuthorizationError,
   ]),
+});
+
+const WsCloudHandoffPreviewRpc = Rpc.make(WS_METHODS.cloudHandoffPreview, {
+  payload: CloudHandoffPreviewInput,
+  success: CloudHandoffPreview,
+  error: Schema.Union([CloudHandoffError, EnvironmentAuthorizationError]),
+});
+
+const WsCloudHandoffExecuteRpc = Rpc.make(WS_METHODS.cloudHandoffExecute, {
+  payload: CloudHandoffExecuteInput,
+  success: CloudHandoffExecuteResult,
+  error: Schema.Union([CloudHandoffError, EnvironmentAuthorizationError]),
 });
 
 const WsSharedBrowserIssueRpc = Rpc.make(WS_METHODS.sharedBrowserIssue, {
@@ -1637,6 +1658,8 @@ export const WsRpcGroup = RpcGroup.make(
   WsCloudAgentReviewInspectRpc,
   WsCloudAgentReviewActRpc,
   WsCloudAgentReviewShareRpc,
+  WsCloudHandoffPreviewRpc,
+  WsCloudHandoffExecuteRpc,
   WsSharedBrowserIssueRpc,
   WsSharedBrowserKeepAliveRpc,
   WsSharedBrowserTakeControlRpc,

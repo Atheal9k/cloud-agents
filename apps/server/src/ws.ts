@@ -122,6 +122,7 @@ import * as ServerSelfUpdate from "./cloud/selfUpdate.ts";
 import * as CloudAllocationController from "./cloud/CloudAllocationController.ts";
 import * as CloudArtifactAccess from "./cloud/CloudArtifactAccess.ts";
 import * as CloudAgentReview from "./cloud/CloudAgentReview.ts";
+import * as CloudHandoff from "./cloud/CloudHandoff.ts";
 import * as CloudEnvironmentBuildRunner from "./cloud/CloudEnvironmentBuildRunner.ts";
 import * as SharedBrowserGateway from "./cloud/SharedBrowserGateway.ts";
 import * as ServerLifecycleEvents from "./serverLifecycleEvents.ts";
@@ -570,6 +571,7 @@ const makeWsRpcLayer = (
       const sharedBrowserGateway = yield* SharedBrowserGateway.SharedBrowserGateway;
       const cloudArtifactAccess = yield* CloudArtifactAccess.CloudArtifactAccess;
       const cloudAgentReview = yield* CloudAgentReview.CloudAgentReviewService;
+      const cloudHandoff = yield* CloudHandoff.CloudHandoff;
       const cloudBuildRunner = yield* CloudEnvironmentBuildRunner.CloudEnvironmentBuildRunner;
       const deviceService = yield* DeviceService.DeviceService;
       const deviceHostContext =
@@ -3560,6 +3562,14 @@ const makeWsRpcLayer = (
         [WS_METHODS.cloudAgentReviewShare]: (input) =>
           observeRpcEffect(WS_METHODS.cloudAgentReviewShare, cloudAgentReview.share(input), {
             "rpc.aggregate": "cloud-review",
+          }),
+        [WS_METHODS.cloudHandoffPreview]: (input) =>
+          observeRpcEffect(WS_METHODS.cloudHandoffPreview, cloudHandoff.preview(input), {
+            "rpc.aggregate": "cloud-handoff",
+          }),
+        [WS_METHODS.cloudHandoffExecute]: (input) =>
+          observeRpcEffect(WS_METHODS.cloudHandoffExecute, cloudHandoff.execute(input), {
+            "rpc.aggregate": "cloud-handoff",
           }),
         [WS_METHODS.previewAutomationConnect]: (input) =>
           observeRpcStreamEffect(

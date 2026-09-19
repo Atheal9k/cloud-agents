@@ -38,6 +38,7 @@ export * from "./cloudPublication.ts";
 export * from "./cloudRepository.ts";
 export * from "./cloudResults.ts";
 export * from "./cloudReview.ts";
+export * from "./cloudHandoff.ts";
 export * from "./pullRequest.ts";
 export * from "./orchestration.ts";
 export * from "./t3ProjectFile.ts";
