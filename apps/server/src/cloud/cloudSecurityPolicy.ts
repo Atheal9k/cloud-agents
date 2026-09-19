@@ -245,9 +245,15 @@ function secretAppliesTo(
   }
 }
 
+/**
+ * A Build's disk is shared by every run of the environment, so a user-scoped
+ * value never enters one even when it is labelled `build`. That matches what
+ * `cloudEnvironmentBuildSecrets` actually injects, so this resolution cannot
+ * promise a binding the Build runner then refuses.
+ */
 function availableInPhase(definition: CloudSecretDefinition, phase: CloudSecretPhase): boolean {
   return phase === "build"
-    ? definition.availability === "build"
+    ? definition.availability === "build" && definition.scope !== "user"
     : definition.availability !== "build";
 }
 

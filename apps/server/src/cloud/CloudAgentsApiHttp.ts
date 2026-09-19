@@ -112,7 +112,10 @@ const handleV1 = (deps: {
     const nowMs = DateTime.toEpochMillis(DateTime.nowUnsafe());
     const token = parseCloudAgentsApiAuthorization(request.headers.authorization);
     if (token instanceof CloudAgentsApiFailure) {
-      return errorResponse(token, limitHeaders(requestId, { remaining: 0, limit: 60, resetAtMs: nowMs }));
+      return errorResponse(
+        token,
+        limitHeaders(requestId, { remaining: 0, limit: 60, resetAtMs: nowMs }),
+      );
     }
     const principal = yield* deps.keys.authenticate(token);
     if (principal === null) {
@@ -130,7 +133,10 @@ const handleV1 = (deps: {
     );
     const meta = limitHeaders(requestId, decision);
     if (!decision.allowed) {
-      return errorResponse(new CloudAgentsApiFailure("rate_limited", "Rate limit exceeded.", 429), meta);
+      return errorResponse(
+        new CloudAgentsApiFailure("rate_limited", "Rate limit exceeded.", 429),
+        meta,
+      );
     }
     return yield* dispatchV1({
       api: deps.api,
@@ -199,7 +205,11 @@ const dispatchV1 = (input: {
           () => new CloudAgentsApiFailure("invalid_request", "Invalid create agent request.", 400),
         ),
       );
-      return jsonResponse(200, yield* api.createAgent({ principal, body, urlOrigin: origin }), meta);
+      return jsonResponse(
+        200,
+        yield* api.createAgent({ principal, body, urlOrigin: origin }),
+        meta,
+      );
     }
     if (method === "GET" && path === "/v1/agents") {
       const limit = parseLimitParam(url.searchParams.get("limit"));
@@ -225,7 +235,11 @@ const dispatchV1 = (input: {
     }
     const agentId = parts[2];
     if (method === "GET" && parts.length === 3) {
-      return jsonResponse(200, yield* api.getAgent({ principal, agentId, urlOrigin: origin }), meta);
+      return jsonResponse(
+        200,
+        yield* api.getAgent({ principal, agentId, urlOrigin: origin }),
+        meta,
+      );
     }
     if (method === "DELETE" && parts.length === 3) {
       return jsonResponse(200, yield* api.deleteAgent({ principal, agentId }), meta);
@@ -272,20 +286,14 @@ const dispatchV1 = (input: {
       }
       if (method === "GET" && parts.length === 6 && parts[5] === "stream") {
         const lastEventId = request.headers["last-event-id"] ?? undefined;
-        const events = yield* api.streamRun({
+        const streamed = yield* api.streamRun({
           principal,
           agentId,
           runId,
           ...(lastEventId === undefined || lastEventId.length === 0 ? {} : { lastEventId }),
           nowMs,
         });
-        const status = events.find((event) => event.event === "status");
-        const rest = events.filter((event) => event !== status);
-        const framed =
-          status === undefined
-            ? rest
-            : [{ event: status.event, data: status.data, createdAtMs: status.createdAtMs }, ...rest];
-        const body = framed.map((event) => encodeSse(event)).join("");
+        const body = streamed.events.map((event) => encodeSse(event)).join("");
         return HttpServerResponse.text(body, {
           status: 200,
           contentType: "text/event-stream",
@@ -293,8 +301,35 @@ const dispatchV1 = (input: {
             ...meta,
             "cache-control": "no-cache",
             "x-cursor-stream-retention-seconds": String(CLOUD_AGENTS_API_STREAM_RETENTION_SECONDS),
+            "x-t3-reconnect-source": streamed.reconnectSource,
           },
         });
+      }
+      if (method === "GET" && parts.length === 6 && parts[5] === "history") {
+        const kindParam = url.searchParams.get("kind") ?? "transcript";
+        if (
+          kindParam !== "transcript" &&
+          kindParam !== "tool" &&
+          kindParam !== "setup" &&
+          kindParam !== "artifacts"
+        ) {
+          return errorResponse(
+            new CloudAgentsApiFailure("invalid_request", "Unknown history kind.", 400),
+            meta,
+          );
+        }
+        const cursor = url.searchParams.get("cursor");
+        return jsonResponse(
+          200,
+          yield* api.listHistory({
+            principal,
+            agentId,
+            runId,
+            kind: kindParam,
+            ...(cursor === null ? {} : { cursor }),
+          }),
+          meta,
+        );
       }
     }
     return errorResponse(

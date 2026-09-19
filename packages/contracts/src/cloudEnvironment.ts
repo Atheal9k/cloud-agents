@@ -107,16 +107,30 @@ export const CloudEnvironmentRepository = Schema.Struct({
 });
 export type CloudEnvironmentRepository = typeof CloudEnvironmentRepository.Type;
 
+/** The same three scopes CA-49 resolves with; named here for environment code. */
+export const CloudEnvironmentSecretScope = CloudSecretScope;
+export type CloudEnvironmentSecretScope = CloudSecretScope;
+
 export const CloudEnvironmentSecretReference = Schema.Struct({
   name: TrimmedNonEmptyString,
   reference: TrimmedNonEmptyString,
+  /**
+   * `runtime` is an ordinary environment variable. `runtime-redacted` is still
+   * injected at boot but stripped from logs. `build` is Build-only.
+   */
   availability: Schema.Literals(["build", "runtime", "runtime-redacted"]),
-  /** CA-49 scope. Absent means the secret belongs to this environment alone. */
-  scope: Schema.optionalKey(CloudSecretScope),
+  /** Defaults to environment. User secrets never enter a shared Build. */
+  scope: Schema.optionalKey(CloudEnvironmentSecretScope),
   /** The user or team a `user`/`team` scoped secret belongs to. */
   owner: Schema.optionalKey(TrimmedNonEmptyString),
 });
 export type CloudEnvironmentSecretReference = typeof CloudEnvironmentSecretReference.Type;
+
+export function cloudEnvironmentSecretScope(
+  secret: CloudEnvironmentSecretReference,
+): CloudEnvironmentSecretScope {
+  return secret.scope ?? "environment";
+}
 
 export const CloudEnvironmentSavedSource = Schema.Union([
   Schema.Struct({

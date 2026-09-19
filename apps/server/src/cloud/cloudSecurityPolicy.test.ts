@@ -80,6 +80,19 @@ describe("cloud secret resolution", () => {
     expect(runtime.bindings.map((binding) => binding.name)).not.toContain("REGISTRY_TOKEN");
   });
 
+  it("never puts a user-scoped value on a shared Build disk", () => {
+    const build = resolveCloudSecretBindings({
+      definitions: [
+        ...definitions,
+        secret({ name: "PERSONAL_TOKEN", scope: "user", owner: "user-1", availability: "build" }),
+      ],
+      phase: "build",
+      ...run,
+    });
+
+    expect(build.bindings.map((binding) => binding.name)).toEqual(["REGISTRY_TOKEN"]);
+  });
+
   it("marks only runtime-redacted values for scrubbing and never leaks another user's secret", () => {
     const resolved = resolveCloudSecretBindings({ definitions, phase: "runtime", ...run });
 

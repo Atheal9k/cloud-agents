@@ -3,6 +3,7 @@ import {
   CloudEnvironmentBuildId,
   CloudEnvironmentError,
   CloudEnvironmentId,
+  cloudEnvironmentSecretValidationMessage,
   cloudEnvironmentVersionSummary,
   type CloudEnvironmentResolution,
   type CloudEnvironmentResolutionInput,
@@ -250,6 +251,10 @@ export const make = Effect.fn("CloudEnvironmentCatalog.make")(function* () {
             "version-conflict",
             `Environment '${input.environmentId}' does not have version ${input.expectedVersion}.`,
           );
+        }
+        const secretError = cloudEnvironmentSecretValidationMessage(input.secretReferences);
+        if (secretError !== undefined) {
+          return yield* catalogError("invalid-environment", secretError);
         }
         if (input.source.type !== "repository") {
           for (const entry of input.repositories) {

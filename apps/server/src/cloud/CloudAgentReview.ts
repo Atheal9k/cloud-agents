@@ -3,6 +3,7 @@ import * as NodeCrypto from "node:crypto";
 
 import {
   CLOUD_AGENT_REVIEW_SHARE_PREFIX,
+  CLOUD_REVIEW_DIFF_PREVIEW_CHARS,
   CloudAgentReviewError,
   CloudAllocationControllerError,
   CloudRunId,
@@ -109,7 +110,9 @@ export const make = Effect.fn("CloudAgentReview.make")(function* () {
     if (agent === undefined) {
       return yield* reviewError("agent-not-found", `Cloud agent '${agentId}' was not found.`);
     }
-    const allocation = snapshot.allocations.find((candidate) => candidate.id === agent.allocationId);
+    const allocation = snapshot.allocations.find(
+      (candidate) => candidate.id === agent.allocationId,
+    );
     if (allocation === undefined) {
       return yield* reviewError(
         "agent-not-found",
@@ -130,27 +133,34 @@ export const make = Effect.fn("CloudAgentReview.make")(function* () {
     const retained =
       Option.isSome(status) && status.value.status === "retained" ? status.value : undefined;
     const nowMillis = DateTime.toEpochMillis(yield* DateTime.now);
-    const expired =
-      retained !== undefined && Date.parse(retained.manifest.expiresAt) <= nowMillis;
+    const expired = retained !== undefined && Date.parse(retained.manifest.expiresAt) <= nowMillis;
     const missingResult = retained === undefined || expired;
     const texts = missingResult
       ? ([undefined, undefined, undefined] as const)
       : yield* Effect.all(
           [
-            results.readText(resultId, "diff").pipe(Effect.option),
-            results.readText(resultId, "verification").pipe(Effect.option),
-            results.readText(resultId, "transcript").pipe(Effect.option),
+            results
+              .readTextPrefix(resultId, "diff", CLOUD_REVIEW_DIFF_PREVIEW_CHARS)
+              .pipe(Effect.option),
+            results
+              .readTextPrefix(resultId, "verification", CLOUD_REVIEW_DIFF_PREVIEW_CHARS)
+              .pipe(Effect.option),
+            results
+              .readTextPrefix(resultId, "transcript", CLOUD_REVIEW_DIFF_PREVIEW_CHARS)
+              .pipe(Effect.option),
           ],
           { concurrency: "unbounded" },
         ).pipe(
-          Effect.map(
-            ([diff, verification, transcript]) =>
-              [
-                Option.getOrUndefined(diff),
-                Option.getOrUndefined(verification),
-                Option.getOrUndefined(transcript),
-              ] as const,
-          ),
+          Effect.map(([diff, verification, transcript]) => {
+            const preview = (value: typeof diff) => {
+              if (Option.isNone(value)) return undefined;
+              if (value.value.truncated) {
+                return `${value.value.text.slice(0, CLOUD_REVIEW_DIFF_PREVIEW_CHARS)}x`;
+              }
+              return value.value.text;
+            };
+            return [preview(diff), preview(verification), preview(transcript)] as const;
+          }),
         );
     const grant: CloudArtifactAccessGrant | undefined = missingResult
       ? undefined
@@ -237,13 +247,15 @@ export const make = Effect.fn("CloudAgentReview.make")(function* () {
         );
       }
       case "delete-pr":
-        yield* publication.deletePullRequest(allocation.id, allocation.attempt).pipe(
-          Effect.mapError((error) =>
-            error.reason === "publication-not-found" || error.reason === "pr-not-published"
-              ? reviewError("publication-not-found", error.message)
-              : reviewError("github-failed", error.message),
-          ),
-        );
+        yield* publication
+          .deletePullRequest(allocation.id, allocation.attempt)
+          .pipe(
+            Effect.mapError((error) =>
+              error.reason === "publication-not-found" || error.reason === "pr-not-published"
+                ? reviewError("publication-not-found", error.message)
+                : reviewError("github-failed", error.message),
+            ),
+          );
         break;
       case "wake": {
         if (agent.status === "ARCHIVED") {
@@ -306,9 +318,7 @@ export const make = Effect.fn("CloudAgentReview.make")(function* () {
     return yield* loadReview(next.allocation, input.agentId);
   });
 
-  const share = Effect.fn("CloudAgentReview.share")(function* (
-    input: CloudAgentReviewShareInput,
-  ) {
+  const share = Effect.fn("CloudAgentReview.share")(function* (input: CloudAgentReviewShareInput) {
     yield* locate(input.agentId);
     const nowMillis = DateTime.toEpochMillis(yield* DateTime.now);
     const token = NodeCrypto.randomBytes(32).toString("base64url");

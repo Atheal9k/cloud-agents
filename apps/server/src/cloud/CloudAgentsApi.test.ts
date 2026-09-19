@@ -84,14 +84,23 @@ it.effect("creates, isolates, cancels, archives, and deletes cloud agents", () =
       .pipe(Effect.flip);
     expect(isolated.code).toBe("agent_not_found");
 
-    const events = yield* api.streamRun({
+    const streamed = yield* api.streamRun({
       principal: userPrincipal,
       agentId: created.agent.id,
       runId: created.run.id,
       nowMs: Date.parse(created.run.createdAt),
     });
-    expect(events.some((event) => event.event === "status")).toBe(true);
-    expect(events.some((event) => event.event === "heartbeat")).toBe(true);
+    expect(streamed.events.some((event) => event.event === "status")).toBe(true);
+    expect(streamed.events.some((event) => event.event === "heartbeat")).toBe(true);
+    expect(streamed.reconnectSource).toBe("controller-transcript");
+    expect(
+      (yield* api.listHistory({
+        principal: userPrincipal,
+        agentId: created.agent.id,
+        runId: created.run.id,
+        kind: "setup",
+      })).items,
+    ).toHaveLength(1);
 
     const missingResume = yield* api
       .streamRun({
@@ -107,9 +116,9 @@ it.effect("creates, isolates, cancels, archives, and deletes cloud agents", () =
     expect(
       (yield* api.listAgents({ principal: userPrincipal, urlOrigin: "http://localhost" })).items,
     ).toHaveLength(1);
-    expect((yield* api.usage({ principal: userPrincipal, agentId: created.agent.id })).runs).toEqual(
-      [expect.objectContaining({ id: created.run.id })],
-    );
+    expect(
+      (yield* api.usage({ principal: userPrincipal, agentId: created.agent.id })).runs,
+    ).toEqual([expect.objectContaining({ id: created.run.id })]);
 
     yield* api.cancelRun({
       principal: userPrincipal,

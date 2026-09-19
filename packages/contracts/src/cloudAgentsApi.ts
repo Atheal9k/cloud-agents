@@ -5,6 +5,13 @@ import { CloudAgentStatus, CloudRunStatus } from "./cloudAllocation.ts";
 
 export const CLOUD_AGENTS_API_PREFIX = "/v1";
 export const CLOUD_AGENTS_API_STREAM_RETENTION_SECONDS = 24 * 60 * 60;
+/** Ring-buffer cap for the controller's derived run stream. Not a second event store. */
+export const CLOUD_AGENTS_API_STREAM_RETENTION_EVENTS = 10_000;
+export const CLOUD_AGENTS_API_STREAM_RETENTION_BYTES = 8 * 1024 * 1024;
+export const CLOUD_AGENTS_API_STREAM_HEARTBEAT_MS = 15_000;
+export const CLOUD_AGENTS_API_HISTORY_PAGE_BYTES = 256 * 1024;
+export const CLOUD_AGENTS_API_RESULT_SUMMARY_CHARS = 8 * 1024;
+export const CLOUD_AGENTS_API_WORKER_TURN_LIMIT = 20;
 export const CLOUD_AGENTS_API_DEFAULT_PAGE_LIMIT = 20;
 export const CLOUD_AGENTS_API_MAX_PAGE_LIMIT = 100;
 export const CLOUD_AGENTS_API_MAX_IMAGES = 5;
@@ -324,6 +331,37 @@ export const CloudAgentsApiStreamEvent = Schema.Struct({
   createdAtMs: NonNegativeInt,
 });
 export type CloudAgentsApiStreamEvent = typeof CloudAgentsApiStreamEvent.Type;
+
+/** Live workers resume T3's cursor; hibernated agents stay on the controller archive. */
+export const CloudAgentsApiReconnectSource = Schema.Literals([
+  "worker-cursor",
+  "controller-transcript",
+]);
+export type CloudAgentsApiReconnectSource = typeof CloudAgentsApiReconnectSource.Type;
+
+export const CloudAgentsApiHistoryKind = Schema.Literals([
+  "transcript",
+  "tool",
+  "setup",
+  "artifacts",
+]);
+export type CloudAgentsApiHistoryKind = typeof CloudAgentsApiHistoryKind.Type;
+
+export const CloudAgentsApiHistoryItem = Schema.Struct({
+  id: TrimmedNonEmptyString,
+  kind: CloudAgentsApiHistoryKind,
+  summary: TrimmedNonEmptyString,
+  bytes: NonNegativeInt,
+});
+export type CloudAgentsApiHistoryItem = typeof CloudAgentsApiHistoryItem.Type;
+
+export const CloudAgentsApiHistoryPage = Schema.Struct({
+  items: Schema.Array(CloudAgentsApiHistoryItem),
+  nextCursor: Schema.optionalKey(TrimmedNonEmptyString),
+  truncated: Schema.Boolean,
+  bytes: NonNegativeInt,
+});
+export type CloudAgentsApiHistoryPage = typeof CloudAgentsApiHistoryPage.Type;
 
 export const CloudAgentsApiCreateKeyRequest = Schema.Struct({
   name: TrimmedNonEmptyString,

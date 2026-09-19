@@ -11,9 +11,10 @@
 // @effect-diagnostics nodeBuiltinImport:off
 import * as NodeCrypto from "node:crypto";
 import {
+  admitCloudEnvironmentBuild,
   cloudEnvironmentBase,
   type CloudEnvironmentBuild,
-  type CloudEnvironmentBuildError,
+  CloudEnvironmentBuildError,
   type CloudEnvironmentBuildGitSetup,
   type CloudEnvironmentBuildId,
   type CloudEnvironmentBuildSnapshot,
@@ -23,7 +24,10 @@ import {
   type CloudEnvironmentVersion,
   type CloudRepositoryCommandResult,
   type CloudRunStageTiming,
+  injectCloudEnvironmentSecrets,
+  missingCloudEnvironmentSecrets,
   NonNegativeInt,
+  redactCloudEnvironmentSecretOutput,
 } from "@t3tools/contracts";
 import { HostProcessPlatform } from "@t3tools/shared/hostProcess";
 import * as Config from "effect/Config";
@@ -57,6 +61,11 @@ export interface CloudEnvironmentBuildRunInput {
   /** Agent-requested Builds are draft; a person saving one is what activates it. */
   readonly draft: boolean;
   readonly occurredAt: string;
+  /**
+   * Values keyed by secret reference. Only Build-only, non-user secrets are
+   * injected into `install`. Runtime and user secrets stay off the snapshot.
+   */
+  readonly secretValues?: Readonly<Record<string, string>>;
   /**
    * Runs once the record exists. A caller that must answer before the Build
    * finishes, such as an RPC, uses this to hand back the running record.
@@ -219,6 +228,8 @@ export const make = Effect.fn("CloudEnvironmentBuildRunner.make")(function* (inp
     readonly buildId: CloudEnvironmentBuildId;
     readonly cwd: string;
     readonly install: string;
+    readonly secretEnv: Readonly<Record<string, string>>;
+    readonly redact: ReadonlyArray<string>;
     readonly logs: Array<CloudRepositoryCommandResult>;
   }): Effect.fn.Return<void, StageFailure> {
     const startedAt = yield* now;
@@ -242,7 +253,7 @@ export const make = Effect.fn("CloudEnvironmentBuildRunner.make")(function* (inp
         command: shell.command,
         args: shell.args,
         cwd: request.cwd,
-        env: { CI: "1", GIT_TERMINAL_PROMPT: "0" },
+        env: { CI: "1", GIT_TERMINAL_PROMPT: "0", ...request.secretEnv },
         timeout: Duration.seconds(installTimeoutSeconds),
         timeoutBehavior: "timedOutResult",
         maxOutputBytes: MAX_LOG_OUTPUT_BYTES,
@@ -267,8 +278,8 @@ export const make = Effect.fn("CloudEnvironmentBuildRunner.make")(function* (inp
       completedAt: yield* now,
       exitCode: result.code,
       timedOut: result.timedOut,
-      stdout: result.stdout,
-      stderr: result.stderr,
+      stdout: redactCloudEnvironmentSecretOutput(result.stdout, request.redact),
+      stderr: redactCloudEnvironmentSecretOutput(result.stderr, request.redact),
       stdoutTruncated: result.stdoutTruncated,
       stderrTruncated: result.stderrTruncated,
     });
@@ -336,6 +347,8 @@ export const make = Effect.fn("CloudEnvironmentBuildRunner.make")(function* (inp
     readonly version: CloudEnvironmentVersion;
     readonly gitSetup: ReadonlyArray<CloudEnvironmentBuildGitSetup>;
     readonly runId: string;
+    readonly secretEnv: Readonly<Record<string, string>>;
+    readonly redact: ReadonlyArray<string>;
     readonly logs: Array<CloudRepositoryCommandResult>;
     readonly timings: MutableTimings;
   }): Effect.fn.Return<CloudEnvironmentBuildSnapshot, StageFailure> {
@@ -367,6 +380,8 @@ export const make = Effect.fn("CloudEnvironmentBuildRunner.make")(function* (inp
         buildId: request.buildId,
         cwd: path.join(buildDirectory, workspaceSegment(primary.repository)),
         install,
+        secretEnv: request.secretEnv,
+        redact: request.redact,
         logs: request.logs,
       });
       request.timings.install = timing(installStartedAt, yield* now);
@@ -389,6 +404,30 @@ export const make = Effect.fn("CloudEnvironmentBuildRunner.make")(function* (inp
       Effect.gen(function* () {
         const version = request.version;
         const runId = `build:${request.buildId}`;
+        const admission = admitCloudEnvironmentBuild({ version });
+        if (admission.status === "rejected") {
+          return yield* new CloudEnvironmentBuildError({
+            reason: "admission-rejected",
+            message: admission.message,
+          });
+        }
+        const secretValues = request.secretValues ?? {};
+        const injected = injectCloudEnvironmentSecrets({
+          phase: "build",
+          secrets: version.secretReferences,
+          values: secretValues,
+        });
+        const missing = missingCloudEnvironmentSecrets({
+          phase: "build",
+          secrets: version.secretReferences,
+          values: secretValues,
+        });
+        if (missing.length > 0) {
+          return yield* new CloudEnvironmentBuildError({
+            reason: "admission-rejected",
+            message: `Build-only secret '${missing[0]!.name}' is unavailable.`,
+          });
+        }
         const activeBuild = yield* catalog.activeBuild(version.environmentId);
 
         const resolved = yield* Effect.result(resolveGitSetup(version, runId));
@@ -455,6 +494,8 @@ export const make = Effect.fn("CloudEnvironmentBuildRunner.make")(function* (inp
             version,
             gitSetup,
             runId,
+            secretEnv: injected.env,
+            redact: injected.redact,
             logs,
             timings,
           }),

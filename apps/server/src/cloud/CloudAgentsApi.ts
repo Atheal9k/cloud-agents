@@ -2,12 +2,16 @@
 import * as NodeCrypto from "node:crypto";
 
 import {
+  CLOUD_AGENTS_API_HISTORY_PAGE_BYTES,
+  CLOUD_AGENTS_API_RESULT_SUMMARY_CHARS,
+  CLOUD_AGENTS_API_WORKER_TURN_LIMIT,
   CloudAgentId,
   CloudAllocationControllerError,
   CloudProviderUnansweredRequestSeconds,
   CloudRunId,
   CommandId,
   MessageId,
+  OrchestrationThreadDetailSnapshot,
   ProviderInstanceId,
   RunAllocationAttempt,
   RunAllocationId,
@@ -24,6 +28,9 @@ import {
   type CloudAgentsApiIdResponse,
   type CloudAgentsApiModel,
   type CloudAgentsApiPrincipal,
+  type CloudAgentsApiHistoryKind,
+  type CloudAgentsApiHistoryPage,
+  type CloudAgentsApiReconnectSource,
   type CloudAgentsApiRepoInput,
   type CloudAgentsApiRepository,
   type CloudAgentsApiRun,
@@ -44,6 +51,19 @@ import * as SqlSchema from "effect/unstable/sql/SqlSchema";
 import * as CloudAllocationController from "./CloudAllocationController.ts";
 import * as CloudRunPublication from "./CloudRunPublication.ts";
 import * as CloudRunResults from "./CloudRunResults.ts";
+import * as CloudWorkerRunClient from "./CloudWorkerRunClient.ts";
+import {
+  appendBoundedStreamEvent,
+  emptyStreamBuffer,
+  eventsFromThreadSnapshot,
+  historyItemsFromSnapshot,
+  maybeHeartbeat,
+  mergeStreamSources,
+  pageHistory,
+  resumeBoundedStream,
+  selectReconnectSource,
+  type CloudStreamBuffer,
+} from "./cloudAgentEventStream.ts";
 import { isDeletionPurgeReady } from "./cloudRetentionPolicy.ts";
 import {
   agentUsageFromRuns,
@@ -59,7 +79,6 @@ import {
   publicAgentSummary,
   publicGit,
   publicRun,
-  resumeStream,
   streamEventId,
   titleFromPrompt,
   validateCreateAgentRequest,
@@ -177,7 +196,20 @@ export class CloudAgentsApi extends Context.Service<
       readonly runId: string;
       readonly lastEventId?: string;
       readonly nowMs: number;
-    }) => Effect.Effect<ReadonlyArray<CloudAgentsApiStreamEvent>, CloudAgentsApiFailure>;
+    }) => Effect.Effect<
+      {
+        readonly events: ReadonlyArray<CloudAgentsApiStreamEvent>;
+        readonly reconnectSource: CloudAgentsApiReconnectSource;
+      },
+      CloudAgentsApiFailure
+    >;
+    readonly listHistory: (input: {
+      readonly principal: CloudAgentsApiPrincipal;
+      readonly agentId: string;
+      readonly runId: string;
+      readonly kind: CloudAgentsApiHistoryKind;
+      readonly cursor?: string;
+    }) => Effect.Effect<CloudAgentsApiHistoryPage, CloudAgentsApiFailure>;
     readonly appendStreamEvent: (input: {
       readonly runId: string;
       readonly event: CloudAgentsApiStreamEvent["event"];
@@ -235,8 +267,12 @@ export const make = Effect.fn("CloudAgentsApi.make")(function* () {
   const publication = Option.getOrUndefined(publicationOption);
   const providers = Option.getOrUndefined(providersOption);
   const projection = Option.getOrUndefined(projectionOption);
-  const streams = yield* Ref.make<ReadonlyMap<string, ReadonlyArray<CloudAgentsApiStreamEvent>>>(
-    new Map(),
+  const workerClient = Option.getOrUndefined(
+    yield* Effect.serviceOption(CloudWorkerRunClient.CloudWorkerRunClient),
+  );
+  const streams = yield* Ref.make<ReadonlyMap<string, CloudStreamBuffer>>(new Map());
+  const decodeThreadSnapshot = Schema.decodeUnknownOption(
+    Schema.fromJsonString(OrchestrationThreadDetailSnapshot),
   );
 
   const readRecord = SqlSchema.findAll({
@@ -262,15 +298,15 @@ export const make = Effect.fn("CloudAgentsApi.make")(function* () {
 
   const appendStreamEvent: CloudAgentsApi["Service"]["appendStreamEvent"] = (input) =>
     Ref.modify(streams, (current) => {
-      const existing = current.get(input.runId) ?? [];
+      const existing = current.get(input.runId) ?? emptyStreamBuffer();
       const event: CloudAgentsApiStreamEvent = {
-        ...(input.id === false ? {} : { id: streamEventId(input.nowMs, existing.length) }),
+        ...(input.id === false ? {} : { id: streamEventId(input.nowMs, existing.events.length) }),
         event: input.event,
         data: input.data,
         createdAtMs: input.nowMs,
       };
       const next = new Map(current);
-      next.set(input.runId, [...existing, event]);
+      next.set(input.runId, appendBoundedStreamEvent(existing, event));
       return [event, next] as const;
     });
 
@@ -294,10 +330,12 @@ export const make = Effect.fn("CloudAgentsApi.make")(function* () {
     }
     if (agent === undefined || allocation === undefined) {
       const deleted = current.deletions?.some((row) => row.agentId === agentId) === true;
-      return yield* Effect.fail(apiError(
-        "agent_not_found",
-        deleted ? `Agent '${agentId}' was not found.` : `Agent '${agentId}' was not found.`,
-      ));
+      return yield* Effect.fail(
+        apiError(
+          "agent_not_found",
+          deleted ? `Agent '${agentId}' was not found.` : `Agent '${agentId}' was not found.`,
+        ),
+      );
     }
     const runs = (current.runs ?? []).filter((run) => run.agentId === agentId);
     const payload = decodeRecord(owned.recordJson);
@@ -325,7 +363,9 @@ export const make = Effect.fn("CloudAgentsApi.make")(function* () {
             yield* publication.status(allocation.id, allocation.attempt).pipe(Effect.option),
           );
     const prUrl =
-      published?.outcome.status === "published" ? published.outcome.pullRequestUrl : repos?.[0]?.prUrl;
+      published?.outcome.status === "published"
+        ? published.outcome.pullRequestUrl
+        : repos?.[0]?.prUrl;
     return publicGit(agent, repos, prUrl);
   });
 
@@ -350,7 +390,9 @@ export const make = Effect.fn("CloudAgentsApi.make")(function* () {
             ...(principal.userFirstName === undefined
               ? {}
               : { userFirstName: principal.userFirstName }),
-            ...(principal.userLastName === undefined ? {} : { userLastName: principal.userLastName }),
+            ...(principal.userLastName === undefined
+              ? {}
+              : { userLastName: principal.userLastName }),
           }),
     });
 
@@ -385,10 +427,9 @@ export const make = Effect.fn("CloudAgentsApi.make")(function* () {
       if (input.body.agentId !== undefined) {
         const existing = current.agents?.find((agent) => agent.id === input.body.agentId);
         if (existing !== undefined) {
-          return yield* Effect.fail(apiError(
-            "agent_id_conflict",
-            `Agent '${input.body.agentId}' already exists.`,
-          ));
+          return yield* Effect.fail(
+            apiError("agent_id_conflict", `Agent '${input.body.agentId}' already exists.`),
+          );
         }
       }
       const occurredAt = DateTime.formatIso(yield* DateTime.now);
@@ -479,11 +520,15 @@ export const make = Effect.fn("CloudAgentsApi.make")(function* () {
             ...(input.body.workOnCurrentBranch === undefined
               ? {}
               : { workOnCurrentBranch: input.body.workOnCurrentBranch }),
-            ...(input.body.autoCreatePR === undefined ? {} : { autoCreatePR: input.body.autoCreatePR }),
+            ...(input.body.autoCreatePR === undefined
+              ? {}
+              : { autoCreatePR: input.body.autoCreatePR }),
           })},
           ${occurredAt}
         )
-      `.pipe(Effect.mapError(() => apiError("internal_error", "Could not persist the agent record.")));
+      `.pipe(
+        Effect.mapError(() => apiError("internal_error", "Could not persist the agent record.")),
+      );
       const located = yield* locate(input.principal, agentId);
       const run = located.runs.find((candidate) => candidate.id === runId) ?? located.runs[0];
       if (run === undefined) {
@@ -549,10 +594,14 @@ export const make = Effect.fn("CloudAgentsApi.make")(function* () {
       if (invalid !== undefined) return yield* Effect.fail(invalid);
       const located = yield* locate(input.principal, input.agentId);
       if (located.agent.status === "ARCHIVED") {
-        return yield* Effect.fail(apiError("agent_archived", `Agent '${input.agentId}' is archived.`));
+        return yield* Effect.fail(
+          apiError("agent_archived", `Agent '${input.agentId}' is archived.`),
+        );
       }
       if (located.runs.some((run) => isActiveRunStatus(run.status))) {
-        return yield* Effect.fail(apiError("agent_busy", `Agent '${input.agentId}' already has an active run.`));
+        return yield* Effect.fail(
+          apiError("agent_busy", `Agent '${input.agentId}' already has an active run.`),
+        );
       }
       const occurredAt = DateTime.formatIso(yield* DateTime.now);
       const runId = CloudRunId.make(`run-${NodeCrypto.randomUUID()}`);
@@ -573,8 +622,7 @@ export const make = Effect.fn("CloudAgentsApi.make")(function* () {
             title,
             selectedRef: previous?.selectedRef ?? located.agent.baseCommit,
             unansweredRequestSeconds:
-              previous?.unansweredRequestSeconds ??
-              CloudProviderUnansweredRequestSeconds.make(900),
+              previous?.unansweredRequestSeconds ?? CloudProviderUnansweredRequestSeconds.make(900),
             turn: {
               commandId,
               messageId,
@@ -595,7 +643,9 @@ export const make = Effect.fn("CloudAgentsApi.make")(function* () {
       const refreshed = yield* locate(input.principal, input.agentId);
       const run = refreshed.runs.find((candidate) => candidate.id === runId);
       if (run === undefined) {
-        return yield* Effect.fail(apiError("internal_error", "The follow-up run was not recorded."));
+        return yield* Effect.fail(
+          apiError("internal_error", "The follow-up run was not recorded."),
+        );
       }
       yield* seedStatus(run, Date.parse(occurredAt) || epochNowMs());
       return { run: publicRun(run) };
@@ -629,9 +679,11 @@ export const make = Effect.fn("CloudAgentsApi.make")(function* () {
           located.allocation.attempt,
         );
         const text = Option.getOrUndefined(
-          yield* results.readText(resultId, "transcript").pipe(Effect.option),
+          yield* results
+            .readTextPrefix(resultId, "transcript", CLOUD_AGENTS_API_RESULT_SUMMARY_CHARS)
+            .pipe(Effect.option),
         );
-        result = text;
+        result = text?.text;
       }
       return publicRun(run, {
         ...(git === undefined ? {} : { git }),
@@ -647,7 +699,9 @@ export const make = Effect.fn("CloudAgentsApi.make")(function* () {
         return yield* Effect.fail(apiError("run_not_found", `Run '${input.runId}' was not found.`));
       }
       if (!isActiveRunStatus(run.status)) {
-        return yield* Effect.fail(apiError("run_not_cancellable", `Run '${input.runId}' cannot be cancelled.`));
+        return yield* Effect.fail(
+          apiError("run_not_cancellable", `Run '${input.runId}' cannot be cancelled.`),
+        );
       }
       const occurredAt = DateTime.formatIso(yield* DateTime.now);
       yield* allocations
@@ -698,10 +752,9 @@ export const make = Effect.fn("CloudAgentsApi.make")(function* () {
         type === "allocation.agent-delete" &&
         located.runs.some((run) => isActiveRunStatus(run.status))
       ) {
-        return yield* Effect.fail(apiError(
-          "agent_busy",
-          `Agent '${input.agentId}' still has an active run.`,
-        ));
+        return yield* Effect.fail(
+          apiError("agent_busy", `Agent '${input.agentId}' still has an active run.`),
+        );
       }
       const occurredAt = DateTime.formatIso(yield* DateTime.now);
       yield* allocations
@@ -717,10 +770,12 @@ export const make = Effect.fn("CloudAgentsApi.make")(function* () {
         const after = yield* snapshot;
         const allocation = after.allocations.find((row) => row.id === located.allocation.id);
         if (allocation !== undefined && isDeletionPurgeReady(allocation)) {
-          const purged = yield* results.purgeAllocation({
-            allocationId: allocation.id,
-            attempts: Array.from({ length: allocation.attempt }, (_, index) => index + 1),
-          }).pipe(Effect.orElseSucceed(() => []));
+          const purged = yield* results
+            .purgeAllocation({
+              allocationId: allocation.id,
+              attempts: Array.from({ length: allocation.attempt }, (_, index) => index + 1),
+            })
+            .pipe(Effect.orElseSucceed(() => []));
           yield* allocations
             .purgeAllocation({
               allocationId: allocation.id,
@@ -733,6 +788,20 @@ export const make = Effect.fn("CloudAgentsApi.make")(function* () {
       return { id: input.agentId };
     });
 
+  const retainedSnapshot = Effect.fn("CloudAgentsApi.retainedSnapshot")(function* (
+    allocation: RunAllocation,
+  ) {
+    if (results === undefined) return undefined;
+    const resultId = CloudRunResults.cloudResultIdFor(allocation.id, allocation.attempt);
+    const prefix = Option.getOrUndefined(
+      yield* results
+        .readTextPrefix(resultId, "transcript", CLOUD_AGENTS_API_HISTORY_PAGE_BYTES)
+        .pipe(Effect.option),
+    );
+    if (prefix === undefined || prefix.truncated) return undefined;
+    return Option.getOrUndefined(decodeThreadSnapshot(prefix.text));
+  });
+
   const streamRun: CloudAgentsApi["Service"]["streamRun"] = (input) =>
     Effect.gen(function* () {
       const located = yield* locate(input.principal, input.agentId);
@@ -740,53 +809,163 @@ export const make = Effect.fn("CloudAgentsApi.make")(function* () {
       if (run === undefined) {
         return yield* Effect.fail(apiError("run_not_found", `Run '${input.runId}' was not found.`));
       }
-      const log = (yield* Ref.get(streams)).get(run.id) ?? [];
-      const events: CloudAgentsApiStreamEvent[] = [...log];
-      if (!events.some((event) => event.event === "status")) {
-        events.unshift({
-          event: "status",
-          data: { runId: run.id, status: run.status },
-          createdAtMs: Date.parse(run.createdAt) || input.nowMs,
-        });
+      const reconnect = selectReconnectSource({
+        agent: located.agent,
+        allocation: located.allocation,
+        workerTurnLimit: CLOUD_AGENTS_API_WORKER_TURN_LIMIT,
+      });
+      const workerWindow =
+        reconnect.turnLimit === undefined ? undefined : { turnLimit: reconnect.turnLimit };
+      let workerEvents: ReadonlyArray<CloudAgentsApiStreamEvent> = [];
+      if (reconnect.source === "worker-cursor" && workerClient !== undefined) {
+        const detail = yield* workerClient
+          .threadDetail(located.allocation, workerWindow)
+          .pipe(Effect.option);
+        if (Option.isSome(detail)) {
+          workerEvents = eventsFromThreadSnapshot({
+            snapshot: detail.value,
+            run,
+            nowMs: input.nowMs,
+          });
+        }
       }
-      if (isActiveRunStatus(run.status) && !events.some((event) => event.event === "heartbeat")) {
-        events.push({
-          id: streamEventId(input.nowMs, events.length),
-          event: "heartbeat",
-          data: {},
-          createdAtMs: input.nowMs,
-        });
+      let controllerEvents: ReadonlyArray<CloudAgentsApiStreamEvent> = [];
+      if (reconnect.source === "controller-transcript") {
+        const snapshot = yield* retainedSnapshot(located.allocation);
+        if (snapshot !== undefined) {
+          controllerEvents = eventsFromThreadSnapshot({
+            snapshot,
+            run,
+            nowMs: input.nowMs,
+          });
+        }
       }
+      const log = (yield* Ref.get(streams)).get(run.id) ?? emptyStreamBuffer();
+      const merged = mergeStreamSources({
+        live: log.events,
+        worker: workerEvents,
+        controller: controllerEvents,
+      });
+      const withStatus = merged.some((event) => event.event === "status")
+        ? merged
+        : [
+            {
+              event: "status" as const,
+              data: { runId: run.id, status: run.status },
+              createdAtMs: Date.parse(run.createdAt) || input.nowMs,
+            },
+            ...merged,
+          ];
+      let events = maybeHeartbeat({
+        events: withStatus,
+        nowMs: input.nowMs,
+        active: isActiveRunStatus(run.status),
+      });
       if (run.status === "ERROR" && !events.some((event) => event.event === "error")) {
-        events.push({
-          id: streamEventId(input.nowMs, events.length),
-          event: "error",
-          data: { code: "internal_error", message: "The run failed." },
-          createdAtMs: input.nowMs,
-        });
+        events = [
+          ...events,
+          {
+            id: streamEventId(input.nowMs, events.length),
+            event: "error",
+            data: { code: "internal_error", message: "The run failed." },
+            createdAtMs: input.nowMs,
+          },
+        ];
       }
       if (isTerminalRunStatus(run.status) && !events.some((event) => event.event === "done")) {
         const completedMs = Date.parse(run.updatedAt) || input.nowMs;
-        events.push({
-          id: streamEventId(completedMs, events.length),
-          event: "result",
-          data: { runId: run.id, status: run.status },
-          createdAtMs: completedMs,
-        });
-        events.push({
-          id: streamEventId(completedMs, events.length + 1),
-          event: "done",
-          data: {},
-          createdAtMs: completedMs,
-        });
+        events = [
+          ...events,
+          {
+            id: streamEventId(completedMs, events.length),
+            event: "result",
+            data: { runId: run.id, status: run.status },
+            createdAtMs: completedMs,
+          },
+          {
+            id: streamEventId(completedMs, events.length + 1),
+            event: "done",
+            data: {},
+            createdAtMs: completedMs,
+          },
+        ];
       }
-      const resumed = resumeStream({
-        events,
+      let buffer = emptyStreamBuffer();
+      for (const event of events) buffer = appendBoundedStreamEvent(buffer, event);
+      const resumed = resumeBoundedStream({
+        buffer,
         lastEventId: input.lastEventId,
         nowMs: input.nowMs,
       });
       if (!resumed.ok) return yield* Effect.fail(resumed.error);
-      return resumed.events;
+      return { events: resumed.events, reconnectSource: reconnect.source };
+    });
+
+  const listHistory: CloudAgentsApi["Service"]["listHistory"] = (input) =>
+    Effect.gen(function* () {
+      const located = yield* locate(input.principal, input.agentId);
+      const run = located.runs.find((candidate) => candidate.id === input.runId);
+      if (run === undefined) {
+        return yield* Effect.fail(apiError("run_not_found", `Run '${input.runId}' was not found.`));
+      }
+      const reconnect = selectReconnectSource({
+        agent: located.agent,
+        allocation: located.allocation,
+        workerTurnLimit: CLOUD_AGENTS_API_WORKER_TURN_LIMIT,
+      });
+      const workerWindow =
+        reconnect.turnLimit === undefined ? undefined : { turnLimit: reconnect.turnLimit };
+      if (input.kind === "artifacts") {
+        if (results === undefined) {
+          return pageHistory({ items: [] });
+        }
+        const resultId = CloudRunResults.cloudResultIdFor(
+          located.allocation.id,
+          located.allocation.attempt,
+        );
+        const status = Option.getOrUndefined(yield* results.status(resultId).pipe(Effect.option));
+        const artifacts =
+          status?.status === "retained"
+            ? status.manifest.artifacts.map((artifact) => ({
+                id: artifact.id,
+                kind: "artifacts" as const,
+                summary: artifact.name,
+                bytes: artifact.sizeBytes,
+              }))
+            : [];
+        return pageHistory({
+          items: artifacts,
+          ...(input.cursor === undefined ? {} : { cursor: input.cursor }),
+        });
+      }
+      if (input.kind === "setup") {
+        const setup = located.allocation.execution;
+        const summary = setup === undefined ? located.agent.repository : `${setup.selectedRef}`;
+        return pageHistory({
+          items: [
+            {
+              id: `setup:${located.allocation.id}:${located.allocation.attempt}`,
+              kind: "setup",
+              summary,
+              bytes: Buffer.byteLength(summary, "utf8"),
+            },
+          ],
+          ...(input.cursor === undefined ? {} : { cursor: input.cursor }),
+        });
+      }
+      let snapshot: OrchestrationThreadDetailSnapshot | undefined;
+      if (reconnect.source === "worker-cursor" && workerClient !== undefined) {
+        snapshot = Option.getOrUndefined(
+          yield* workerClient.threadDetail(located.allocation, workerWindow).pipe(Effect.option),
+        );
+      } else {
+        snapshot = yield* retainedSnapshot(located.allocation);
+      }
+      return pageHistory({
+        items: snapshot === undefined ? [] : historyItemsFromSnapshot(snapshot, input.kind),
+        ...(input.cursor === undefined ? {} : { cursor: input.cursor }),
+        byteBudget: CLOUD_AGENTS_API_HISTORY_PAGE_BYTES,
+      });
     });
 
   return CloudAgentsApi.of({
@@ -803,6 +982,7 @@ export const make = Effect.fn("CloudAgentsApi.make")(function* () {
     unarchive: mutateLifecycle("allocation.agent-unarchive"),
     deleteAgent: mutateLifecycle("allocation.agent-delete"),
     streamRun,
+    listHistory,
     appendStreamEvent,
     listModels,
     listRepositories,

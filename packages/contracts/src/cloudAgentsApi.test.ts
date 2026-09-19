@@ -4,6 +4,7 @@ import * as Schema from "effect/Schema";
 import {
   CloudAgentsApiCreateAgentRequest,
   CloudAgentsApiErrorBody,
+  CloudAgentsApiHistoryPage,
   CloudAgentsApiMe,
   CloudAgentsApiStreamEvent,
 } from "./cloudAgentsApi.ts";
@@ -42,5 +43,12 @@ describe("cloud agents API contracts", () => {
         createdAtMs: 1_713_033_000_000,
       }).event,
     ).toBe("heartbeat");
+    expect(
+      Schema.decodeUnknownSync(CloudAgentsApiHistoryPage)({
+        items: [{ id: "msg:1", kind: "transcript", summary: "Hello", bytes: 5 }],
+        truncated: false,
+        bytes: 5,
+      }).items,
+    ).toHaveLength(1);
   });
 });

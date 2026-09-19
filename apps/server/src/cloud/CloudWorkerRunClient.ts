@@ -32,6 +32,11 @@ export class CloudWorkerRunClient extends Context.Service<
     readonly status: (
       allocation: RunAllocation,
     ) => Effect.Effect<CloudWorkerTurnStatus, CloudWorkerRunClientError>;
+    /** Windowed T3 thread snapshot. Callers pass turnLimit so reconnect stays bounded. */
+    readonly threadDetail: (
+      allocation: RunAllocation,
+      window?: { readonly turnLimit?: number; readonly beforeCursor?: string },
+    ) => Effect.Effect<OrchestrationThreadDetailSnapshot, CloudWorkerRunClientError>;
     /** Brings the guest's durable state to a consistent point after a settle. */
     readonly flush: (
       allocation: RunAllocation,
@@ -171,21 +176,27 @@ export const make = Effect.fn("CloudWorkerRunClient.make")(function* () {
     },
   );
 
-  const status: CloudWorkerRunClient["Service"]["status"] = Effect.fn(
-    "CloudWorkerRunClient.status",
-  )(function* (allocation) {
+  const threadDetail: CloudWorkerRunClient["Service"]["threadDetail"] = Effect.fn(
+    "CloudWorkerRunClient.threadDetail",
+  )(function* (allocation, window) {
     const run = readyRun(allocation);
     if (run === null) {
       return yield* clientError("status", "The allocation has no ready worker execution route.");
     }
-    const snapshot = yield* client
+    const url = new URL(
+      `/api/orchestration/threads/${encodeURIComponent(run.execution.threadId)}`,
+      run.route.httpBaseUrl,
+    );
+    if (window?.turnLimit !== undefined)
+      url.searchParams.set("turnLimit", String(window.turnLimit));
+    if (window?.beforeCursor !== undefined) {
+      url.searchParams.set("beforeCursor", window.beforeCursor);
+    }
+    return yield* client
       .execute(
-        HttpClientRequest.get(
-          requestUrl(
-            run.route.httpBaseUrl,
-            `/api/orchestration/threads/${encodeURIComponent(run.execution.threadId)}`,
-          ),
-        ).pipe(HttpClientRequest.bearerToken(run.route.accessToken)),
+        HttpClientRequest.get(url.toString()).pipe(
+          HttpClientRequest.bearerToken(run.route.accessToken),
+        ),
       )
       .pipe(
         Effect.timeout("20 seconds"),
@@ -193,6 +204,12 @@ export const make = Effect.fn("CloudWorkerRunClient.make")(function* () {
         Effect.flatMap(HttpClientResponse.schemaBodyJson(OrchestrationThreadDetailSnapshot)),
         Effect.mapError(() => clientError("status", "The worker thread status is unavailable.")),
       );
+  });
+
+  const status: CloudWorkerRunClient["Service"]["status"] = Effect.fn(
+    "CloudWorkerRunClient.status",
+  )(function* (allocation) {
+    const snapshot = yield* threadDetail(allocation, { turnLimit: 1 });
     const turn = snapshot.thread.latestTurn;
     if (turn === null || turn.state === "running") return "running";
     return turn.state === "completed" ? "succeeded" : "failed";
@@ -224,7 +241,7 @@ export const make = Effect.fn("CloudWorkerRunClient.make")(function* () {
     },
   );
 
-  return CloudWorkerRunClient.of({ start, status, flush });
+  return CloudWorkerRunClient.of({ start, status, threadDetail, flush });
 });
 
 export const layer = Layer.effect(CloudWorkerRunClient, make());
