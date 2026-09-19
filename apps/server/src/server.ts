@@ -147,6 +147,8 @@ import * as CloudWorkerRunClient from "./cloud/CloudWorkerRunClient.ts";
 import { cloudWorkerRegistrationHttpApiLayer } from "./cloud/CloudWorkerRegistrationHttp.ts";
 import * as CloudWorkerProvider from "./cloud/CloudWorkerProvider.ts";
 import * as CloudEnvironmentBuildCatalog from "./cloud/CloudEnvironmentBuildCatalog.ts";
+import * as CloudEnvironmentCatalog from "./cloud/CloudEnvironmentCatalog.ts";
+import * as CloudDiagnosticsCatalog from "./cloud/CloudDiagnosticsCatalog.ts";
 import * as CloudEnvironmentBuildRunner from "./cloud/CloudEnvironmentBuildRunner.ts";
 import * as CloudGitCredentials from "./cloud/CloudGitCredentials.ts";
 import * as CloudRepositoryPreparation from "./cloud/CloudRepositoryPreparation.ts";
@@ -339,6 +341,8 @@ const CloudEnvironmentBuildRunnerLayerLive = CloudEnvironmentBuildRunner.layer.p
   Layer.provide(CloudEnvironmentBuildCatalog.layer.pipe(Layer.provide(PersistenceLayerLive))),
   Layer.provideMerge(CloudGitCredentialsLayerLive),
 );
+
+const CloudDiagnosticsCatalogLayerLive = CloudDiagnosticsCatalog.layer;
 
 const CloudRunPublicationLayerLive = CloudRunPublication.layer.pipe(
   Layer.provide(ProcessRunner.layer),
@@ -632,6 +636,9 @@ const RuntimeCoreDependenciesLive = Layer.mergeAll(
   cloudAgentsApiRateLimitsLayer,
   CloudReadiness.layer.pipe(Layer.provide(CloudWorkerProviderLayerLive)),
 ).pipe(
+  Layer.provideMerge(CloudEnvironmentCatalog.layer.pipe(Layer.provide(PersistenceLayerLive))),
+  Layer.provideMerge(CloudEnvironmentBuildCatalog.layer.pipe(Layer.provide(PersistenceLayerLive))),
+  Layer.provideMerge(CloudDiagnosticsCatalogLayerLive),
   Layer.provideMerge(CloudArtifactAccess.layer),
   Layer.provideMerge(CloudRunResultsLayerLive),
   Layer.provideMerge(CloudProviderExecution.layer),

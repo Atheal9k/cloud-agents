@@ -910,6 +910,12 @@ const makeProviderService = Effect.fn("makeProviderService")(function* (
     const access = yield* agentAccessSettings(threadId);
     if (access.browser) capabilities.add("preview");
     if (access.device) capabilities.add("device");
+    if (Option.isSome(projectionQuery)) {
+      const thread = yield* projectionQuery.value.getThreadShellById(threadId);
+      if (Option.isSome(thread) && String(thread.value.projectId).startsWith("cloud:")) {
+        capabilities.add("cloud-diagnostics");
+      }
+    }
     return capabilities;
   });
 

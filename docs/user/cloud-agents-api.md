@@ -52,8 +52,16 @@ profile fields only for user keys. Each principal sees only the agents it create
 
 Create accepts agent or plan `mode`, `model` (id plus params), named `env` or `repos`,
 ref/PR fields, images (max 5, 15 MB, png/jpeg/gif/webp), `envVars` (max 50; not with
-`agentId`), inline MCP servers (max 50), and custom subagents (max 20; names cannot
-collide with built-ins).
+`agentId`), inline MCP servers (max 50; HTTP or stdio), and custom subagents (max 20;
+names cannot collide with built-ins; prompts are size-bounded). HTTP MCP credentials,
+including OAuth, stay on the controller. stdio MCP runs in the guest. Custom subagents
+inherit the parent run's permissions and cannot widen them.
+
+Cloud agents also receive the built-in diagnostics MCP (`environment-info`, snapshot
+and Build tools, run transcript/events, and authorized fleet diagnostics). Repository
+`.cursor/hooks.json` command hooks run for supported tool, file, and lifecycle events.
+Hooks from the operator's home directory are not available in the cloud guest, and
+mutating hooks do not run during early read-only environment setup.
 
 ## Errors, request IDs, and rate limits
 

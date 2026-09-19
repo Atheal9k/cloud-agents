@@ -49,6 +49,7 @@ import * as SqlClient from "effect/unstable/sql/SqlClient";
 import * as SqlSchema from "effect/unstable/sql/SqlSchema";
 
 import * as CloudAllocationController from "./CloudAllocationController.ts";
+import * as CloudDiagnosticsCatalog from "./CloudDiagnosticsCatalog.ts";
 import * as CloudRunPublication from "./CloudRunPublication.ts";
 import * as CloudRunResults from "./CloudRunResults.ts";
 import * as CloudWorkerRunClient from "./CloudWorkerRunClient.ts";
@@ -65,6 +66,8 @@ import {
   type CloudStreamBuffer,
 } from "./cloudAgentEventStream.ts";
 import { isDeletionPurgeReady } from "./cloudRetentionPolicy.ts";
+import { admitCloudExtensibility, subagentUsageEvent } from "./cloudExtensibilityPolicy.ts";
+import { cloudEgressExceptions, resolveCloudEgressPolicy } from "./cloudSecurityPolicy.ts";
 import {
   agentUsageFromRuns,
   apiError,
@@ -114,6 +117,8 @@ const AgentRecordPayload = Schema.Struct({
   ),
   workOnCurrentBranch: Schema.optionalKey(Schema.Boolean),
   autoCreatePR: Schema.optionalKey(Schema.Boolean),
+  mcpServers: Schema.optionalKey(Schema.Unknown),
+  customSubagents: Schema.optionalKey(Schema.Unknown),
 });
 const decodeRecord = Schema.decodeUnknownSync(Schema.fromJsonString(AgentRecordPayload));
 const encodeRecord = Schema.encodeSync(Schema.fromJsonString(AgentRecordPayload));
@@ -269,6 +274,9 @@ export const make = Effect.fn("CloudAgentsApi.make")(function* () {
   const projection = Option.getOrUndefined(projectionOption);
   const workerClient = Option.getOrUndefined(
     yield* Effect.serviceOption(CloudWorkerRunClient.CloudWorkerRunClient),
+  );
+  const diagnostics = Option.getOrUndefined(
+    yield* Effect.serviceOption(CloudDiagnosticsCatalog.CloudDiagnosticsCatalog),
   );
   const streams = yield* Ref.make<ReadonlyMap<string, CloudStreamBuffer>>(new Map());
   const decodeThreadSnapshot = Schema.decodeUnknownOption(
@@ -523,6 +531,10 @@ export const make = Effect.fn("CloudAgentsApi.make")(function* () {
             ...(input.body.autoCreatePR === undefined
               ? {}
               : { autoCreatePR: input.body.autoCreatePR }),
+            ...(input.body.mcpServers === undefined ? {} : { mcpServers: input.body.mcpServers }),
+            ...(input.body.customSubagents === undefined
+              ? {}
+              : { customSubagents: input.body.customSubagents }),
           })},
           ${occurredAt}
         )
@@ -536,6 +548,44 @@ export const make = Effect.fn("CloudAgentsApi.make")(function* () {
       }
       const nowMs = Date.parse(occurredAt);
       yield* seedStatus(run, Number.isFinite(nowMs) ? nowMs : epochNowMs());
+      if (diagnostics !== undefined) {
+        const admission = admitCloudExtensibility(
+          {
+            teamMcp: [],
+            personalMcp: [],
+            apiMcp: input.body.mcpServers ?? [],
+            customSubagents: input.body.customSubagents ?? [],
+          },
+          {
+            disableAllMcpServers: false,
+            mcpServerAllowlist: [],
+            egress: resolveCloudEgressPolicy({
+              environment: { mode: "allow_all", allowlist: [] },
+              exceptions: cloudEgressExceptions({
+                controllerHost: "controller.internal",
+                scmHosts: ["github.com"],
+                artifactHosts: [],
+              }),
+            }),
+            controllerMcpOrigin: input.urlOrigin,
+            phase: "runtime",
+            parentPermissions: {
+              filesystem: true,
+              network: true,
+              secrets: true,
+            },
+          },
+        );
+        yield* diagnostics.bindRun({
+          agentId,
+          runId,
+          repository,
+          admission,
+        });
+        yield* Effect.forEach(admission.subagents, (subagent) =>
+          diagnostics.recordSubagentUsage(subagentUsageEvent({ runId, subagent })),
+        );
+      }
       const record = { ...located.record, urlOrigin: input.urlOrigin };
       return {
         agent: publicAgent(located.agent, record),
