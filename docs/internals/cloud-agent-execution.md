@@ -207,8 +207,19 @@ prepared tree rather than a cold clone. When no fresh Build exists the
 allocation carries none and the run prepares for itself, which is the honest
 outcome when the refs, config, or secrets may have moved on.
 
-The base stage records the base a snapshot was made on rather than packing an
-image; packing Linux runtimes is CA-44's work. The base is part of the config
+The base stage records the base a snapshot was made on. Linux runtimes pack as
+Firecracker guests on hypervisor hosts in a dedicated execution account. Each
+guest consumes explicit CPU, memory, disk, and profile slots: CPU may be
+oversubscribed within the host's measured ratio, but memory and disk may not,
+so one agent cannot OOM a neighbor. A guest gets its own VM, encrypted disk
+key, tap network, and cgroup, and cannot read hypervisor credentials, instance
+metadata, or sibling disks. See
+[`firecrackerPlacement`](../../apps/server/src/cloud/firecrackerPlacement.ts).
+
+Losing a hypervisor reschedules only guests that already have a snapshot.
+Active processes are not migrated. The older per-thread `RunInstances` path is
+still a migration fallback: it is tagged `ec2-migration-fallback` and is not
+Cursor parity. Packing is `cursor-firecracker`. The base is part of the config
 and therefore part of the fingerprint, so changing it still invalidates the
 snapshot. `install` runs from a generated script file rather than an inline
 shell argument, because passing a shell string as one spawn argument is mangled

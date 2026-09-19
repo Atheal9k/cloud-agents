@@ -778,7 +778,7 @@ export const CloudAllocationControllerStatus = Schema.Struct({
 export type CloudAllocationControllerStatus = typeof CloudAllocationControllerStatus.Type;
 
 export const CloudAllocationLimits = Schema.Struct({
-  maxConcurrentWorkers: Schema.Literal(1),
+  maxConcurrentWorkers: PositiveInt,
   maxQueueDepth: NonNegativeInt,
   maxRunSeconds: PositiveInt,
   maxInputWaitSeconds: PositiveInt,

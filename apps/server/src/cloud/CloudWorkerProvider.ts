@@ -8,6 +8,8 @@ import * as Option from "effect/Option";
 import * as Schema from "effect/Schema";
 
 import * as ProcessRunner from "../processRunner.ts";
+import { createFirecrackerFleetStore } from "./firecrackerFleet.ts";
+import { type CloudHypervisorHost, runtimeParity } from "./firecrackerPlacement.ts";
 
 const AwsInstanceState = Schema.Literals([
   "pending",
@@ -19,9 +21,13 @@ const AwsInstanceState = Schema.Literals([
 ]);
 export type AwsInstanceState = typeof AwsInstanceState.Type;
 
+export const CloudRuntimeKind = Schema.Literals(["firecracker", "ec2-fallback"]);
+export type CloudRuntimeKind = typeof CloudRuntimeKind.Type;
+
 export const CloudWorkerInstance = Schema.Struct({
   instanceId: Schema.String,
   state: AwsInstanceState,
+  runtimeKind: Schema.optionalKey(CloudRuntimeKind),
 });
 export type CloudWorkerInstance = typeof CloudWorkerInstance.Type;
 
@@ -102,6 +108,7 @@ export class CloudWorkerProvider extends Context.Service<
       readonly registrationCredential: string;
     }) => Effect.Effect<CloudWorkerInstance, CloudWorkerProviderError>;
     readonly terminate: (instanceId: string) => Effect.Effect<void, CloudWorkerProviderError>;
+    readonly runtimeKind: CloudRuntimeKind;
   }
 >()("t3/cloud/CloudWorkerProvider") {}
 
@@ -247,8 +254,19 @@ export const make = Effect.fn("CloudWorkerProvider.make")(function* (input: {
   readonly project: string;
   readonly controllerUrl?: string;
   readonly workerRouteUrl?: string;
+  readonly runtimeKind?: CloudRuntimeKind;
+  readonly hypervisors?: ReadonlyArray<CloudHypervisorHost>;
 }) {
   const runner = yield* ProcessRunner.ProcessRunner;
+  const runtimeKind: CloudRuntimeKind =
+    input.runtimeKind ??
+    (input.hypervisors !== undefined && input.hypervisors.length > 0
+      ? "firecracker"
+      : "ec2-fallback");
+  const fleet =
+    runtimeKind === "firecracker"
+      ? createFirecrackerFleetStore(input.hypervisors ?? [])
+      : undefined;
 
   const runAws = Effect.fn("CloudWorkerProvider.runAws")(function* (args: ReadonlyArray<string>) {
     const result = yield* runner
@@ -271,6 +289,23 @@ export const make = Effect.fn("CloudWorkerProvider.make")(function* (input: {
     profileId,
   ) =>
     Effect.gen(function* () {
+      if (fleet !== undefined) {
+        const host = fleet.hosts().find((candidate) => candidate.profiles.includes(profileId));
+        if (host === undefined) {
+          return yield* providerError(
+            "invalid-config",
+            `No Firecracker hypervisor advertises worker profile '${profileId}'.`,
+          );
+        }
+        return yield* decodeLaunchTemplate({ id: `fc-${profileId}`, version: 1 }).pipe(
+          Effect.mapError(() =>
+            providerError(
+              "invalid-config",
+              `Worker profile '${profileId}' has an invalid Firecracker launch template.`,
+            ),
+          ),
+        );
+      }
       const output = yield* runAws([
         "describe-launch-templates",
         "--filters",
@@ -309,44 +344,48 @@ export const make = Effect.fn("CloudWorkerProvider.make")(function* (input: {
     });
 
   const findAttemptResources: CloudWorkerProvider["Service"]["findAttemptResources"] = (attempt) =>
-    Effect.gen(function* () {
-      const output = yield* runAws([
-        "describe-instances",
-        "--filters",
-        `Name=tag:CloudAgentProject,Values=${input.project}`,
-        "Name=tag:CloudAgentRole,Values=worker",
-        `Name=tag:CloudAgentAllocationId,Values=${attempt.allocationId}`,
-        `Name=tag:CloudAgentAttempt,Values=${attempt.attempt}`,
-      ]);
-      const response = yield* decodeInstancesResponse(output).pipe(
-        Effect.mapError(() =>
-          providerError("fatal", "The AWS CLI returned an unexpected response."),
-        ),
-      );
-      return response.Reservations.flatMap((reservation) => reservation.Instances).map(
-        resourceFromInstance,
-      );
-    });
+    fleet !== undefined
+      ? Effect.succeed(fleet.find(attempt))
+      : Effect.gen(function* () {
+          const output = yield* runAws([
+            "describe-instances",
+            "--filters",
+            `Name=tag:CloudAgentProject,Values=${input.project}`,
+            "Name=tag:CloudAgentRole,Values=worker",
+            `Name=tag:CloudAgentAllocationId,Values=${attempt.allocationId}`,
+            `Name=tag:CloudAgentAttempt,Values=${attempt.attempt}`,
+          ]);
+          const response = yield* decodeInstancesResponse(output).pipe(
+            Effect.mapError(() =>
+              providerError("fatal", "The AWS CLI returned an unexpected response."),
+            ),
+          );
+          return response.Reservations.flatMap((reservation) => reservation.Instances).map(
+            resourceFromInstance,
+          );
+        });
 
   const listWorkers: CloudWorkerProvider["Service"]["listWorkers"] = () =>
-    Effect.gen(function* () {
-      const output = yield* runAws([
-        "describe-instances",
-        "--filters",
-        `Name=tag:CloudAgentProject,Values=${input.project}`,
-        "Name=tag:CloudAgentRole,Values=worker",
-        "Name=tag:Ephemeral,Values=true",
-        "Name=instance-state-name,Values=pending,running,shutting-down,stopping,stopped",
-      ]);
-      const response = yield* decodeInstancesResponse(output).pipe(
-        Effect.mapError(() =>
-          providerError("fatal", "The AWS CLI returned an unexpected response."),
-        ),
-      );
-      return response.Reservations.flatMap((reservation) => reservation.Instances).map(
-        resourceFromInstance,
-      );
-    });
+    fleet !== undefined
+      ? Effect.succeed(fleet.list())
+      : Effect.gen(function* () {
+          const output = yield* runAws([
+            "describe-instances",
+            "--filters",
+            `Name=tag:CloudAgentProject,Values=${input.project}`,
+            "Name=tag:CloudAgentRole,Values=worker",
+            "Name=tag:Ephemeral,Values=true",
+            "Name=instance-state-name,Values=pending,running,shutting-down,stopping,stopped",
+          ]);
+          const response = yield* decodeInstancesResponse(output).pipe(
+            Effect.mapError(() =>
+              providerError("fatal", "The AWS CLI returned an unexpected response."),
+            ),
+          );
+          return response.Reservations.flatMap((reservation) => reservation.Instances).map(
+            resourceFromInstance,
+          );
+        });
 
   const launch: CloudWorkerProvider["Service"]["launch"] = (launchInput) =>
     Effect.gen(function* () {
@@ -377,6 +416,22 @@ export const make = Effect.fn("CloudWorkerProvider.make")(function* (input: {
           "Cloud repository, ref, and output branch values must fit in EC2 instance tags.",
         );
       }
+      if (fleet !== undefined) {
+        const placed = fleet.place({
+          allocationId: launchInput.allocationId,
+          attempt: launchInput.attempt,
+          profileId: launchInput.launchTemplate.id.replace(/^fc-/, ""),
+          agentId: `agent:${launchInput.allocationId}`,
+        });
+        if ("status" in placed) {
+          return yield* providerError("retryable", placed.reason);
+        }
+        return {
+          instanceId: placed.guest.guestId,
+          state: placed.state,
+          runtimeKind: "firecracker" as const,
+        };
+      }
       const tags = [
         { Key: "CloudAgentProject", Value: input.project },
         { Key: "CloudAgentRole", Value: "worker" },
@@ -390,6 +445,8 @@ export const make = Effect.fn("CloudWorkerProvider.make")(function* (input: {
         { Key: "CloudAgentControllerUrl", Value: controllerUrl },
         { Key: "CloudAgentWorkerRouteUrl", Value: workerRouteUrl },
         { Key: "CloudAgentRegistrationCredential", Value: launchInput.registrationCredential },
+        { Key: "CloudAgentRuntimeKind", Value: "ec2-fallback" },
+        { Key: "CloudAgentRuntimeParity", Value: runtimeParity("ec2-fallback") },
       ];
       const output = yield* runAws([
         "run-instances",
@@ -416,32 +473,41 @@ export const make = Effect.fn("CloudWorkerProvider.make")(function* (input: {
       if (instance === undefined) {
         return yield* providerError("fatal", "AWS accepted the launch but returned no instance.");
       }
-      return { instanceId: instance.InstanceId, state: instance.State.Name };
+      return { instanceId: instance.InstanceId, state: instance.State.Name, runtimeKind };
     });
 
   const hibernate: CloudWorkerProvider["Service"]["hibernate"] = (instanceId) =>
-    Effect.gen(function* () {
-      // Tag first. A stopped instance without this tag looks abandoned to the
-      // cleanup backstop, so the tag has to exist before the stop does.
-      yield* runAws([
-        "create-tags",
-        "--resources",
-        instanceId,
-        "--tags",
-        "Key=CloudAgentHibernated,Value=true",
-      ]);
-      yield* runAws(["stop-instances", "--instance-ids", instanceId]);
-    }).pipe(
-      Effect.catchIf(
-        (error) => /InvalidInstanceID\.NotFound/.test(error.message),
-        () =>
-          providerError(
-            "fatal",
-            "The guest to hibernate no longer exists, so its disk cannot be kept.",
+    fleet !== undefined
+      ? Effect.gen(function* () {
+          if (!fleet.hibernate(instanceId)) {
+            return yield* providerError(
+              "fatal",
+              "The guest to hibernate no longer exists, so its disk cannot be kept.",
+            );
+          }
+        })
+      : Effect.gen(function* () {
+          // Tag first. A stopped instance without this tag looks abandoned to the
+          // cleanup backstop, so the tag has to exist before the stop does.
+          yield* runAws([
+            "create-tags",
+            "--resources",
+            instanceId,
+            "--tags",
+            "Key=CloudAgentHibernated,Value=true",
+          ]);
+          yield* runAws(["stop-instances", "--instance-ids", instanceId]);
+        }).pipe(
+          Effect.catchIf(
+            (error) => /InvalidInstanceID\.NotFound/.test(error.message),
+            () =>
+              providerError(
+                "fatal",
+                "The guest to hibernate no longer exists, so its disk cannot be kept.",
+              ),
           ),
-      ),
-      Effect.asVoid,
-    );
+          Effect.asVoid,
+        );
 
   const restore: CloudWorkerProvider["Service"]["restore"] = (restoreInput) =>
     Effect.gen(function* () {
@@ -460,6 +526,20 @@ export const make = Effect.fn("CloudWorkerProvider.make")(function* (input: {
           "invalid-config",
           "The worker expiry is not a valid timestamp.",
         );
+      }
+      if (fleet !== undefined) {
+        const restored = fleet.restore({
+          guestId: restoreInput.instanceId,
+          allocationId: restoreInput.allocationId,
+          attempt: restoreInput.attempt,
+        });
+        if (restored === undefined) {
+          return yield* providerError(
+            "fatal",
+            "The hibernated Firecracker snapshot is no longer on the fleet.",
+          );
+        }
+        return { ...restored, runtimeKind: "firecracker" as const };
       }
       yield* runAws([
         "create-tags",
@@ -491,33 +571,41 @@ export const make = Effect.fn("CloudWorkerProvider.make")(function* (input: {
       if (instance === undefined) {
         return yield* providerError("fatal", "AWS accepted the start but returned no instance.");
       }
-      return { instanceId: instance.InstanceId, state: instance.CurrentState.Name };
+      return { instanceId: instance.InstanceId, state: instance.CurrentState.Name, runtimeKind };
     });
 
   const terminate: CloudWorkerProvider["Service"]["terminate"] = (instanceId) =>
-    runAws(["terminate-instances", "--instance-ids", instanceId]).pipe(
-      Effect.catchIf(
-        (error) => /InvalidInstanceID\.NotFound/.test(error.message),
-        () => Effect.void,
-      ),
-      Effect.asVoid,
-    );
+    fleet !== undefined
+      ? Effect.sync(() => {
+          fleet.terminate(instanceId);
+        })
+      : runAws(["terminate-instances", "--instance-ids", instanceId]).pipe(
+          Effect.catchIf(
+            (error) => /InvalidInstanceID\.NotFound/.test(error.message),
+            () => Effect.void,
+          ),
+          Effect.asVoid,
+        );
 
   const revokeRegistrationCredential: CloudWorkerProvider["Service"]["revokeRegistrationCredential"] =
     (instanceId) =>
-      runAws([
-        "delete-tags",
-        "--resources",
-        instanceId,
-        "--tags",
-        "Key=CloudAgentRegistrationCredential",
-      ]).pipe(
-        Effect.catchIf(
-          (error) => /InvalidInstanceID\.NotFound/.test(error.message),
-          () => Effect.void,
-        ),
-        Effect.asVoid,
-      );
+      fleet !== undefined
+        ? Effect.sync(() => {
+            fleet.revoke(instanceId);
+          })
+        : runAws([
+            "delete-tags",
+            "--resources",
+            instanceId,
+            "--tags",
+            "Key=CloudAgentRegistrationCredential",
+          ]).pipe(
+            Effect.catchIf(
+              (error) => /InvalidInstanceID\.NotFound/.test(error.message),
+              () => Effect.void,
+            ),
+            Effect.asVoid,
+          );
 
   return CloudWorkerProvider.of({
     resolveLaunchTemplate,
@@ -528,26 +616,68 @@ export const make = Effect.fn("CloudWorkerProvider.make")(function* (input: {
     hibernate,
     restore,
     terminate,
+    runtimeKind,
   });
 });
+
+const HypervisorHostConfig = Schema.Struct({
+  id: Schema.String,
+  accountId: Schema.String,
+  cpuMillis: Schema.Int,
+  memoryMib: Schema.Int,
+  diskGib: Schema.Int,
+  cpuOversubscribeRatio: Schema.Finite,
+  profiles: Schema.Array(Schema.String),
+  credentialsPath: Schema.String,
+  kvm: Schema.Boolean,
+});
+const decodeRuntimeKind = Schema.decodeUnknownEffect(CloudRuntimeKind);
+const decodeHypervisorFleet = Schema.decodeEffect(
+  Schema.fromJsonString(Schema.Array(HypervisorHostConfig)),
+);
 
 const AwsWorkerConfig = Config.all({
   region: Config.string("T3CODE_CLOUD_AWS_REGION").pipe(Config.withDefault("us-west-1")),
   project: Config.string("T3CODE_CLOUD_PROJECT").pipe(Config.withDefault("t3-cloud-agents")),
   controllerUrl: Config.string("T3CODE_CLOUD_CONTROLLER_URL").pipe(Config.option),
   workerRouteUrl: Config.string("T3CODE_CLOUD_WORKER_ROUTE_URL").pipe(Config.option),
+  runtimeKind: Config.string("T3CODE_CLOUD_RUNTIME").pipe(Config.option),
+  hypervisorFleet: Config.string("T3CODE_CLOUD_HYPERVISOR_FLEET").pipe(Config.option),
 });
 
 export const layer = Layer.effect(
   CloudWorkerProvider,
-  Effect.flatMap(AwsWorkerConfig, (config) =>
-    make({
+  Effect.gen(function* () {
+    const config = yield* AwsWorkerConfig;
+    const runtimeKind = Option.isSome(config.runtimeKind)
+      ? yield* decodeRuntimeKind(config.runtimeKind.value).pipe(
+          Effect.mapError(() =>
+            providerError(
+              "invalid-config",
+              "T3CODE_CLOUD_RUNTIME must be firecracker or ec2-fallback.",
+            ),
+          ),
+        )
+      : undefined;
+    const hypervisors = Option.isSome(config.hypervisorFleet)
+      ? yield* decodeHypervisorFleet(config.hypervisorFleet.value).pipe(
+          Effect.mapError(() =>
+            providerError(
+              "invalid-config",
+              "T3CODE_CLOUD_HYPERVISOR_FLEET must be a JSON array of hypervisor hosts.",
+            ),
+          ),
+        )
+      : undefined;
+    return yield* make({
       region: config.region,
       project: config.project,
       ...(Option.isSome(config.controllerUrl) ? { controllerUrl: config.controllerUrl.value } : {}),
       ...(Option.isSome(config.workerRouteUrl)
         ? { workerRouteUrl: config.workerRouteUrl.value }
         : {}),
-    }),
-  ),
+      ...(runtimeKind === undefined ? {} : { runtimeKind }),
+      ...(hypervisors === undefined ? {} : { hypervisors }),
+    });
+  }),
 );

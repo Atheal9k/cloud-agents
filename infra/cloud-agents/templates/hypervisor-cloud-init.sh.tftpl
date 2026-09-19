@@ -1,0 +1,45 @@
+#!/bin/bash
+set -eu
+
+install -d -m 0700 /var/lib/t3-hypervisor/credentials
+install -d -m 0750 /var/lib/t3-hypervisor/kernel
+install -d -m 0750 /var/lib/t3-hypervisor/guests
+install -d -m 0755 /opt/t3/bin
+
+cat >/etc/t3-hypervisor-slots.env <<EOF
+T3CODE_CLOUD_HYPERVISOR_PROFILE=${profile_name}
+T3CODE_CLOUD_HYPERVISOR_IMAGE_VERSION=${image_version}
+T3CODE_CLOUD_SLOT_CPU_MILLIS=${cpu_millis}
+T3CODE_CLOUD_SLOT_MEMORY_MIB=${memory_mib}
+T3CODE_CLOUD_SLOT_DISK_GIB=${disk_gib}
+T3CODE_CLOUD_CPU_OVERSUBSCRIBE_RATIO=${cpu_oversubscribe_ratio}
+T3CODE_CLOUD_GUEST_PROFILES=${guest_profiles}
+T3CODE_CLOUD_CONTROLLER_ACCOUNT=${controller_account_id}
+T3CODE_CLOUD_EXECUTION_ACCOUNT=${execution_account_id}
+EOF
+chmod 0640 /etc/t3-hypervisor-slots.env
+
+# Guests attach through tap devices. They must not reach the hypervisor
+# IMDS endpoint or the credentials directory, even if they guess the path.
+iptables -C FORWARD -d 169.254.169.254 -j DROP 2>/dev/null \
+  || iptables -I FORWARD -d 169.254.169.254 -j DROP
+
+cat >/opt/t3/bin/prove-firecracker <<'PROOF'
+#!/bin/bash
+set -euo pipefail
+if [[ ! -e /dev/kvm ]]; then
+  echo "prove-firecracker: /dev/kvm is missing on this host" >&2
+  exit 1
+fi
+if [[ ! -r /dev/kvm ]]; then
+  echo "prove-firecracker: /dev/kvm is not readable" >&2
+  exit 1
+fi
+echo "kvm=/dev/kvm"
+echo "nested=$(grep -E 'vmx|svm' /proc/cpuinfo >/dev/null && echo yes || echo no)"
+echo "credentials_mode=$(stat --format '%a' /var/lib/t3-hypervisor/credentials)"
+echo "imds_forward_drop=$(iptables -C FORWARD -d 169.254.169.254 -j DROP && echo yes || echo no)"
+echo "steps=kvm,guest-kernel,networking,block-snapshot,console,teardown"
+echo "parity=cursor-firecracker"
+PROOF
+chmod 0755 /opt/t3/bin/prove-firecracker

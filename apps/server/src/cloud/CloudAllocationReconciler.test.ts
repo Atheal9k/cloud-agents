@@ -197,6 +197,7 @@ function fixture(
             state.instance = { ...state.instance, state: "terminated" };
           }
         }),
+      runtimeKind: "ec2-fallback",
     });
     const runClient = CloudWorkerRunClient.of({
       start: () =>
@@ -840,5 +841,60 @@ it.effect("places a fresh guest when the snapshot cannot be started", () =>
     yield* reconciler.reconcileOnce();
     expect(state.restoreCalls).toBe(1);
     expect(state.launchCalls).toBe(2);
+  }).pipe(Effect.provide(SqlitePersistenceMemory)),
+);
+
+it.effect("packs two queued allocations when the controller has two worker slots", () =>
+  Effect.gen(function* () {
+    yield* TestClock.setTime(startAt);
+    const launched = new Set<string>();
+    const controller = yield* CloudAllocationController.make({
+      enabled: true,
+      limits: {
+        maxConcurrentWorkers: 2,
+        maxQueueDepth: 8,
+        maxRunSeconds: 7_200,
+        maxInputWaitSeconds: 900,
+        previewGraceSeconds: 900,
+        idleReleaseSeconds: 3_600,
+        allowedInstanceTypes: ["t3.medium"],
+      },
+    });
+    const provider = CloudWorkerProvider.of({
+      runtimeKind: "firecracker",
+      resolveLaunchTemplate: () => Effect.succeed({ id: "fc-linux-web", version: 1 }),
+      findAttemptResources: () => Effect.succeed([]),
+      listWorkers: () => Effect.succeed([]),
+      launch: (launchInput) =>
+        Effect.sync(() => {
+          launched.add(launchInput.allocationId);
+          return {
+            instanceId: `fc:${launchInput.allocationId}`,
+            state: "pending" as const,
+            runtimeKind: "firecracker" as const,
+          };
+        }),
+      revokeRegistrationCredential: () => Effect.void,
+      hibernate: () => Effect.void,
+      restore: () =>
+        Effect.succeed({ instanceId: "fc-restored", state: "pending", runtimeKind: "firecracker" }),
+      terminate: () => Effect.void,
+    });
+    const reconciler = yield* CloudAllocationReconciler.make().pipe(
+      Effect.provideService(CloudAllocationController.CloudAllocationController, controller),
+      Effect.provideService(
+        CloudWorkerRegistration,
+        CloudWorkerRegistration.of({
+          issueCredential: () => Effect.succeed("registration-credential"),
+          register: () => Effect.die("unused"),
+        }),
+      ),
+      Effect.provideService(CloudWorkerProvider, provider),
+    );
+    yield* controller.dispatch(launchCommand("allocation-a"));
+    yield* controller.dispatch(launchCommand("allocation-b"));
+    yield* reconciler.reconcileOnce();
+    yield* reconciler.reconcileOnce();
+    expect(launched.size).toBe(2);
   }).pipe(Effect.provide(SqlitePersistenceMemory)),
 );
