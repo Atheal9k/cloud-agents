@@ -180,7 +180,7 @@ stay last until you choose to pick them up.
 | 10   | ~~CA-49~~                        | Shared secret, identity, encryption, and network policy.                                   |
 | 11   | ~~CA-12~~, ~~CA-13~~, CA-26      | Environment recipes; event-stream performance; local/cloud handoff.                        |
 | 12   | CA-36, CA-51, ~~CA-55~~          | Preview leases; provider extensibility; usage and audit accounting.                        |
-| 13   | CA-32, CA-50                     | Private dependency networking; source-control and collaboration entry points.              |
+| 13   | ~~CA-32~~, CA-50                 | Private dependency networking; source-control and collaboration entry points.              |
 | 14   | CA-56, CA-58                     | Multi-repository environments; self-hosted pools.                                          |
 | 15   | CA-28, CA-39, CA-57, CA-59       | Scheduling; simulator display; commit signing; repository-owned environment setup.         |
 | 16   | CA-29, CA-30, CA-33              | GitHub triggers; persistent assistants; remote administration UI.                          |
@@ -1416,6 +1416,8 @@ Acceptance criteria:
 ### CA-32: Add private dependencies and company-network profiles
 
 Dependencies: CA-03, CA-06, CA-07, CA-12, CA-18, CA-41, CA-42, CA-49.
+
+Status: Done on 19 September 2026 in [PR #47](https://github.com/Atheal9k/cloud-agents/pull/47).
 
 Description: Support private dependencies and private connectivity as
 environment-scoped policy, with Cursor-like egress modes and explicit routes.

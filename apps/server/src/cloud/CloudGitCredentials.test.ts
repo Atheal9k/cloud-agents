@@ -123,6 +123,54 @@ it.layer(NodeServices.layer)("CloudGitCredentials", (it) => {
     }),
   );
 
+  it.effect("updates private submodules through the same SSH wrapper", () =>
+    Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const path = yield* Path.Path;
+      const root = yield* fs.makeTempDirectoryScoped({ prefix: "t3-cloud-git-submodule-" });
+      const workspace = path.join(root, "workspace");
+      const invocations: ProcessRunner.ProcessRunInput[] = [];
+      const runner = ProcessRunner.ProcessRunner.of({
+        run: (input) =>
+          Effect.gen(function* () {
+            invocations.push(input);
+            if (input.command === "aws") {
+              return processOutput({
+                stdout: JSON.stringify({ privateKey: privateKey.trimEnd() }),
+              });
+            }
+            if (input.command === "ssh-keygen") {
+              return processOutput({ stdout: "ssh-ed25519 public-key\n" });
+            }
+            return processOutput();
+          }),
+      });
+      const credentials = yield* make({
+        credentialRoot: path.join(root, "credentials"),
+        sshSecretRef: "cloud-agent-victor-key",
+        githubTokenSecretRef: undefined,
+      }).pipe(Effect.provideService(ProcessRunner.ProcessRunner, runner));
+
+      yield* credentials.syncPrivateGitDependencies({
+        runId: "allocation-submodule",
+        cwd: workspace,
+        kinds: ["submodule", "lfs"],
+      });
+
+      const git = invocations.filter((entry) => entry.command === "git");
+      assert.deepEqual(
+        git.map((entry) => entry.args),
+        [
+          ["submodule", "update", "--init", "--recursive"],
+          ["lfs", "pull"],
+        ],
+      );
+      assert.isString(git[0]?.env?.GIT_SSH);
+      assert.equal(git[0]?.cwd, workspace);
+      assert.deepEqual(yield* fs.readDirectory(path.join(root, "credentials")), []);
+    }),
+  );
+
   it.effect("pushes only to the configured repository and requested branch", () =>
     Effect.gen(function* () {
       const fs = yield* FileSystem.FileSystem;
