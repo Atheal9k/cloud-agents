@@ -129,13 +129,26 @@ export function decideRunAllocationCommand(
       return allocation.allocationState.status === "launching" &&
         allocation.agentOutcome.status === "not-started" &&
         allocation.cleanupState.status === "not-requested"
-        ? [{ ...base, type: command.type, instanceId: command.instanceId }]
+        ? [
+            {
+              ...base,
+              type: command.type,
+              instanceId: command.instanceId,
+              ...(command.placement === undefined ? {} : { placement: command.placement }),
+            },
+          ]
         : [];
     case "allocation.worker-booted":
       return allocation.allocationState.status === "booting" &&
         allocation.agentOutcome.status === "not-started" &&
         allocation.cleanupState.status === "not-requested"
-        ? [{ ...base, type: command.type }]
+        ? [
+            {
+              ...base,
+              type: command.type,
+              ...(command.placement === undefined ? {} : { placement: command.placement }),
+            },
+          ]
         : [];
     case "allocation.worker-assigned":
       return allocation.allocationState.status === "registering" &&
@@ -424,6 +437,7 @@ export function projectRunAllocationEvent(
           instanceId: event.instanceId,
           launchedAt: event.occurredAt,
         },
+        ...(event.placement === undefined ? {} : { placement: event.placement }),
       });
     case "allocation.worker-booted":
       if (allocation.allocationState.status !== "booting") {
@@ -435,6 +449,7 @@ export function projectRunAllocationEvent(
           instanceId: allocation.allocationState.instanceId,
           bootedAt: event.occurredAt,
         },
+        ...(event.placement === undefined ? {} : { placement: event.placement }),
       });
     case "allocation.worker-assigned":
       if (allocation.allocationState.status !== "registering") {

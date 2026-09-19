@@ -151,6 +151,45 @@ describe("cloud allocation transitions", () => {
     );
   });
 
+  it("records warm-fork placement on launch", () => {
+    const started = applyAccepted(undefined, launch);
+    const launching = applyAccepted(
+      started.allocation,
+      command({
+        type: "allocation.launch-started",
+        commandId: "command-launch-started",
+        allocationId: "allocation-1",
+        attempt: 1,
+        occurredAt: "2026-09-17T03:00:01.000Z",
+        launchTemplate: { id: "lt-worker", version: 7 },
+      }),
+    );
+    const placed = applyAccepted(
+      launching.allocation,
+      command({
+        type: "allocation.instance-launched",
+        commandId: "command-instance-launched",
+        allocationId: "allocation-1",
+        attempt: 1,
+        occurredAt: "2026-09-17T03:00:02.000Z",
+        instanceId: "guest-1",
+        placement: {
+          warmFork: "warm",
+          buildId: "build-1",
+          claimLatencyMs: 18,
+          bootTimeMs: 90,
+        },
+      }),
+    );
+
+    expect(placed.allocation.placement).toEqual({
+      warmFork: "warm",
+      buildId: "build-1",
+      claimLatencyMs: 18,
+      bootTimeMs: 90,
+    });
+  });
+
   it("retains the launch publication choice in controller state", () => {
     const automaticLaunch = command({
       type: "allocation.launch",

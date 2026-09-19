@@ -21,6 +21,11 @@ import { ExecutionEnvironmentPlatformArch, ExecutionEnvironmentPlatformOs } from
 import { CloudProviderTurnInput, CloudProviderUnansweredRequestSeconds } from "./cloudExecution.ts";
 import { CloudEnvironment, CloudEnvironmentVersionReference } from "./cloudEnvironment.ts";
 import { CloudEnvironmentBuild, CloudEnvironmentBuildReference } from "./cloudEnvironmentBuild.ts";
+import {
+  CloudRuntimePlacement,
+  CloudWarmGuest,
+  CloudWarmPoolCapacityPlan,
+} from "./cloudWarmPool.ts";
 
 export const RunWorkerDevice = Schema.Literals(["android", "ios"]);
 export type RunWorkerDevice = typeof RunWorkerDevice.Type;
@@ -532,6 +537,8 @@ export const RunAllocation = Schema.Struct({
   environment: Schema.optionalKey(CloudEnvironmentVersionReference),
   /** The prepared snapshot this run boots. Absent when no Build was active. */
   build: Schema.optionalKey(CloudEnvironmentBuildReference),
+  /** Missing on allocations placed before warm-pool recording. */
+  placement: Schema.optionalKey(CloudRuntimePlacement),
   deadlines: RunDeadlines,
   allocationState: RunAllocationState,
   agentOutcome: RunAgentOutcome,
@@ -589,8 +596,14 @@ export const RunAllocationCommand = Schema.Union([
     ...AttemptCommandBase,
     type: Schema.Literal("allocation.instance-launched"),
     instanceId: TrimmedNonEmptyString,
+    /** Missing on launch commands written before CA-45. */
+    placement: Schema.optionalKey(CloudRuntimePlacement),
   }),
-  Schema.Struct({ ...AttemptCommandBase, type: Schema.Literal("allocation.worker-booted") }),
+  Schema.Struct({
+    ...AttemptCommandBase,
+    type: Schema.Literal("allocation.worker-booted"),
+    placement: Schema.optionalKey(CloudRuntimePlacement),
+  }),
   Schema.Struct({
     ...AttemptCommandBase,
     type: Schema.Literal("allocation.worker-assigned"),
@@ -714,8 +727,14 @@ export const RunAllocationEvent = Schema.Union([
     ...EventBase,
     type: Schema.Literal("allocation.instance-launched"),
     instanceId: TrimmedNonEmptyString,
+    /** Missing on launch events written before CA-45. */
+    placement: Schema.optionalKey(CloudRuntimePlacement),
   }),
-  Schema.Struct({ ...EventBase, type: Schema.Literal("allocation.worker-booted") }),
+  Schema.Struct({
+    ...EventBase,
+    type: Schema.Literal("allocation.worker-booted"),
+    placement: Schema.optionalKey(CloudRuntimePlacement),
+  }),
   Schema.Struct({
     ...EventBase,
     type: Schema.Literal("allocation.worker-assigned"),
@@ -912,6 +931,10 @@ export const CloudAllocationSnapshot = Schema.Struct({
   environments: Schema.optionalKey(Schema.Array(CloudEnvironment)),
   /** Absent when decoding snapshots from controllers older than CA-42. */
   builds: Schema.optionalKey(Schema.Array(CloudEnvironmentBuild)),
+  /** Absent when decoding snapshots from controllers older than CA-45. */
+  warmGuests: Schema.optionalKey(Schema.Array(CloudWarmGuest)),
+  /** Absent when decoding snapshots from controllers older than CA-45. */
+  capacity: Schema.optionalKey(CloudWarmPoolCapacityPlan),
   /** Absent when decoding snapshots from controllers older than CA-46. */
   deletions: Schema.optionalKey(Schema.Array(CloudAgentDeletion)),
   usage: Schema.Array(CloudRunUsage),

@@ -1,4 +1,11 @@
-import { RunAllocationAttempt, RunAllocationCommand } from "@t3tools/contracts";
+import {
+  CloudEnvironmentBuildId,
+  CloudEnvironmentSaveInput,
+  CloudWarmGuestId,
+  DEFAULT_CONVERSATION_RETENTION_DAYS,
+  RunAllocationAttempt,
+  RunAllocationCommand,
+} from "@t3tools/contracts";
 import { expect, it } from "@effect/vitest";
 import * as Effect from "effect/Effect";
 import * as Schema from "effect/Schema";
@@ -7,6 +14,8 @@ import * as TestClock from "effect/testing/TestClock";
 import { SqlitePersistenceMemory } from "../persistence/Layers/Sqlite.ts";
 import * as CloudAllocationController from "./CloudAllocationController.ts";
 import * as CloudAllocationReconciler from "./CloudAllocationReconciler.ts";
+import { make as makeBuilds } from "./CloudEnvironmentBuildCatalog.ts";
+import { make as makeWarmPool } from "./CloudWarmPoolCatalog.ts";
 import * as ControllerSettings from "./controllerSettings.ts";
 import { CloudWorkerRegistration } from "./CloudWorkerRegistration.ts";
 import { CloudWorkerRunClient } from "./CloudWorkerRunClient.ts";
@@ -17,6 +26,7 @@ import {
 } from "./CloudWorkerProvider.ts";
 
 const decodeCommand = Schema.decodeSync(RunAllocationCommand);
+const decodeEnvironmentSave = Schema.decodeSync(CloudEnvironmentSaveInput);
 const startAt = Date.parse("2026-09-17T03:00:00.000Z");
 const secondAttempt = Schema.decodeSync(RunAllocationAttempt)(2);
 
@@ -857,6 +867,7 @@ it.effect("packs two queued allocations when the controller has two worker slots
         maxInputWaitSeconds: 900,
         previewGraceSeconds: 900,
         idleReleaseSeconds: 3_600,
+        conversationRetentionDays: DEFAULT_CONVERSATION_RETENTION_DAYS,
         allowedInstanceTypes: ["t3.medium"],
       },
     });
@@ -896,5 +907,86 @@ it.effect("packs two queued allocations when the controller has two worker slots
     yield* reconciler.reconcileOnce();
     yield* reconciler.reconcileOnce();
     expect(launched.size).toBe(2);
+  }).pipe(Effect.provide(SqlitePersistenceMemory)),
+);
+
+it.effect("places a warm guest without calling RunInstances", () =>
+  Effect.gen(function* () {
+    yield* TestClock.setTime(startAt);
+    const { controller, reconciler, state } = yield* fixture();
+    const builds = yield* makeBuilds();
+    const warmPool = yield* makeWarmPool();
+    const environment = yield* controller.saveEnvironment(
+      decodeEnvironmentSave({
+        environmentId: "environment-web",
+        name: "Web",
+        source: { type: "saved", scope: "personal", owner: "victor" },
+        repositories: [{ repository: "t3tools/t3code", defaultRef: "main" }],
+        config: { image: "node:24" },
+        secretReferences: [],
+        occurredAt: "2026-09-17T02:55:00.000Z",
+      }),
+    );
+    yield* builds.start({
+      buildId: CloudEnvironmentBuildId.make("build-1"),
+      version: environment.current,
+      trigger: "manual",
+      draft: false,
+      base: { kind: "image", image: "node:24" },
+      inputsFingerprint: "f".repeat(64),
+      startedAt: "2026-09-17T02:56:00.000Z",
+    });
+    yield* builds.complete({
+      buildId: CloudEnvironmentBuildId.make("build-1"),
+      gitSetup: [{ repository: "t3tools/t3code", defaultRef: "main", commit: "a".repeat(40) }],
+      logs: [],
+      timings: {},
+      outcome: {
+        status: "succeeded",
+        snapshot: {
+          id: "snap-1",
+          digest: "b".repeat(64),
+          sizeBytes: 1024,
+          createdAt: "2026-09-17T02:58:00.000Z",
+        },
+        completedAt: "2026-09-17T02:58:00.000Z",
+      },
+    });
+    yield* warmPool.start({
+      id: CloudWarmGuestId.make("guest-warm-1"),
+      key: {
+        environmentId: environment.id,
+        versionId: environment.current.id,
+        profileId: "linux-web",
+        buildId: CloudEnvironmentBuildId.make("build-1"),
+      },
+      snapshotId: "snap-1",
+      startedAt: "2026-09-17T02:59:00.000Z",
+    });
+    yield* warmPool.markReady({
+      guestId: CloudWarmGuestId.make("guest-warm-1"),
+      bootTimeMs: 90,
+      occurredAt: "2026-09-17T02:59:05.000Z",
+    });
+
+    yield* controller.dispatch(launchCommand("allocation-1"));
+    yield* reconciler.reconcileOnce();
+    yield* reconciler.reconcileOnce();
+
+    const booting = (yield* controller.snapshot).allocations[0];
+    expect(state.launchCalls).toBe(0);
+    expect(booting?.allocationState.status).toBe("booting");
+    expect(booting?.placement).toMatchObject({
+      warmFork: "warm",
+      buildId: "build-1",
+      bootTimeMs: 90,
+    });
+    if (booting?.allocationState.status === "booting") {
+      expect(booting.allocationState.instanceId).toBe("guest-warm-1");
+    }
+
+    yield* reconciler.reconcileOnce();
+    expect((yield* controller.snapshot).allocations[0]?.allocationState.status).toBe("registering");
+    expect(state.launchCalls).toBe(0);
   }).pipe(Effect.provide(SqlitePersistenceMemory)),
 );

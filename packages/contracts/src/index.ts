@@ -30,6 +30,7 @@ export * from "./cloudAllocation.ts";
 export * from "./cloudControl.ts";
 export * from "./cloudEnvironment.ts";
 export * from "./cloudEnvironmentBuild.ts";
+export * from "./cloudWarmPool.ts";
 export * from "./cloudExecution.ts";
 export * from "./cloudPublication.ts";
 export * from "./cloudRepository.ts";
