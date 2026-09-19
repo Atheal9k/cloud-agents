@@ -169,3 +169,27 @@ it.effect("rejects stale edits", () =>
     expect(error.reason).toBe("version-conflict");
   }).pipe(Effect.provide(SqlitePersistenceMemory)),
 );
+
+it.effect("rejects user secrets marked Build-only", () =>
+  Effect.gen(function* () {
+    const catalog = yield* make();
+    const error = yield* catalog
+      .save(
+        decodeSave({
+          ...personal,
+          secretReferences: [
+            {
+              name: "USER_TOKEN",
+              reference: "secret/user",
+              availability: "build",
+              scope: "user",
+            },
+          ],
+        }),
+      )
+      .pipe(Effect.flip);
+
+    expect(error.reason).toBe("invalid-environment");
+    expect(error.message).toContain("User secret");
+  }).pipe(Effect.provide(SqlitePersistenceMemory)),
+);

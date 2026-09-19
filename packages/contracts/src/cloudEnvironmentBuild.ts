@@ -9,7 +9,11 @@ import {
   PositiveInt,
   TrimmedNonEmptyString,
 } from "./baseSchemas.ts";
-import { CloudEnvironmentBase, CloudEnvironmentSecretReference } from "./cloudEnvironment.ts";
+import {
+  CloudEnvironmentBase,
+  CloudEnvironmentSecretReference,
+  cloudEnvironmentSecretScope,
+} from "./cloudEnvironment.ts";
 import { CloudRepositoryCommandResult, CloudRunStageTiming } from "./cloudRepository.ts";
 
 const Sha256Hex = Schema.String.check(Schema.isPattern(/^[a-f0-9]{64}$/));
@@ -135,12 +139,15 @@ export function cloudEnvironmentBuildReference(
 
 /**
  * Build-time material is baked into a shared snapshot, so only secrets marked
- * `build` may reach it. Runtime secrets stay with the run that owns them.
+ * `build` may reach it. Runtime secrets stay with the run that owns them, and
+ * user secrets never enter a shared disk even if they were mislabelled.
  */
 export function cloudEnvironmentBuildSecrets(
   secretReferences: ReadonlyArray<CloudEnvironmentSecretReference>,
 ): ReadonlyArray<CloudEnvironmentSecretReference> {
-  return secretReferences.filter((secret) => secret.availability === "build");
+  return secretReferences.filter(
+    (secret) => secret.availability === "build" && cloudEnvironmentSecretScope(secret) !== "user",
+  );
 }
 
 export const CloudEnvironmentBuildStartInput = Schema.Struct({
@@ -183,6 +190,7 @@ export class CloudEnvironmentBuildError extends Schema.TaggedError<CloudEnvironm
       "build-already-settled",
       "build-in-progress",
       "build-failed",
+      "admission-rejected",
       "persistence-failed",
     ]),
     message: TrimmedNonEmptyString,

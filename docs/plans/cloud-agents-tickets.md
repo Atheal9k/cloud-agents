@@ -178,7 +178,7 @@ stay last until you choose to pick them up.
 | 8    | ~~CA-21~~, ~~CA-45~~             | Retained-results review UI; fleet capacity and Build pre-warming.                          |
 | 9    | ~~CA-05~~, ~~CA-37~~, ~~CA-47~~  | AWS settings UI; Android worker profile; public Cloud Agents API.                          |
 | 10   | CA-49                            | Shared secret, identity, encryption, and network policy.                                   |
-| 11   | CA-12, ~~CA-13~~, CA-26          | Environment recipes; event-stream performance; local/cloud handoff.                        |
+| 11   | ~~CA-12~~, ~~CA-13~~, CA-26      | Environment recipes; event-stream performance; local/cloud handoff.                        |
 | 12   | CA-36, CA-51, CA-55              | Preview leases; provider extensibility; usage and audit accounting.                        |
 | 13   | CA-32, CA-50                     | Private dependency networking; source-control and collaboration entry points.              |
 | 14   | CA-56, CA-58                     | Multi-repository environments; self-hosted pools.                                          |
@@ -670,6 +670,8 @@ Acceptance criteria:
 ### CA-12: Add reusable repository recipes and secret management
 
 Dependencies: CA-10, CA-19, CA-24, CA-41, CA-42, CA-49.
+
+Status: Done on 19 September 2026 in [PR #43](https://github.com/Atheal9k/cloud-agents/pull/43).
 
 Description: Replace per-run recipes with versioned environments. Map setup to
 Build-time `install`, per-runtime services to `start` and named terminals, and
