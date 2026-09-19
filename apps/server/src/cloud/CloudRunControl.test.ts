@@ -182,6 +182,9 @@ function fixture(initial: RunAllocation, options?: { readonly captureFails?: boo
       })),
       stream: Stream.empty,
       setAdmission: () => Effect.die("unused"),
+      saveEnvironment: () => Effect.die("unused"),
+      restoreEnvironment: () => Effect.die("unused"),
+      resolveEnvironment: () => Effect.die("unused"),
     });
     const execution = CloudProviderExecution.CloudProviderExecution.of({
       start: () => Effect.die("unused"),

@@ -137,3 +137,40 @@ Provider references: [Codex CLI](https://developers.openai.com/codex/cli),
 [CLI resume commands](https://developers.openai.com/codex/cli/reference).
 Claude references: [authentication](https://code.claude.com/docs/en/team) and
 [CLI resume commands](https://docs.anthropic.com/en/docs/claude-code/cli-usage).
+
+## Environment resolution
+
+A cloud environment is a versioned catalog record, not a recipe carried on an
+allocation. Editing one appends an immutable version; restoring one appends
+another version that copies a prior config and records `restoredFromVersion`.
+An agent pins the version reference it resolved at launch, so later edits never
+change a running agent's environment. See
+[`CloudEnvironmentCatalog`](../../apps/server/src/cloud/CloudEnvironmentCatalog.ts).
+
+For one repository the catalog resolves in this order, first match wins:
+
+1. a version whose source is the repository's committed config, either
+   `.cursor/environment.json` or the T3 equivalent `t3.cloud.json`;
+2. a personal saved environment;
+3. a team saved environment;
+4. the default environment.
+
+The controller performs this lookup itself during `allocation.launch`. A launch
+command carries no environment, because the resolved config decides the base
+image, runtime user, and egress policy — a client that could supply one could
+choose its own sandbox. Committed repository configs therefore reach the
+catalog through an authorized save whose source is `repository`, not through
+the launch path.
+
+Saving a personal, team, or default environment for a repository that already
+has a committed config fails with `repository-environment-exists`. Editing the
+committed file, and re-saving the repository-sourced environment from it,
+is the only way to change that repository's environment. This keeps one
+authority per repository instead of a dashboard copy that silently diverges
+from the file in the tree.
+
+The config shape follows Cursor's
+[environment schema](https://cursor.com/schemas/environment.schema.json) with
+one added rule: exactly one of `build`, `image`, or `snapshot`. A committed
+file may carry `$schema` for editor completion; decoding ignores it and T3
+never writes it back.

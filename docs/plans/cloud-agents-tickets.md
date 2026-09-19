@@ -793,6 +793,8 @@ Acceptance criteria:
 
 ### CA-41: Add versioned environments and config resolution
 
+Status: Done on 19 September 2026 in [PR #28](https://github.com/Atheal9k/cloud-agents/pull/28).
+
 Dependencies: CA-10, CA-40.
 
 Description: Make environment setup a first-class, versioned resource rather

@@ -28,6 +28,7 @@ export * from "./sourceControl.ts";
 export * from "./projectClone.ts";
 export * from "./cloudAllocation.ts";
 export * from "./cloudControl.ts";
+export * from "./cloudEnvironment.ts";
 export * from "./cloudExecution.ts";
 export * from "./cloudPublication.ts";
 export * from "./cloudRepository.ts";
