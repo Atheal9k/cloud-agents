@@ -134,6 +134,7 @@ describe("cloud run launch", () => {
     expect(result.command).toMatchObject({
       commandId: "cloud-launch:request-19",
       allocationId: "request-19",
+      control: { agentId: "agent:request-19", runId: "run:request-19:1" },
       target: { repository: "Atheal9k/cloud-agents", baseCommit: "main" },
       publication: { mode: "automatic-draft-pr", baseBranch: "main" },
       execution: {

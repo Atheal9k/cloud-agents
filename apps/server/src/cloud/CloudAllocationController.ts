@@ -24,6 +24,7 @@ import * as SqlSchema from "effect/unstable/sql/SqlSchema";
 
 import * as ServerConfig from "../config.ts";
 import { subscribeBeforeSnapshot } from "../utils/subscribeBeforeSnapshot.ts";
+import { projectCloudControlPlane } from "./cloudControlPlane.ts";
 import {
   decideRunAllocationCommand,
   projectRunAllocationEvent,
@@ -297,6 +298,14 @@ export const make = Effect.fn("CloudAllocationController.make")(function* (input
     const allocations = yield* Effect.forEach(grouped.values(), replayEvents).pipe(
       Effect.map((values) => values.filter((value): value is RunAllocation => value !== undefined)),
     );
+    const controlPlane = yield* Effect.try({
+      try: () => projectCloudControlPlane(grouped.values()),
+      catch: () =>
+        controllerError(
+          "invalid-persisted-event",
+          "The local cloud allocation catalog cannot rebuild its agent and run records.",
+        ),
+    });
     return {
       controller: {
         mode: "local",
@@ -310,6 +319,9 @@ export const make = Effect.fn("CloudAllocationController.make")(function* (input
       workerPriceAssumptions,
       spendingControl: "estimate-only",
       allocations,
+      agents: controlPlane.agents,
+      runs: controlPlane.runs,
+      runtimeAttempts: controlPlane.runtimeAttempts,
       usage: allocations.map((allocation) =>
         usageForAllocation(allocation, grouped.get(allocation.id) ?? [], now),
       ),
@@ -337,10 +349,14 @@ export const make = Effect.fn("CloudAllocationController.make")(function* (input
         `Instance type '${instanceType}' is not allowed by this controller.`,
       );
     }
-    if (command.type !== "allocation.launch" && command.type !== "allocation.retry")
+    if (
+      command.type !== "allocation.launch" &&
+      command.type !== "allocation.retry" &&
+      command.type !== "allocation.follow-up"
+    )
       return undefined;
     if (
-      command.type === "allocation.launch" &&
+      (command.type === "allocation.launch" || command.type === "allocation.follow-up") &&
       command.execution !== undefined &&
       command.execution.unansweredRequestSeconds > limits.maxInputWaitSeconds
     ) {
@@ -388,6 +404,36 @@ export const make = Effect.fn("CloudAllocationController.make")(function* (input
         const current = yield* readAllocation(command.allocationId);
         if (command.type === "allocation.launch" && current === undefined) {
           const snapshot = yield* readSnapshot;
+          const linkedAgent = snapshot.agents?.find(
+            (agent) => command.control !== undefined && agent.id === command.control.agentId,
+          );
+          if (linkedAgent?.status === "ACTIVE") {
+            return yield* controllerError(
+              "agent_busy",
+              `Cloud agent '${linkedAgent.id}' already has an active run.`,
+            );
+          }
+          if (linkedAgent?.status === "ARCHIVED") {
+            return yield* controllerError(
+              "agent-archived",
+              `Cloud agent '${linkedAgent.id}' is archived.`,
+            );
+          }
+          if (linkedAgent !== undefined) {
+            return yield* controllerError(
+              "invalid-request",
+              `Cloud agent '${linkedAgent.id}' already exists. Submit a follow-up to its allocation instead.`,
+            );
+          }
+          if (
+            command.control !== undefined &&
+            snapshot.runs?.some((run) => run.id === command.control?.runId) === true
+          ) {
+            return yield* controllerError(
+              "run-already-exists",
+              `Cloud run '${command.control.runId}' already exists.`,
+            );
+          }
           if (snapshot.controller.admission.status === "stopped") {
             return yield* controllerError(
               "admission-stopped",
@@ -405,6 +451,50 @@ export const make = Effect.fn("CloudAllocationController.make")(function* (input
               `The cloud allocation queue is full at ${limits.maxQueueDepth} waiting jobs.`,
             );
           }
+        }
+        if (command.type === "allocation.follow-up" && current !== undefined) {
+          if (current.handledCommandIds.includes(command.commandId)) return current;
+          const snapshot = yield* readSnapshot;
+          const agent = snapshot.agents?.find(
+            (candidate) => candidate.allocationId === command.allocationId,
+          );
+          if (agent?.status === "ACTIVE") {
+            return yield* controllerError(
+              "agent_busy",
+              `Cloud agent '${agent.id}' already has an active run.`,
+            );
+          }
+          if (agent?.status === "ARCHIVED") {
+            return yield* controllerError(
+              "agent-archived",
+              `Cloud agent '${agent.id}' is archived.`,
+            );
+          }
+          if (snapshot.runs?.some((run) => run.id === command.runId) === true) {
+            return yield* controllerError(
+              "run-already-exists",
+              `Cloud run '${command.runId}' already exists.`,
+            );
+          }
+          if (snapshot.controller.admission.status === "stopped") {
+            return yield* controllerError(
+              "admission-stopped",
+              "Cloud run admission is stopped. Running jobs, results, and cleanup remain available.",
+            );
+          }
+          const invalid = validateAdmission(command);
+          if (invalid !== undefined) return yield* invalid;
+        }
+        if (
+          command.type === "allocation.agent-archive" &&
+          current !== undefined &&
+          (current.agentOutcome.status === "not-started" ||
+            current.agentOutcome.status === "running")
+        ) {
+          return yield* controllerError(
+            "agent_busy",
+            `Cloud agent for allocation '${current.id}' already has an active run.`,
+          );
         }
         if (command.type === "allocation.retry" && current?.cleanupState.status === "succeeded") {
           const snapshot = yield* readSnapshot;

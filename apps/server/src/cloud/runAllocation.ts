@@ -1,4 +1,10 @@
-import type { RunAllocation, RunAllocationCommand, RunAllocationEvent } from "@t3tools/contracts";
+import {
+  CloudAgentId,
+  RunAllocationAttempt,
+  type RunAllocation,
+  type RunAllocationCommand,
+  type RunAllocationEvent,
+} from "@t3tools/contracts";
 
 function assertNever(value: never): never {
   throw new Error(`Unhandled allocation variant: ${String(value)}`);
@@ -38,6 +44,7 @@ export function decideRunAllocationCommand(
         target: command.target,
         publication: command.publication,
         ...(command.execution === undefined ? {} : { execution: command.execution }),
+        ...(command.control === undefined ? {} : { control: command.control }),
         profile: command.profile,
         deadlines: command.deadlines,
       },
@@ -152,6 +159,48 @@ export function decideRunAllocationCommand(
         allocation.cleanupState.status === "failed"
         ? [{ ...base, type: "allocation.cancellation-requested" }]
         : [];
+    case "allocation.expire":
+      return (allocation.agentOutcome.status === "not-started" ||
+        allocation.agentOutcome.status === "running") &&
+        allocation.cleanupState.status === "not-requested"
+        ? [{ ...base, type: "allocation.expired" }]
+        : [];
+    case "allocation.follow-up": {
+      const terminal =
+        allocation.agentOutcome.status === "succeeded" ||
+        allocation.agentOutcome.status === "failed" ||
+        allocation.agentOutcome.status === "cancelled" ||
+        allocation.agentOutcome.status === "expired";
+      const reuseRuntime =
+        allocation.allocationState.status === "ready" &&
+        allocation.cleanupState.status === "not-requested";
+      const replaceRuntime = allocation.cleanupState.status === "succeeded";
+      if (allocation.archivedAt !== undefined || !terminal || (!reuseRuntime && !replaceRuntime)) {
+        return [];
+      }
+      return [
+        {
+          ...base,
+          type: "allocation.follow-up-requested",
+          attempt: replaceRuntime
+            ? RunAllocationAttempt.make(allocation.attempt + 1)
+            : allocation.attempt,
+          runId: command.runId,
+          execution: command.execution,
+          deadlines: command.deadlines,
+        },
+      ];
+    }
+    case "allocation.agent-archive":
+      return allocation.archivedAt === undefined &&
+        allocation.agentOutcome.status !== "not-started" &&
+        allocation.agentOutcome.status !== "running"
+        ? [{ ...base, type: "allocation.agent-archived" }]
+        : [];
+    case "allocation.agent-unarchive":
+      return allocation.archivedAt === undefined
+        ? []
+        : [{ ...base, type: "allocation.agent-unarchived" }];
     case "allocation.cleanup-started":
       return allocation.cleanupState.status === "requested"
         ? [{ ...base, type: command.type }]
@@ -164,9 +213,7 @@ export function decideRunAllocationCommand(
         : [];
     case "allocation.retry":
       return allocation.cleanupState.status === "succeeded" &&
-        (allocation.allocationState.status === "failed" ||
-          allocation.agentOutcome.status === "failed" ||
-          allocation.agentOutcome.status === "cancelled") &&
+        allocation.allocationState.status === "failed" &&
         command.nextAttempt === allocation.attempt + 1
         ? [
             {
@@ -192,7 +239,8 @@ function requireCurrentEvent(allocation: RunAllocation, event: RunAllocationEven
     throw new Error(`Allocation event ${event.sequence} is not the next sequence`);
   }
   if (
-    event.type === "allocation.retry-requested"
+    event.type === "allocation.retry-requested" ||
+    (event.type === "allocation.follow-up-requested" && event.attempt !== allocation.attempt)
       ? event.attempt !== allocation.attempt + 1
       : event.attempt !== allocation.attempt
   ) {
@@ -232,6 +280,7 @@ export function projectRunAllocationEvent(
       target: event.target,
       publication: event.publication ?? { mode: "review-only" },
       ...(event.execution === undefined ? {} : { execution: event.execution }),
+      ...(event.control === undefined ? {} : { control: event.control }),
       profile: event.profile,
       deadlines: event.deadlines,
       allocationState: { status: "queued" },
@@ -375,6 +424,45 @@ export function projectRunAllocationEvent(
             : { status: "cancelled", cancelledAt: event.occurredAt },
         cleanupState: { status: "requested", requestedAt: event.occurredAt },
       });
+    case "allocation.expired":
+      return projectUpdate(allocation, event, {
+        agentOutcome: { status: "expired", expiredAt: event.occurredAt },
+        cleanupState: { status: "requested", requestedAt: event.occurredAt },
+      });
+    case "allocation.follow-up-requested": {
+      const replacedRuntime = event.attempt !== allocation.attempt;
+      const runtimeReset = replacedRuntime
+        ? ({
+            allocationState: { status: "queued" },
+            previewState: { status: "unavailable" },
+            cleanupState: { status: "not-requested" },
+          } satisfies Pick<RunAllocation, "allocationState" | "previewState" | "cleanupState">)
+        : {};
+      return projectUpdate(allocation, event, {
+        attempt: event.attempt,
+        execution: event.execution,
+        control: {
+          agentId: allocation.control?.agentId ?? CloudAgentId.make(`agent:${allocation.id}`),
+          runId: event.runId,
+        },
+        deadlines: event.deadlines,
+        agentOutcome: { status: "not-started" },
+        ...runtimeReset,
+      });
+    }
+    case "allocation.agent-archived":
+      return projectUpdate(allocation, event, {
+        archivedAt: event.occurredAt,
+        cleanupState:
+          allocation.cleanupState.status === "not-requested"
+            ? { status: "requested", requestedAt: event.occurredAt }
+            : allocation.cleanupState,
+      });
+    case "allocation.agent-unarchived": {
+      const { archivedAt, ...unarchived } = allocation;
+      void archivedAt;
+      return projectUpdate(unarchived, event, {});
+    }
     case "allocation.cleanup-started":
       return projectUpdate(allocation, event, {
         cleanupState: { status: "running", startedAt: event.occurredAt },

@@ -64,6 +64,7 @@ function reviewDeadline(allocation: RunAllocation, reviewGraceMillis: number): n
     case "not-started":
     case "running":
     case "cancelled":
+    case "expired":
       return undefined;
   }
 }
@@ -197,14 +198,24 @@ export const make = Effect.fn("CloudAllocationReconciler.make")(function* (input
     }
 
     const completedReviewDeadline = reviewDeadline(allocation, reviewGraceMillis);
+    if (hasPassed(now, allocation.deadlines.expiresAt)) {
+      yield* dispatch(allocation, occurredAt, {
+        type:
+          allocation.agentOutcome.status === "not-started" ||
+          allocation.agentOutcome.status === "running"
+            ? "allocation.expire"
+            : "allocation.cancel",
+        commandId: commandId(allocation, "expire"),
+      });
+      return;
+    }
     if (
-      hasPassed(now, allocation.deadlines.expiresAt) ||
-      (completedReviewDeadline !== undefined &&
-        DateTime.toEpochMillis(now) >= completedReviewDeadline)
+      completedReviewDeadline !== undefined &&
+      DateTime.toEpochMillis(now) >= completedReviewDeadline
     ) {
       yield* dispatch(allocation, occurredAt, {
         type: "allocation.cancel",
-        commandId: commandId(allocation, "expire"),
+        commandId: commandId(allocation, "review-complete"),
       });
       return;
     }
