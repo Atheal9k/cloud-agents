@@ -60,6 +60,30 @@ export function createCloudAllocationAtoms<R, E>(
     execute: (input: CloudControllerDefaultsInput) =>
       request(WS_METHODS.cloudAllocationSetDefaults, input),
   });
+  const setSpendLimit = createEnvironmentRpcCommand(runtime, {
+    label: "environment-data:cloud-accounting:set-spend-limit",
+    tag: WS_METHODS.cloudAccountingSetSpendLimit,
+    scheduler,
+    concurrency: { mode: "singleFlight", key: ({ environmentId }) => environmentId },
+    execute: (input: import("@t3tools/contracts").CloudSpendLimitInput) =>
+      request(WS_METHODS.cloudAccountingSetSpendLimit, input),
+  });
+  const recordInvoice = createEnvironmentRpcCommand(runtime, {
+    label: "environment-data:cloud-accounting:record-invoice",
+    tag: WS_METHODS.cloudAccountingRecordInvoice,
+    scheduler,
+    concurrency: { mode: "singleFlight", key: ({ environmentId }) => environmentId },
+    execute: (input: import("@t3tools/contracts").CloudInvoiceInput) =>
+      request(WS_METHODS.cloudAccountingRecordInvoice, input),
+  });
+  const exportUsage = createEnvironmentRpcCommand(runtime, {
+    label: "environment-data:cloud-accounting:export",
+    tag: WS_METHODS.cloudAccountingExport,
+    scheduler,
+    concurrency: { mode: "singleFlight", key: ({ environmentId }) => environmentId },
+    execute: (input: import("@t3tools/contracts").CloudUsageExportInput) =>
+      request(WS_METHODS.cloudAccountingExport, input),
+  });
   const readiness = createEnvironmentRpcCommand(runtime, {
     label: "environment-data:cloud-readiness:get",
     tag: WS_METHODS.cloudReadinessGet,
@@ -212,6 +236,9 @@ export function createCloudAllocationAtoms<R, E>(
     dispatch,
     setAdmission,
     setDefaults,
+    setSpendLimit,
+    recordInvoice,
+    exportUsage,
     readiness,
     runReadinessChecks,
     runGuidedSetup,

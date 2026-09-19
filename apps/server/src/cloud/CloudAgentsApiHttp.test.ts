@@ -24,6 +24,7 @@ const routesLayer = cloudAgentsApiRouteLayer.pipe(
         getRun: unused,
         cancelRun: unused,
         usage: unused,
+        usageReport: unused,
         archive: unused,
         unarchive: unused,
         deleteAgent: unused,

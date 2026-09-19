@@ -24,6 +24,12 @@ export const ControllerSettingsRow = Schema.Struct({
   defaultModel: Schema.NullOr(Schema.String),
   defaultRepository: Schema.NullOr(Schema.String),
   defaultRef: Schema.NullOr(Schema.String),
+  defaultContext: Schema.NullOr(Schema.String),
+  defaultLongRunning: Schema.NullOr(Schema.Int),
+  defaultComputerUse: Schema.NullOr(Schema.Int),
+  defaultSummaries: Schema.NullOr(Schema.Int),
+  defaultArtifactsToGit: Schema.NullOr(Schema.Int),
+  defaultCollaboration: Schema.NullOr(Schema.String),
 });
 export type ControllerSettingsRow = typeof ControllerSettingsRow.Type;
 
@@ -41,6 +47,12 @@ const DefaultsUpdate = Schema.Struct({
   defaultModel: Schema.NullOr(Schema.String),
   defaultRepository: Schema.NullOr(Schema.String),
   defaultRef: Schema.NullOr(Schema.String),
+  defaultContext: Schema.NullOr(Schema.String),
+  defaultLongRunning: Schema.NullOr(Schema.Int),
+  defaultComputerUse: Schema.NullOr(Schema.Int),
+  defaultSummaries: Schema.NullOr(Schema.Int),
+  defaultArtifactsToGit: Schema.NullOr(Schema.Int),
+  defaultCollaboration: Schema.NullOr(Schema.String),
 });
 
 /**
@@ -52,13 +64,32 @@ export const defaultsFromRow = (row: ControllerSettingsRow): CloudControllerDefa
     const trimmed = raw?.trim() ?? "";
     return trimmed.length === 0 ? undefined : trimmed;
   };
+  const flag = (raw: number | null) => (raw === null ? undefined : raw === 1);
   const model = value(row.defaultModel);
+  const context = value(row.defaultContext);
   const repository = value(row.defaultRepository);
   const ref = value(row.defaultRef);
+  const collaboration = value(row.defaultCollaboration);
   return {
     ...(model === undefined ? {} : { model }),
+    ...(context === undefined ? {} : { context }),
     ...(repository === undefined ? {} : { repository }),
     ...(ref === undefined ? {} : { ref }),
+    ...(flag(row.defaultLongRunning) === undefined
+      ? {}
+      : { longRunning: flag(row.defaultLongRunning) }),
+    ...(flag(row.defaultComputerUse) === undefined
+      ? {}
+      : { computerUse: flag(row.defaultComputerUse) }),
+    ...(flag(row.defaultSummaries) === undefined ? {} : { summaries: flag(row.defaultSummaries) }),
+    ...(flag(row.defaultArtifactsToGit) === undefined
+      ? {}
+      : { artifactsToGit: flag(row.defaultArtifactsToGit) }),
+    ...(collaboration === "disabled" ||
+    collaboration === "service-accounts" ||
+    collaboration === "all"
+      ? { collaboration }
+      : {}),
   };
 };
 
@@ -94,7 +125,13 @@ export const make = Effect.fn("cloud.controllerSettings.make")(function* () {
         fence_reason AS "fenceReason",
         default_model AS "defaultModel",
         default_repository AS "defaultRepository",
-        default_ref AS "defaultRef"
+        default_ref AS "defaultRef",
+        default_context AS "defaultContext",
+        default_long_running AS "defaultLongRunning",
+        default_computer_use AS "defaultComputerUse",
+        default_summaries AS "defaultSummaries",
+        default_artifacts_to_git AS "defaultArtifactsToGit",
+        default_collaboration AS "defaultCollaboration"
       FROM cloud_controller_settings
       WHERE singleton_id = 1
     `,
@@ -128,12 +165,28 @@ export const make = Effect.fn("cloud.controllerSettings.make")(function* () {
 
   const writeDefaults = SqlSchema.void({
     Request: DefaultsUpdate,
-    execute: ({ defaultModel, defaultRepository, defaultRef }) => sql`
+    execute: ({
+      defaultModel,
+      defaultRepository,
+      defaultRef,
+      defaultContext,
+      defaultLongRunning,
+      defaultComputerUse,
+      defaultSummaries,
+      defaultArtifactsToGit,
+      defaultCollaboration,
+    }) => sql`
       UPDATE cloud_controller_settings
       SET
         default_model = ${defaultModel},
         default_repository = ${defaultRepository},
-        default_ref = ${defaultRef}
+        default_ref = ${defaultRef},
+        default_context = ${defaultContext},
+        default_long_running = ${defaultLongRunning},
+        default_computer_use = ${defaultComputerUse},
+        default_summaries = ${defaultSummaries},
+        default_artifacts_to_git = ${defaultArtifactsToGit},
+        default_collaboration = ${defaultCollaboration}
       WHERE singleton_id = 1
     `,
   });
