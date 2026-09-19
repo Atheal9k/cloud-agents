@@ -737,6 +737,8 @@ Acceptance criteria:
 
 ### CA-33: Expand remote administration beyond the first workflow
 
+Status: Done on 20 September 2026 in [PR #65](https://github.com/Atheal9k/cloud-agents/pull/65).
+
 Dependencies: CA-05, CA-12, CA-18, CA-19, CA-24, CA-40, CA-41, CA-42, CA-44,
 CA-49, CA-55, CA-59.
 
