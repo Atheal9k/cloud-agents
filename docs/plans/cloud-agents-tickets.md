@@ -888,6 +888,8 @@ Acceptance criteria:
 
 ### CA-43: Hibernate idle agents and wake from snapshots
 
+Status: Done on 19 September 2026 in [PR #32](https://github.com/Atheal9k/cloud-agents/pull/32).
+
 Dependencies: CA-14, CA-17, CA-40, CA-42.
 
 Description: Make idle compute release the default cost boundary.
