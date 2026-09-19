@@ -749,6 +749,9 @@ export const make = Effect.fn("CloudAllocationController.make")(function* (input
 
 const CloudAllocationPolicyConfig = Config.all({
   maxQueueDepth: Config.int("T3CODE_CLOUD_MAX_QUEUE_DEPTH").pipe(Config.withDefault(8)),
+  maxConcurrentWorkers: Config.int("T3CODE_CLOUD_MAX_CONCURRENT_WORKERS").pipe(
+    Config.withDefault(1),
+  ),
   maxRunSeconds: Config.int("T3CODE_CLOUD_MAX_RUN_SECONDS").pipe(
     Config.withDefault(3 * 24 * 60 * 60),
   ),
@@ -784,7 +787,7 @@ export const layer = Layer.effect(
       }),
     );
     const limits = yield* decodeCloudAllocationLimits({
-      maxConcurrentWorkers: 1,
+      maxConcurrentWorkers: policy.maxConcurrentWorkers,
       maxQueueDepth: policy.maxQueueDepth,
       maxRunSeconds: policy.maxRunSeconds,
       maxInputWaitSeconds: policy.maxInputWaitSeconds,
