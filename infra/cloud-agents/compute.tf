@@ -170,6 +170,8 @@ resource "aws_launch_template" "worker" {
       CloudAgentDesktopDependencies = tostring(each.value.desktop_dependencies)
       CloudAgentImageVersion        = each.value.image_version
       CloudAgentSharedBrowser       = tostring(each.value.shared_browser)
+      CloudAgentNestedVirtualization = tostring(each.value.nested_virtualization)
+      CloudAgentAndroidSdk          = tostring(each.value.android_sdk)
       Ephemeral                     = "true"
     }
   }

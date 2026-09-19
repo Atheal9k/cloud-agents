@@ -147,6 +147,13 @@ describe("firecrackerPlacement", () => {
     expect(slotsForProfile("linux-web-browser").memoryMib).toBeGreaterThan(
       slotsForProfile("linux-web").memoryMib,
     );
+    expect(slotsForProfile("linux-android").memoryMib).toBe(16_384);
+    expect(
+      placeGuest(emptyFleet([host("hv-android", { profiles: ["linux-android", "linux-web"] })]), {
+        agentId: "agent-android",
+        profileId: "linux-android",
+      }).status,
+    ).toBe("no-capacity");
   });
 
   it("releases compute slots when a guest hibernates", () => {

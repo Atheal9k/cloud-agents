@@ -31,6 +31,9 @@ import {
   ClientWebDeployment,
   CloudAllocationControllerError,
   type CloudEnvironmentBuild,
+  type CloudEnvironmentBuildId,
+  type CloudEnvironmentBuildTrigger,
+  type CloudEnvironmentVersion,
   CloudEnvironmentBuildError,
   CommandId,
   type DiscoveredLocalServerList,
@@ -123,6 +126,8 @@ import * as CloudAllocationController from "./cloud/CloudAllocationController.ts
 import * as CloudArtifactAccess from "./cloud/CloudArtifactAccess.ts";
 import * as CloudAgentReview from "./cloud/CloudAgentReview.ts";
 import * as CloudEnvironmentBuildRunner from "./cloud/CloudEnvironmentBuildRunner.ts";
+import * as CloudReadiness from "./cloud/CloudReadiness.ts";
+import { cloudGuidedSetupSaveInput } from "./cloud/cloudGuidedSetup.ts";
 import * as SharedBrowserGateway from "./cloud/SharedBrowserGateway.ts";
 import * as ServerLifecycleEvents from "./serverLifecycleEvents.ts";
 import * as ServerRuntimeStartup from "./serverRuntimeStartup.ts";
@@ -571,6 +576,47 @@ const makeWsRpcLayer = (
       const cloudArtifactAccess = yield* CloudArtifactAccess.CloudArtifactAccess;
       const cloudAgentReview = yield* CloudAgentReview.CloudAgentReviewService;
       const cloudBuildRunner = yield* CloudEnvironmentBuildRunner.CloudEnvironmentBuildRunner;
+      const cloudReadiness = yield* CloudReadiness.CloudReadiness;
+
+      /**
+       * A Build outlives the request that asked for it: clone and install take
+       * minutes, and a client that disconnects must not interrupt one or
+       * strand a record marked running. The caller gets the running record and
+       * watches the snapshot stream for the rest.
+       */
+      const startCloudBuild = Effect.fn("ws.startCloudBuild")(function* (buildInput: {
+        readonly buildId: CloudEnvironmentBuildId;
+        readonly version: CloudEnvironmentVersion;
+        readonly trigger: CloudEnvironmentBuildTrigger;
+        readonly occurredAt: string;
+      }) {
+        const started = yield* Deferred.make<
+          CloudEnvironmentBuild,
+          CloudAllocationControllerError | CloudEnvironmentBuildError
+        >();
+        yield* Effect.forkDetach(
+          cloudBuildRunner
+            .run({
+              buildId: buildInput.buildId,
+              version: buildInput.version,
+              trigger: buildInput.trigger,
+              // CA-59's agent-requested Builds stay draft until a person saves.
+              draft: buildInput.trigger === "agent-requested",
+              occurredAt: buildInput.occurredAt,
+              onStarted: (build) =>
+                Deferred.succeed(started, build).pipe(
+                  Effect.andThen(cloudAllocations.refresh),
+                  Effect.ignore,
+                ),
+            })
+            .pipe(
+              Effect.andThen(cloudAllocations.refresh),
+              Effect.catch((cause) => Deferred.fail(started, cause).pipe(Effect.ignore)),
+              Effect.ignore,
+            ),
+        );
+        return yield* Deferred.await(started);
+      });
       const deviceService = yield* DeviceService.DeviceService;
       const deviceHostContext =
         yield* Effect.context<Effect.Services<ReturnType<typeof remoteSshDeviceHosts>>>();
@@ -2721,41 +2767,57 @@ const makeWsRpcLayer = (
                   message: `Environment '${input.environmentId}' does not exist.`,
                 });
               }
-              /**
-               * A Build outlives the request that asked for it: clone and
-               * install take minutes, and a client that disconnects must not
-               * interrupt one or strand a record marked running. The caller
-               * gets the running record and watches the snapshot stream for
-               * the rest.
-               */
-              const started = yield* Deferred.make<
-                CloudEnvironmentBuild,
-                CloudAllocationControllerError | CloudEnvironmentBuildError
-              >();
-              yield* Effect.forkDetach(
-                cloudBuildRunner
-                  .run({
-                    buildId: input.buildId,
-                    version: environment.current,
-                    trigger: input.trigger,
-                    // CA-59's agent-requested Builds stay draft until a person saves.
-                    draft: input.trigger === "agent-requested",
-                    occurredAt: input.occurredAt,
-                    onStarted: (build) =>
-                      Deferred.succeed(started, build).pipe(
-                        Effect.andThen(cloudAllocations.refresh),
-                        Effect.ignore,
-                      ),
-                  })
-                  .pipe(
-                    Effect.andThen(cloudAllocations.refresh),
-                    Effect.catch((cause) => Deferred.fail(started, cause).pipe(Effect.ignore)),
-                    Effect.ignore,
-                  ),
-              );
-              return yield* Deferred.await(started);
+              return yield* startCloudBuild({
+                buildId: input.buildId,
+                version: environment.current,
+                trigger: input.trigger,
+                occurredAt: input.occurredAt,
+              });
             }),
             { "rpc.aggregate": "cloud-environment" },
+          ),
+        [WS_METHODS.cloudAllocationSetDefaults]: (input) =>
+          observeRpcEffect(
+            WS_METHODS.cloudAllocationSetDefaults,
+            cloudAllocations.setDefaults(input),
+            { "rpc.aggregate": "cloud-allocation" },
+          ),
+        [WS_METHODS.cloudReadinessGet]: (_input) =>
+          observeRpcEffect(WS_METHODS.cloudReadinessGet, cloudReadiness.report, {
+            "rpc.aggregate": "cloud-readiness",
+          }),
+        [WS_METHODS.cloudReadinessCheck]: (input) =>
+          observeRpcEffect(WS_METHODS.cloudReadinessCheck, cloudReadiness.check(input), {
+            "rpc.aggregate": "cloud-readiness",
+          }),
+        [WS_METHODS.cloudReadinessGuidedSetup]: (input) =>
+          observeRpcEffect(
+            WS_METHODS.cloudReadinessGuidedSetup,
+            Effect.gen(function* () {
+              // Read the Build that is serving runs before the save, so the
+              // caller can be told what stays active if this test fails.
+              const before = yield* cloudAllocations.snapshot;
+              const retainedBuildId = before.environments?.find(
+                (candidate) => candidate.id === input.environmentId,
+              )?.activeBuildId;
+              const environment = yield* cloudAllocations.saveEnvironment(
+                cloudGuidedSetupSaveInput(input),
+              );
+              const build = yield* startCloudBuild({
+                buildId: input.buildId,
+                version: environment.current,
+                trigger: "manual",
+                occurredAt: input.occurredAt,
+              });
+              return {
+                environmentId: environment.id,
+                versionId: environment.current.id,
+                version: environment.current.version,
+                buildId: build.id,
+                ...(retainedBuildId === undefined ? {} : { retainedBuildId }),
+              };
+            }),
+            { "rpc.aggregate": "cloud-readiness" },
           ),
         [WS_METHODS.cloudEnvironmentBuildCancel]: (input) =>
           observeRpcEffect(

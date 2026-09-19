@@ -176,7 +176,7 @@ stay last until you choose to pick them up.
 | 6    | ~~CA-38~~, ~~CA-46~~             | macOS worker infrastructure; retention and deletion services.                              |
 | 7    | ~~CA-44~~                        | Linux fleet and Firecracker runtime infrastructure.                                        |
 | 8    | ~~CA-21~~, ~~CA-45~~             | Retained-results review UI; fleet capacity and Build pre-warming.                          |
-| 9    | CA-05, CA-37, ~~CA-47~~          | AWS settings UI; Android worker profile; public Cloud Agents API.                          |
+| 9    | ~~CA-05~~, ~~CA-37~~, ~~CA-47~~  | AWS settings UI; Android worker profile; public Cloud Agents API.                          |
 | 10   | CA-49                            | Shared secret, identity, encryption, and network policy.                                   |
 | 11   | CA-12, CA-13, CA-26              | Environment recipes; event-stream performance; local/cloud handoff.                        |
 | 12   | CA-36, CA-51, CA-55              | Preview leases; provider extensibility; usage and audit accounting.                        |
@@ -645,6 +645,9 @@ Acceptance criteria:
 ### CA-05: Add a guided AWS readiness/settings screen
 
 Dependencies: CA-03, CA-04B, CA-19, CA-24, CA-41, CA-42, CA-44.
+
+Status: Done on 19 September 2026 in
+[PR #40](https://github.com/Atheal9k/cloud-agents/pull/40).
 
 Description: Replace manual deployment configuration with a readiness workflow
 for the controller, execution account, environments, Builds, snapshots, and
@@ -1261,6 +1264,8 @@ Acceptance criteria:
 These tickets concern the mobile apps you develop. They do not require modifying or publishing the native T3 control app.
 
 ### CA-37: Build and launch Android apps in accelerated emulator workers
+
+Status: Done on 19 September 2026 in [PR #39](https://github.com/Atheal9k/cloud-agents/pull/39).
 
 Dependencies: CA-02, CA-03, CA-07, CA-10, CA-14, CA-27, CA-40, CA-41,
 CA-42, CA-43, CA-44.

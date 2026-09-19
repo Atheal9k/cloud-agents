@@ -7,6 +7,7 @@
 export const DEFAULT_PROFILE_SLOTS = {
   "linux-web": { cpuMillis: 2_000, memoryMib: 8_192, diskGib: 30 },
   "linux-web-browser": { cpuMillis: 2_000, memoryMib: 12_288, diskGib: 40 },
+  "linux-android": { cpuMillis: 4_000, memoryMib: 16_384, diskGib: 80 },
 } as const;
 
 export type CloudRuntimeKind = "firecracker" | "ec2-fallback";
@@ -52,6 +53,9 @@ export type CloudHypervisorHost = {
   readonly profiles: ReadonlyArray<string>;
   readonly credentialsPath: string;
   readonly kvm: boolean;
+  /** Packer image tags, so an operator can see what a host is running. */
+  readonly guestImageVersion?: string;
+  readonly hypervisorImageVersion?: string;
 };
 
 export type CloudHypervisorFleet = {
@@ -295,6 +299,7 @@ function canPlaceOn(
 ): boolean {
   if (!host.kvm) return false;
   if (!host.profiles.includes(slots.profileId)) return false;
+  if (slots.profileId === "linux-android") return false;
   const used = usedSlots(fleet, host.id);
   if (used.cpuMillis + slots.cpuMillis > cpuCapacity(host)) return false;
   if (used.memoryMib + slots.memoryMib > host.memoryMib) return false;

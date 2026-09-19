@@ -160,6 +160,7 @@ import {
 } from "./cloud/SharedBrowserProxy.ts";
 import * as CloudArtifactAccess from "./cloud/CloudArtifactAccess.ts";
 import * as CloudAgentReview from "./cloud/CloudAgentReview.ts";
+import * as CloudReadiness from "./cloud/CloudReadiness.ts";
 import * as CloudRunControl from "./cloud/CloudRunControl.ts";
 import * as CloudRunPublication from "./cloud/CloudRunPublication.ts";
 import * as CloudRunResults from "./cloud/CloudRunResults.ts";
@@ -629,6 +630,7 @@ const RuntimeCoreDependenciesLive = Layer.mergeAll(
   CloudAgentsApi.layer,
   CloudAgentsApiKeys.layer,
   cloudAgentsApiRateLimitsLayer,
+  CloudReadiness.layer.pipe(Layer.provide(CloudWorkerProviderLayerLive)),
 ).pipe(
   Layer.provideMerge(CloudArtifactAccess.layer),
   Layer.provideMerge(CloudRunResultsLayerLive),
