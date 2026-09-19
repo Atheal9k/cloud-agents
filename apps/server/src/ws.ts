@@ -611,7 +611,16 @@ const makeWsRpcLayer = (
               occurredAt: buildInput.occurredAt,
               onStarted: (build) =>
                 Deferred.succeed(started, build).pipe(
-                  Effect.andThen(cloudAllocations.refresh),
+                  Effect.andThen(
+                    cloudAllocations.recordAdminAudit({
+                      id: `audit:build-start:${build.id}`,
+                      occurredAt: buildInput.occurredAt,
+                      action: "build-activation",
+                      resourceType: "build",
+                      resourceId: build.id,
+                      summary: `Started a ${buildInput.trigger} cloud environment Build.`,
+                    }),
+                  ),
                   Effect.ignore,
                 ),
             })
@@ -2817,15 +2826,44 @@ const makeWsRpcLayer = (
         [WS_METHODS.cloudCollaborationConnectScm]: (input) =>
           observeRpcEffect(
             WS_METHODS.cloudCollaborationConnectScm,
-            cloudCollaboration.connect(input),
+            cloudCollaboration.connect(input).pipe(
+              Effect.tap((connection) =>
+                nowIso.pipe(
+                  Effect.flatMap((occurredAt) =>
+                    cloudAllocations.recordAdminAudit({
+                      id: `audit:scm-connect:${connection.id}:${occurredAt}`,
+                      occurredAt,
+                      action: "auth",
+                      resourceType: "scm-connection",
+                      resourceId: connection.id,
+                      summary: `Connected ${connection.kind} source control.`,
+                    }),
+                  ),
+                ),
+              ),
+            ),
             { "rpc.aggregate": "cloud-collaboration" },
           ),
         [WS_METHODS.cloudCollaborationDisconnectScm]: (input) =>
           observeRpcEffect(
             WS_METHODS.cloudCollaborationDisconnectScm,
-            cloudCollaboration
-              .disconnect(input.connectionId)
-              .pipe(Effect.map(() => ({ id: input.connectionId }))),
+            cloudCollaboration.disconnect(input.connectionId).pipe(
+              Effect.tap(() =>
+                nowIso.pipe(
+                  Effect.flatMap((occurredAt) =>
+                    cloudAllocations.recordAdminAudit({
+                      id: `audit:scm-disconnect:${input.connectionId}:${occurredAt}`,
+                      occurredAt,
+                      action: "auth",
+                      resourceType: "scm-connection",
+                      resourceId: input.connectionId,
+                      summary: "Disconnected a source-control integration.",
+                    }),
+                  ),
+                ),
+              ),
+              Effect.map(() => ({ id: input.connectionId })),
+            ),
             { "rpc.aggregate": "cloud-collaboration" },
           ),
         [WS_METHODS.cloudReadinessGet]: (_input) =>
@@ -2878,6 +2916,12 @@ const makeWsRpcLayer = (
             {
               "rpc.aggregate": "cloud-environment",
             },
+          ),
+        [WS_METHODS.cloudEnvironmentBuildActivate]: (input) =>
+          observeRpcEffect(
+            WS_METHODS.cloudEnvironmentBuildActivate,
+            cloudAllocations.activateBuild(input),
+            { "rpc.aggregate": "cloud-environment" },
           ),
         [WS_METHODS.cloudEnvironmentBuildStaleThreshold]: (input) =>
           observeRpcEffect(

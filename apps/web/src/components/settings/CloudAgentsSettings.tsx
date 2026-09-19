@@ -2,7 +2,9 @@ import { useAtomValue } from "@effect/atom-react";
 import { squashAtomCommandFailure } from "@t3tools/client-runtime/state/runtime";
 import {
   CLOUD_READINESS_CHECK_IDS,
+  CloudEnvironmentBuildId,
   selfHostedLaunchPreview,
+  type CloudEnvironmentId,
   type CloudReadinessCheckId,
   type CloudReadinessReport,
   type CloudScmConnection,
@@ -80,6 +82,16 @@ function CloudAgentsSettingsForEnvironment({
   const setSpendLimit = useAtomCommand(cloudAllocations.setSpendLimit, { reportFailure: false });
   const exportUsage = useAtomCommand(cloudAllocations.exportUsage, { reportFailure: false });
   const runGuidedSetup = useAtomCommand(cloudAllocations.runGuidedSetup, { reportFailure: false });
+  const restoreEnvironment = useAtomCommand(cloudAllocations.restoreEnvironment, {
+    reportFailure: false,
+  });
+  const startBuild = useAtomCommand(cloudAllocations.startBuild, { reportFailure: false });
+  const cancelBuild = useAtomCommand(cloudAllocations.cancelBuild, { reportFailure: false });
+  const saveBuild = useAtomCommand(cloudAllocations.saveBuild, { reportFailure: false });
+  const activateBuild = useAtomCommand(cloudAllocations.activateBuild, { reportFailure: false });
+  const setBuildStaleThreshold = useAtomCommand(cloudAllocations.setBuildStaleThreshold, {
+    reportFailure: false,
+  });
   const listScm = useAtomCommand(cloudAllocations.listScmConnections, { reportFailure: false });
   const connectScm = useAtomCommand(cloudAllocations.connectScm, { reportFailure: false });
   const disconnectScm = useAtomCommand(cloudAllocations.disconnectScm, { reportFailure: false });
@@ -109,6 +121,7 @@ function CloudAgentsSettingsForEnvironment({
   const [setupOpen, setSetupOpen] = useState(false);
   const [setupDraft, setSetupDraft] = useState<CloudGuidedSetupDraft | null>(null);
   const [setupNotice, setSetupNotice] = useState<string | null>(null);
+  const [staleThresholdDrafts, setStaleThresholdDrafts] = useState<Record<string, string>>({});
   const [scmConnections, setScmConnections] = useState<ReadonlyArray<CloudScmConnection>>([]);
   const [scmDraft, setScmDraft] = useState({
     kind: "github" as CloudScmHostKind,
@@ -325,6 +338,81 @@ function CloudAgentsSettingsForEnvironment({
     });
   };
 
+  const afterEnvironmentMutation = (result: unknown) => {
+    if (result !== null) void refresh();
+  };
+
+  const triggerBuild = (targetEnvironmentId: CloudEnvironmentId) =>
+    void run(
+      `build:start:${targetEnvironmentId}`,
+      () =>
+        startBuild({
+          environmentId,
+          input: {
+            buildId: CloudEnvironmentBuildId.make(`build:${randomUUID()}`),
+            environmentId: targetEnvironmentId,
+            trigger: "manual",
+            occurredAt: new Date().toISOString(),
+          },
+        }),
+      "The controller could not start that Build.",
+    ).then(afterEnvironmentMutation);
+
+  const restoreVersion = (
+    targetEnvironmentId: CloudEnvironmentId,
+    expectedVersion: number,
+    version: number,
+  ) =>
+    void run(
+      `environment:restore:${targetEnvironmentId}:${version}`,
+      () =>
+        restoreEnvironment({
+          environmentId,
+          input: {
+            environmentId: targetEnvironmentId,
+            expectedVersion,
+            restoreVersion: version,
+            occurredAt: new Date().toISOString(),
+          },
+        }),
+      "The controller could not restore that environment version.",
+    ).then(afterEnvironmentMutation);
+
+  const changeBuild = (
+    action: "cancel" | "save" | "activate",
+    buildId: CloudEnvironmentBuildId,
+  ) => {
+    const input = { buildId, occurredAt: new Date().toISOString() };
+    const command =
+      action === "cancel" ? cancelBuild : action === "save" ? saveBuild : activateBuild;
+    void run(
+      `build:${action}:${buildId}`,
+      () => command({ environmentId, input }),
+      `The controller could not ${action} that Build.`,
+    ).then(afterEnvironmentMutation);
+  };
+
+  const saveBuildPolicy = (targetEnvironmentId: CloudEnvironmentId, currentValue: number) => {
+    const value = Number(staleThresholdDrafts[targetEnvironmentId] ?? currentValue);
+    if (!Number.isSafeInteger(value) || value < 0) {
+      setError("Build refresh seconds must be a non-negative whole number.");
+      return;
+    }
+    void run(
+      `build:policy:${targetEnvironmentId}`,
+      () =>
+        setBuildStaleThreshold({
+          environmentId,
+          input: {
+            environmentId: targetEnvironmentId,
+            staleThresholdSeconds: value,
+            occurredAt: new Date().toISOString(),
+          },
+        }),
+      "The controller could not save that Build policy.",
+    ).then(afterEnvironmentMutation);
+  };
+
   if (report === null) {
     return (
       <SettingsPageContainer>
@@ -437,6 +525,73 @@ function CloudAgentsSettingsForEnvironment({
         )}
       </SettingsSection>
 
+      <SettingsSection id="cloud-capacity" title="Agents and capacity">
+        <Facts
+          rows={[
+            [
+              "Queue",
+              `${snapshot?.allocations.filter((allocation) => allocation.allocationState.status === "queued").length ?? 0} queued · ${snapshot?.allocations.filter((allocation) => allocation.allocationState.status === "launching" || allocation.allocationState.status === "booting" || allocation.allocationState.status === "registering").length ?? 0} starting`,
+            ],
+            [
+              "Agents",
+              `${snapshot?.agents?.filter((agent) => agent.status === "ACTIVE").length ?? 0} active · ${snapshot?.agents?.filter((agent) => agent.status === "IDLE").length ?? 0} idle · ${snapshot?.agents?.filter((agent) => agent.status === "ARCHIVED").length ?? 0} archived`,
+            ],
+            [
+              "Runtimes",
+              `${snapshot?.runtimeAttempts?.filter((runtime) => runtime.status === "ACTIVE").length ?? 0} active · ${snapshot?.runtimeAttempts?.filter((runtime) => runtime.status === "HIBERNATED").length ?? 0} hibernated`,
+            ],
+            [
+              "Warm inventory",
+              `${snapshot?.warmGuests?.filter((guest) => guest.status === "ready").length ?? 0} ready · ${snapshot?.warmGuests?.filter((guest) => guest.status === "warming").length ?? 0} warming · ${snapshot?.warmGuests?.filter((guest) => guest.status === "draining").length ?? 0} draining`,
+            ],
+            [
+              "Cleanup",
+              `${snapshot?.allocations.filter((allocation) => allocation.cleanupState.status === "requested" || allocation.cleanupState.status === "running").length ?? 0} in progress · ${snapshot?.allocations.filter((allocation) => allocation.cleanupState.status === "failed").length ?? 0} failed · ${snapshot?.deletions?.length ?? 0} permanent deletions recorded`,
+            ],
+          ]}
+        />
+        {snapshot?.runtimeAttempts !== undefined && snapshot.runtimeAttempts.length > 0 ? (
+          <ul className="flex flex-col gap-1 text-xs text-muted-foreground">
+            {snapshot.runtimeAttempts.map((runtime) => (
+              <li key={runtime.id}>
+                {runtime.id} · {runtime.status} · agent {runtime.agentId} · attempt{" "}
+                {runtime.attempt}
+                {runtime.status === "HIBERNATED"
+                  ? ` · snapshot from ${runtime.snapshot.instanceId} at ${runtime.snapshot.capturedAt}`
+                  : ""}
+              </li>
+            ))}
+          </ul>
+        ) : null}
+        {snapshot?.warmGuests !== undefined && snapshot.warmGuests.length > 0 ? (
+          <ul className="flex flex-col gap-1 text-xs text-muted-foreground">
+            {snapshot.warmGuests.map((guest) => (
+              <li key={guest.id}>
+                {guest.id} · {guest.status} · {guest.profileId} · Build {guest.buildId}
+              </li>
+            ))}
+          </ul>
+        ) : null}
+        {snapshot?.allocations.some((allocation) => allocation.placement !== undefined) ? (
+          <ul className="flex flex-col gap-1 text-xs text-muted-foreground">
+            {snapshot.allocations.flatMap((allocation) =>
+              allocation.placement === undefined
+                ? []
+                : [
+                    <li key={allocation.id}>
+                      {allocation.id} · {allocation.placement.warmFork} placement · claim{" "}
+                      {allocation.placement.claimLatencyMs} ms · boot{" "}
+                      {allocation.placement.bootTimeMs} ms
+                      {allocation.placement.fallbackReason === undefined
+                        ? ""
+                        : ` · fallback ${allocation.placement.fallbackReason}`}
+                    </li>,
+                  ],
+            )}
+          </ul>
+        ) : null}
+      </SettingsSection>
+
       <SettingsSection
         id="cloud-checks"
         title="Checks"
@@ -499,71 +654,231 @@ function CloudAgentsSettingsForEnvironment({
         {report.environments.length === 0 ? (
           <p className="text-sm text-muted-foreground">No cloud environment is saved yet.</p>
         ) : (
-          <ul className="flex flex-col gap-4">
-            {report.environments.map((environment) => (
-              <li key={environment.environmentId} className="flex flex-col gap-1.5">
-                <div className="flex items-center gap-2">
-                  <span className="text-sm font-medium text-foreground">{environment.name}</span>
-                  <span className="text-xs text-muted-foreground">
-                    v{environment.version} · {cloudEnvironmentSourceLabel(environment.source)}
-                  </span>
-                  {environment.source.type === "saved" ? (
+          <ul className="flex flex-col gap-6">
+            {report.environments.map((environment) => {
+              const catalogEnvironment = snapshot?.environments?.find(
+                (candidate) => candidate.id === environment.environmentId,
+              );
+              const builds = (snapshot?.builds ?? []).filter(
+                (build) => build.environmentId === environment.environmentId,
+              );
+              return (
+                <li key={environment.environmentId} className="flex flex-col gap-3">
+                  <div className="flex flex-wrap items-center gap-2">
+                    <span className="text-sm font-medium text-foreground">{environment.name}</span>
+                    <span className="text-xs text-muted-foreground">
+                      v{environment.version} · {cloudEnvironmentSourceLabel(environment.source)}
+                    </span>
+                    <div className="ms-auto flex items-center gap-1">
+                      <Button
+                        size="xs"
+                        variant="outline"
+                        disabled={busy !== null}
+                        onClick={() => triggerBuild(environment.environmentId)}
+                      >
+                        {busy === `build:start:${environment.environmentId}`
+                          ? "Starting…"
+                          : "Start Build"}
+                      </Button>
+                      {environment.source.type === "saved" ? (
+                        <Button
+                          size="xs"
+                          variant="ghost"
+                          disabled={busy !== null}
+                          onClick={() => openSetup(environment.environmentId)}
+                        >
+                          Edit and test
+                        </Button>
+                      ) : null}
+                    </div>
+                  </div>
+                  <Facts
+                    rows={[
+                      [
+                        "Active Build",
+                        environment.activeBuildId === undefined
+                          ? "none"
+                          : `v${environment.activeBuildVersion ?? "?"} · snapshot ${environment.activeBuildSnapshotId ?? "unknown"}`,
+                      ],
+                      [
+                        "Freshness",
+                        `${environment.buildStale ? "stale" : "fresh"} · refreshes after ${seconds(environment.staleBuildThresholdSeconds)}`,
+                      ],
+                      [
+                        "Egress",
+                        `${environment.egressMode}${environment.egressAllowlist.length > 0 ? ` · ${environment.egressAllowlist.join(", ")}` : ""}`,
+                      ],
+                      [
+                        "Network",
+                        environment.networkProfile === undefined
+                          ? "public"
+                          : environment.networkProfile.enabled
+                            ? `${environment.networkProfile.kind} · ${environment.networkProfile.costClass}`
+                            : `disabled · was ${environment.networkProfile.disabledFrom ?? environment.networkProfile.kind}`,
+                      ],
+                      [
+                        "Private dependencies",
+                        environment.privateDependencies === undefined ||
+                        environment.privateDependencies.length === 0
+                          ? "none"
+                          : environment.privateDependencies
+                              .map((dependency) => `${dependency.kind} ${dependency.destination}`)
+                              .join(", "),
+                      ],
+                      [
+                        "Secrets",
+                        environment.secrets.length === 0
+                          ? "none"
+                          : environment.secrets
+                              .map((secret) => `${secret.name} (${secret.availability})`)
+                              .join(", "),
+                      ],
+                    ]}
+                  />
+                  <div className="flex flex-wrap items-end gap-2">
+                    <label className={fieldClassName}>
+                      <span className={labelClassName}>Recurring Build refresh seconds</span>
+                      <Input
+                        className="w-44"
+                        inputMode="numeric"
+                        value={
+                          staleThresholdDrafts[environment.environmentId] ??
+                          String(environment.staleBuildThresholdSeconds)
+                        }
+                        onChange={(event) =>
+                          setStaleThresholdDrafts({
+                            ...staleThresholdDrafts,
+                            [environment.environmentId]: event.currentTarget.value,
+                          })
+                        }
+                      />
+                    </label>
                     <Button
                       size="xs"
-                      variant="ghost"
-                      className="ms-auto"
+                      variant="outline"
                       disabled={busy !== null}
-                      onClick={() => openSetup(environment.environmentId)}
+                      onClick={() =>
+                        saveBuildPolicy(
+                          environment.environmentId,
+                          environment.staleBuildThresholdSeconds,
+                        )
+                      }
                     >
-                      Edit and test
+                      Save policy
                     </Button>
+                    <span className="text-xs text-muted-foreground">
+                      0 rebuilds before every run. Manual Builds remain available.
+                    </span>
+                  </div>
+                  {catalogEnvironment !== undefined ? (
+                    <details>
+                      <summary className="cursor-pointer text-xs font-medium text-foreground">
+                        Version history ({catalogEnvironment.history.length})
+                      </summary>
+                      <ul className="mt-2 flex flex-col gap-1 text-xs">
+                        {catalogEnvironment.history.map((version) => (
+                          <li key={version.id} className="flex flex-wrap items-center gap-2">
+                            <span>
+                              v{version.version} · {version.createdAt}
+                              {version.restoredFromVersion === undefined
+                                ? ""
+                                : ` · restored from v${version.restoredFromVersion}`}
+                            </span>
+                            {version.version === catalogEnvironment.current.version ? (
+                              <span className="text-muted-foreground">current</span>
+                            ) : (
+                              <Button
+                                size="xs"
+                                variant="ghost"
+                                disabled={busy !== null}
+                                onClick={() =>
+                                  restoreVersion(
+                                    environment.environmentId,
+                                    catalogEnvironment.current.version,
+                                    version.version,
+                                  )
+                                }
+                              >
+                                Restore as new version
+                              </Button>
+                            )}
+                          </li>
+                        ))}
+                      </ul>
+                    </details>
                   ) : null}
-                </div>
-                <Facts
-                  rows={[
-                    [
-                      "Active Build",
-                      environment.activeBuildId === undefined
-                        ? "none"
-                        : `v${environment.activeBuildVersion ?? "?"} · snapshot ${environment.activeBuildSnapshotId ?? "unknown"}`,
-                    ],
-                    [
-                      "Freshness",
-                      `${environment.buildStale ? "stale" : "fresh"} · refreshes after ${seconds(environment.staleBuildThresholdSeconds)}`,
-                    ],
-                    [
-                      "Egress",
-                      `${environment.egressMode}${environment.egressAllowlist.length > 0 ? ` · ${environment.egressAllowlist.join(", ")}` : ""}`,
-                    ],
-                    [
-                      "Network",
-                      environment.networkProfile === undefined
-                        ? "public"
-                        : environment.networkProfile.enabled
-                          ? `${environment.networkProfile.kind} · ${environment.networkProfile.costClass}`
-                          : `disabled · was ${environment.networkProfile.disabledFrom ?? environment.networkProfile.kind}`,
-                    ],
-                    [
-                      "Private dependencies",
-                      environment.privateDependencies === undefined ||
-                      environment.privateDependencies.length === 0
-                        ? "none"
-                        : environment.privateDependencies
-                            .map((dependency) => `${dependency.kind} ${dependency.destination}`)
-                            .join(", "),
-                    ],
-                    [
-                      "Secrets",
-                      environment.secrets.length === 0
-                        ? "none"
-                        : environment.secrets
-                            .map((secret) => `${secret.name} (${secret.availability})`)
-                            .join(", "),
-                    ],
-                  ]}
-                />
-              </li>
-            ))}
+                  {builds.length === 0 ? (
+                    <p className="text-xs text-muted-foreground">No Builds recorded.</p>
+                  ) : (
+                    <div className="flex flex-col gap-2">
+                      <span className="text-xs font-medium text-foreground">Build history</span>
+                      {builds.map((build) => (
+                        <details key={build.id} className="rounded-lg border border-border p-2">
+                          <summary className="cursor-pointer text-xs">
+                            v{build.version} · {build.outcome.status} · {build.trigger} · {build.id}
+                            {build.id === environment.activeBuildId ? " · active" : ""}
+                            {build.draft ? " · draft" : ""}
+                          </summary>
+                          <div className="mt-2 flex flex-col gap-2">
+                            {build.outcome.status === "failed" ? (
+                              <p className="text-xs text-destructive">
+                                {build.outcome.stage}: {build.outcome.message}
+                              </p>
+                            ) : null}
+                            <div className="flex flex-wrap gap-1">
+                              {build.outcome.status === "running" ? (
+                                <Button
+                                  size="xs"
+                                  variant="outline"
+                                  disabled={busy !== null}
+                                  onClick={() => changeBuild("cancel", build.id)}
+                                >
+                                  Cancel
+                                </Button>
+                              ) : null}
+                              {build.outcome.status === "succeeded" && build.draft ? (
+                                <Button
+                                  size="xs"
+                                  variant="outline"
+                                  disabled={busy !== null}
+                                  onClick={() => changeBuild("save", build.id)}
+                                >
+                                  Save and activate
+                                </Button>
+                              ) : null}
+                              {build.outcome.status === "succeeded" &&
+                              !build.draft &&
+                              build.id !== environment.activeBuildId ? (
+                                <Button
+                                  size="xs"
+                                  variant="outline"
+                                  disabled={busy !== null}
+                                  onClick={() => changeBuild("activate", build.id)}
+                                >
+                                  Activate
+                                </Button>
+                              ) : null}
+                            </div>
+                            {build.logs.map((log) => (
+                              <details key={`${build.id}:${log.name}`}>
+                                <summary className="cursor-pointer text-xs text-muted-foreground">
+                                  {log.name} · exit {log.exitCode ?? "running"}
+                                </summary>
+                                <pre className="mt-1 max-h-48 overflow-auto whitespace-pre-wrap rounded border border-border p-2 text-xs">
+                                  {[log.stdout, log.stderr]
+                                    .filter((value) => value.length > 0)
+                                    .join("\n") || "No output."}
+                                </pre>
+                              </details>
+                            ))}
+                          </div>
+                        </details>
+                      ))}
+                    </div>
+                  )}
+                </li>
+              );
+            })}
           </ul>
         )}
         {setupNotice ? <p className="text-sm text-muted-foreground">{setupNotice}</p> : null}
@@ -696,6 +1011,95 @@ function CloudAgentsSettingsForEnvironment({
                     setSetupDraft({ ...setupDraft, start: event.currentTarget.value })
                   }
                 />
+              </label>
+              <label className={fieldClassName}>
+                <span className={labelClassName}>Egress mode</span>
+                <select
+                  className={selectClassName}
+                  value={setupDraft.egressMode}
+                  onChange={(event) =>
+                    setSetupDraft({
+                      ...setupDraft,
+                      egressMode: event.currentTarget.value as CloudGuidedSetupDraft["egressMode"],
+                    })
+                  }
+                >
+                  <option value="allow_all">Allow all</option>
+                  <option value="parent_plus_network_settings">Parent plus allowlist</option>
+                  <option value="default_with_network_settings">Default plus allowlist</option>
+                  <option value="network_settings_only">Allowlist only</option>
+                </select>
+              </label>
+              <label className={fieldClassName}>
+                <span className={labelClassName}>Egress allowlist</span>
+                <Textarea
+                  value={setupDraft.egressAllowlist}
+                  placeholder="registry.npmjs.org"
+                  onChange={(event) =>
+                    setSetupDraft({ ...setupDraft, egressAllowlist: event.currentTarget.value })
+                  }
+                />
+                <span className="text-xs text-muted-foreground">One host per line.</span>
+              </label>
+              <label className={fieldClassName}>
+                <span className={labelClassName}>Network profile</span>
+                <select
+                  className={selectClassName}
+                  value={setupDraft.networkProfileKind}
+                  onChange={(event) =>
+                    setSetupDraft({
+                      ...setupDraft,
+                      networkProfileKind: event.currentTarget
+                        .value as CloudGuidedSetupDraft["networkProfileKind"],
+                    })
+                  }
+                >
+                  <option value="public">Public</option>
+                  <option value="stable-egress">Stable egress</option>
+                  <option value="tailscale">Tailscale</option>
+                  <option value="cloudflare-tunnel">Cloudflare Tunnel</option>
+                  <option value="aws-privatelink">AWS PrivateLink</option>
+                </select>
+                <label className="flex items-center gap-2 text-xs text-muted-foreground">
+                  <input
+                    type="checkbox"
+                    checked={setupDraft.networkProfileEnabled}
+                    onChange={(event) =>
+                      setSetupDraft({
+                        ...setupDraft,
+                        networkProfileEnabled: event.currentTarget.checked,
+                      })
+                    }
+                  />
+                  Enabled for new runtimes
+                </label>
+              </label>
+              <label className={fieldClassName}>
+                <span className={labelClassName}>Private dependencies</span>
+                <Textarea
+                  value={setupDraft.privateDependencies}
+                  placeholder="private-npm package-registry npm.acme.test NPM_TOKEN"
+                  onChange={(event) =>
+                    setSetupDraft({ ...setupDraft, privateDependencies: event.currentTarget.value })
+                  }
+                />
+                <span className="text-xs text-muted-foreground">
+                  One per line: id, kind, destination, and optional secret name.
+                </span>
+              </label>
+              <label className={fieldClassName}>
+                <span className={labelClassName}>Secret references</span>
+                <Textarea
+                  value={setupDraft.secretReferences}
+                  placeholder="NPM_TOKEN secret/npm build team platform"
+                  onChange={(event) =>
+                    setSetupDraft({ ...setupDraft, secretReferences: event.currentTarget.value })
+                  }
+                />
+                <span className="text-xs text-muted-foreground">
+                  One per line: name, reference, availability, optional scope and owner. Values stay
+                  write-only in the referenced secret backend.
+                </span>
               </label>
             </div>
             <p className="text-xs text-muted-foreground">
@@ -1058,6 +1462,24 @@ function CloudAgentsSettingsForEnvironment({
             ["Instance types", report.settings.allowedInstanceTypes.join(", ")],
           ]}
         />
+      </SettingsSection>
+
+      <SettingsSection id="cloud-audit" title="Audit log">
+        {snapshot?.audit === undefined || snapshot.audit.length === 0 ? (
+          <p className="text-sm text-muted-foreground">No administrative changes recorded.</p>
+        ) : (
+          <ul className="flex flex-col gap-2 text-xs">
+            {snapshot.audit.slice(0, 50).map((event) => (
+              <li key={event.id} className="grid gap-0.5 sm:grid-cols-[12rem_minmax(0,1fr)]">
+                <span className="text-muted-foreground">{event.occurredAt}</span>
+                <span>
+                  {event.summary} · {event.actor.kind} {event.actor.id} · {event.resourceType}{" "}
+                  {event.resourceId}
+                </span>
+              </li>
+            ))}
+          </ul>
+        )}
       </SettingsSection>
 
       <SettingsSection id="cloud-config-precedence" title="Config source and precedence">

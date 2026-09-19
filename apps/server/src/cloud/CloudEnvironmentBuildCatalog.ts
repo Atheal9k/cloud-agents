@@ -8,6 +8,7 @@ import {
   CloudEnvironmentBuild,
   CloudEnvironmentBuildError,
   CloudEnvironmentBuildId,
+  type CloudEnvironmentBuildActivateInput,
   type CloudEnvironmentBuildCancelInput,
   type CloudEnvironmentBuildGitSetup,
   type CloudEnvironmentBuildOutcome,
@@ -82,6 +83,9 @@ export class CloudEnvironmentBuildCatalog extends Context.Service<
     ) => Effect.Effect<CloudEnvironmentBuild, CloudEnvironmentBuildError>;
     readonly save: (
       input: CloudEnvironmentBuildSaveInput,
+    ) => Effect.Effect<CloudEnvironmentBuild, CloudEnvironmentBuildError>;
+    readonly activate: (
+      input: CloudEnvironmentBuildActivateInput,
     ) => Effect.Effect<CloudEnvironmentBuild, CloudEnvironmentBuildError>;
     readonly setStaleThreshold: (
       input: CloudEnvironmentBuildStaleThresholdInput,
@@ -391,6 +395,31 @@ export const make = Effect.fn("CloudEnvironmentBuildCatalog.make")(function* () 
       }),
     );
 
+  const activate: CloudEnvironmentBuildCatalog["Service"]["activate"] = (input) =>
+    mutex.withPermits(1)(
+      Effect.gen(function* () {
+        const existing = yield* requireBuild(input.buildId);
+        if (existing.draft) {
+          return yield* buildError(
+            "build-not-saved",
+            `Build '${input.buildId}' is still a draft and cannot become active.`,
+          );
+        }
+        if (existing.outcome.status !== "succeeded") {
+          return yield* buildError(
+            "build-unsuccessful",
+            `Build '${input.buildId}' finished as '${existing.outcome.status}' and cannot become active.`,
+          );
+        }
+        yield* sql`
+          UPDATE cloud_environments
+          SET active_build_id = ${existing.id}, updated_at = ${input.occurredAt}
+          WHERE environment_id = ${existing.environmentId}
+        `.pipe(Effect.mapError(persistenceError));
+        return existing;
+      }),
+    );
+
   const setStaleThreshold: CloudEnvironmentBuildCatalog["Service"]["setStaleThreshold"] = (input) =>
     mutex.withPermits(1)(
       sql`
@@ -410,6 +439,7 @@ export const make = Effect.fn("CloudEnvironmentBuildCatalog.make")(function* () 
     complete,
     cancel,
     save,
+    activate,
     setStaleThreshold,
   });
 });

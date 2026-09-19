@@ -87,6 +87,7 @@ export const RPC_REQUIRED_SCOPES = {
   [WS_METHODS.cloudEnvironmentBuildStart]: AuthOrchestrationOperateScope,
   [WS_METHODS.cloudEnvironmentBuildCancel]: AuthOrchestrationOperateScope,
   [WS_METHODS.cloudEnvironmentBuildSave]: AuthOrchestrationOperateScope,
+  [WS_METHODS.cloudEnvironmentBuildActivate]: AuthOrchestrationOperateScope,
   [WS_METHODS.cloudEnvironmentBuildStaleThreshold]: AuthOrchestrationOperateScope,
   [WS_METHODS.cloudArtifactsGrant]: AuthOrchestrationReadScope,
   [WS_METHODS.cloudAgentReviewInspect]: AuthOrchestrationReadScope,

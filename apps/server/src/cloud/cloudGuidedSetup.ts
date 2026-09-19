@@ -30,6 +30,12 @@ function config(input: CloudGuidedSetupInput): CloudEnvironmentConfig {
       : { build: { dockerfile: input.base.dockerfile } }),
     ...(install.length === 0 ? {} : { install }),
     ...(start.length === 0 ? {} : { start }),
+    ...(input.egressMode === undefined ? {} : { egressMode: input.egressMode }),
+    ...(input.egressAllowlist === undefined ? {} : { egressAllowlist: input.egressAllowlist }),
+    ...(input.privateDependencies === undefined
+      ? {}
+      : { privateDependencies: input.privateDependencies }),
+    ...(input.networkProfile === undefined ? {} : { networkProfile: input.networkProfile }),
   };
 }
 

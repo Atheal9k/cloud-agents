@@ -155,6 +155,92 @@ it.effect("keeps an agent-requested draft out of the active slot until it is sav
   }).pipe(Effect.provide(SqlitePersistenceMemory)),
 );
 
+it.effect("reactivates an older saved successful Build", () =>
+  Effect.gen(function* () {
+    const { environments, builds, version } = yield* setup();
+    yield* builds.start(start(version, "build-1"));
+    yield* builds.complete({
+      buildId: CloudEnvironmentBuildId.make("build-1"),
+      gitSetup: [],
+      logs: [],
+      timings: {},
+      outcome: {
+        status: "succeeded",
+        snapshot: snapshot("build-1"),
+        completedAt: "2026-09-19T02:05:00.000Z",
+      },
+    });
+    yield* builds.start(start(version, "build-2"));
+    yield* builds.complete({
+      buildId: CloudEnvironmentBuildId.make("build-2"),
+      gitSetup: [],
+      logs: [],
+      timings: {},
+      outcome: {
+        status: "succeeded",
+        snapshot: snapshot("build-2"),
+        completedAt: "2026-09-19T02:06:00.000Z",
+      },
+    });
+
+    expect((yield* environments.list)[0]?.activeBuildId).toBe("build-2");
+    const activated = yield* builds.activate({
+      buildId: CloudEnvironmentBuildId.make("build-1"),
+      occurredAt: "2026-09-19T02:07:00.000Z",
+    });
+    expect(activated.id).toBe("build-1");
+    expect((yield* environments.list)[0]?.activeBuildId).toBe("build-1");
+  }).pipe(Effect.provide(SqlitePersistenceMemory)),
+);
+
+it.effect("refuses to activate a draft or unsuccessful Build", () =>
+  Effect.gen(function* () {
+    const { builds, version } = yield* setup();
+    yield* builds.start(start(version, "build-draft", true));
+    yield* builds.complete({
+      buildId: CloudEnvironmentBuildId.make("build-draft"),
+      gitSetup: [],
+      logs: [],
+      timings: {},
+      outcome: {
+        status: "succeeded",
+        snapshot: snapshot("build-draft"),
+        completedAt: "2026-09-19T02:05:00.000Z",
+      },
+    });
+    expect(
+      (yield* builds
+        .activate({
+          buildId: CloudEnvironmentBuildId.make("build-draft"),
+          occurredAt: "2026-09-19T02:06:00.000Z",
+        })
+        .pipe(Effect.flip)).reason,
+    ).toBe("build-not-saved");
+
+    yield* builds.start(start(version, "build-failed"));
+    yield* builds.complete({
+      buildId: CloudEnvironmentBuildId.make("build-failed"),
+      gitSetup: [],
+      logs: [],
+      timings: {},
+      outcome: {
+        status: "failed",
+        stage: "install",
+        message: "Install failed.",
+        completedAt: "2026-09-19T02:07:00.000Z",
+      },
+    });
+    expect(
+      (yield* builds
+        .activate({
+          buildId: CloudEnvironmentBuildId.make("build-failed"),
+          occurredAt: "2026-09-19T02:08:00.000Z",
+        })
+        .pipe(Effect.flip)).reason,
+    ).toBe("build-unsuccessful");
+  }).pipe(Effect.provide(SqlitePersistenceMemory)),
+);
+
 it.effect("refuses to save a failed draft and leaves the active Build alone", () =>
   Effect.gen(function* () {
     const { environments, builds, version } = yield* setup();

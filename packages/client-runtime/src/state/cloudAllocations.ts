@@ -7,6 +7,7 @@ import {
   type CloudAgentReviewShareInput,
   type CloudHandoffExecuteInput,
   type CloudHandoffPreviewInput,
+  type CloudEnvironmentBuildActivateInput,
   type CloudEnvironmentBuildCancelInput,
   type CloudEnvironmentBuildSaveInput,
   type CloudEnvironmentBuildStaleThresholdInput,
@@ -181,6 +182,17 @@ export function createCloudAllocationAtoms<R, E>(
     execute: (input: CloudEnvironmentBuildSaveInput) =>
       request(WS_METHODS.cloudEnvironmentBuildSave, input),
   });
+  const activateBuild = createEnvironmentRpcCommand(runtime, {
+    label: "environment-data:cloud-environment-builds:activate",
+    tag: WS_METHODS.cloudEnvironmentBuildActivate,
+    scheduler,
+    concurrency: {
+      mode: "singleFlight",
+      key: ({ environmentId, input }) => `${environmentId}:${input.buildId}`,
+    },
+    execute: (input: CloudEnvironmentBuildActivateInput) =>
+      request(WS_METHODS.cloudEnvironmentBuildActivate, input),
+  });
   const setBuildStaleThreshold = createEnvironmentRpcCommand(runtime, {
     label: "environment-data:cloud-environment-builds:stale-threshold",
     tag: WS_METHODS.cloudEnvironmentBuildStaleThreshold,
@@ -310,6 +322,7 @@ export function createCloudAllocationAtoms<R, E>(
     startBuild,
     cancelBuild,
     saveBuild,
+    activateBuild,
     setBuildStaleThreshold,
     grantArtifactAccess,
     inspectAgentReview,

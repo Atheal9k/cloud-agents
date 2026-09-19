@@ -1204,9 +1204,24 @@ it.effect("separates usage meters and gates launch when a spend cap is exhausted
     });
     expect(report.redactions).toEqual({ prompts: true, secrets: true });
     expect(JSON.stringify(report)).not.toMatch(/Fix the cloud launch flow/);
+    yield* controller.recordAdminAudit({
+      id: "audit:scm-connect:github",
+      occurredAt: "2026-09-17T04:02:00.000Z",
+      action: "auth",
+      resourceType: "scm-connection",
+      resourceId: "github",
+      summary: "Connected GitHub source control.",
+    });
     const audit = yield* controller.listAudit({});
     expect(audit.some((event) => event.action === "admin")).toBe(true);
     expect(audit.some((event) => event.action === "run-lifecycle")).toBe(true);
+    expect(audit).toContainEqual(
+      expect.objectContaining({
+        id: "audit:scm-connect:github",
+        action: "auth",
+        summary: "Connected GitHub source control.",
+      }),
+    );
   }).pipe(Effect.provide(SqlitePersistenceMemory)),
 );
 

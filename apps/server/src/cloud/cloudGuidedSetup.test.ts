@@ -78,6 +78,42 @@ describe("cloudGuidedSetupSaveInput", () => {
     ]);
   });
 
+  it("keeps network policy, private dependencies, and secret references", () => {
+    const save = cloudGuidedSetupSaveInput(
+      input({
+        egressMode: "network_settings_only",
+        egressAllowlist: ["registry.npmjs.org"],
+        privateDependencies: [
+          {
+            id: "npm-private",
+            kind: "package-registry",
+            destination: "npm.acme.test",
+            secretName: "NPM_TOKEN",
+          },
+        ],
+        networkProfile: { kind: "tailscale", enabled: true },
+        secretReferences: [{ name: "NPM_TOKEN", reference: "secret/npm", availability: "build" }],
+      }),
+    );
+
+    expect(save.config).toMatchObject({
+      egressMode: "network_settings_only",
+      egressAllowlist: ["registry.npmjs.org"],
+      privateDependencies: [
+        {
+          id: "npm-private",
+          kind: "package-registry",
+          destination: "npm.acme.test",
+          secretName: "NPM_TOKEN",
+        },
+      ],
+      networkProfile: { kind: "tailscale", enabled: true },
+    });
+    expect(save.secretReferences).toEqual([
+      { name: "NPM_TOKEN", reference: "secret/npm", availability: "build" },
+    ]);
+  });
+
   it("does not require an owner for the default scope", () => {
     const save = cloudGuidedSetupSaveInput(input({ scope: "default", owner: undefined }));
 
