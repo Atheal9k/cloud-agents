@@ -33,6 +33,7 @@ export * from "./cloudLinuxAndroid.ts";
 export * from "./cloudControl.ts";
 export * from "./cloudEnvironment.ts";
 export * from "./cloudEnvironmentBuild.ts";
+export * from "./cloudEnvironmentRecipe.ts";
 export * from "./cloudWarmPool.ts";
 export * from "./cloudExecution.ts";
 export * from "./cloudPublication.ts";

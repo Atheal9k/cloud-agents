@@ -160,7 +160,15 @@ command carries no environment, because the resolved config decides the base
 image, runtime user, and egress policy — a client that could supply one could
 choose its own sandbox. Committed repository configs therefore reach the
 catalog through an authorized save whose source is `repository`, not through
-the launch path.
+the launch path. A run records that version and, when a fresh Build exists,
+the Build ID; later edits append a new version and never rewrite the pinned
+runtime.
+
+CA-10 per-run recipes map onto this model: setup becomes terminating
+`install`, the first dev server becomes per-boot `start`, remaining servers
+become named terminals, and secret references become environment-variable,
+runtime-redacted, or Build-only classes. See
+[`cloudEnvironmentFromRecipe`](../../packages/contracts/src/cloudEnvironmentRecipe.ts).
 
 Saving a personal, team, or default environment for a repository that already
 has a committed config fails with `repository-environment-exists`. Editing the
@@ -193,11 +201,19 @@ tested, but a person saving one is what activates it.
 
 Each Build records an inputs fingerprint covering the environment version's
 config, its build-time secret references, and the commits it cloned. Runtime
-secrets are excluded because they never enter a shared snapshot. A recurring
-trigger whose fingerprint matches the active Build is skipped instead of
-rebuilt, and the skip refreshes the active Build's `freshAt`. Manual,
-configuration-change, and agent-requested triggers always rebuild, because each
-one means the caller wants the disk remade.
+secrets are excluded because they never enter a shared snapshot. User secrets
+are excluded even if they were labelled Build-only. A recurring trigger whose
+fingerprint matches the active Build is skipped instead of rebuilt, and the
+skip refreshes the active Build's `freshAt`. Manual, configuration-change, and
+agent-requested triggers always rebuild, because each one means the caller
+wants the disk remade.
+
+`install` must terminate. `start` and named terminals run on every runtime boot
+with health and logs; they do not re-run `install`. Multi-repo Builds are
+rejected before they start when ports collide, a private dependency is not
+listed as a repository with a per-repo ref, or a required Build secret is
+missing. See
+[`CloudEnvironmentRuntimeBoot`](../../apps/server/src/cloud/CloudEnvironmentRuntimeBoot.ts).
 
 Staleness decides what a launch boots. The controller pins the active Build
 onto the allocation only when it is fresh, defaulting to 24 hours and

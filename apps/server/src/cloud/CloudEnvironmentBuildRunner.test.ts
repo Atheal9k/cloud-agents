@@ -30,8 +30,8 @@ const TestLayer = Layer.mergeAll(ProcessRunnerLayer, SqlitePersistenceMemory).pi
   Layer.provideMerge(NodeServices.layer),
 );
 
-/** Writes `install.ok` so the prepared tree proves `install` actually ran. */
-const INSTALL = `node -e "require('node:fs').writeFileSync('install.ok','installed\\n')"`;
+/** Writes `install.ok` and prints the Build secret so logs prove redaction. */
+const INSTALL = `node -e "require('node:fs').writeFileSync('install.ok','installed\\n'); process.stdout.write(process.env.NPM_TOKEN || '')"`;
 const FAILING_INSTALL = `node -e "process.exit(3)"`;
 
 const fixture = Effect.fn("CloudEnvironmentBuildRunner.fixture")(function* () {
@@ -97,6 +97,12 @@ const fixture = Effect.fn("CloudEnvironmentBuildRunner.fixture")(function* () {
         secretReferences: [
           { name: "NPM_TOKEN", reference: "secret/npm", availability: "build" },
           { name: "SENTRY_DSN", reference: "secret/sentry", availability: "runtime" },
+          {
+            name: "USER_TOKEN",
+            reference: "secret/user",
+            availability: "runtime",
+            scope: "user",
+          },
         ],
         occurredAt,
       }),
@@ -118,6 +124,11 @@ const fixture = Effect.fn("CloudEnvironmentBuildRunner.fixture")(function* () {
     headCommit,
     saveEnvironment,
     version: environment.current,
+    secretValues: {
+      "secret/npm": "npm-build-token",
+      "secret/sentry": "runtime-dsn",
+      "secret/user": "user-only-token",
+    },
   };
 });
 
@@ -132,6 +143,7 @@ it.effect(
         trigger: "manual",
         draft: false,
         occurredAt: "2026-09-19T02:01:00.000Z",
+        secretValues: context.secretValues,
       });
 
       assert(build.outcome.status === "succeeded");
@@ -140,6 +152,10 @@ it.effect(
       ]);
       expect(build.logs).toHaveLength(1);
       expect(build.logs[0]?.exitCode).toBe(0);
+      expect(build.logs[0]?.stdout).toContain("[redacted]");
+      expect(build.logs[0]?.stdout).not.toContain("npm-build-token");
+      expect(build.logs[0]?.stdout).not.toContain("user-only-token");
+      expect(build.logs[0]?.stdout).not.toContain("runtime-dsn");
       expect(build.timings.clone).toBeDefined();
       expect(build.timings.install).toBeDefined();
       expect(build.timings.snapshot).toBeDefined();
@@ -170,6 +186,7 @@ it.effect(
         trigger: "manual",
         draft: false,
         occurredAt: "2026-09-19T02:01:00.000Z",
+        secretValues: context.secretValues,
       });
 
       const broken = yield* context.saveEnvironment(FAILING_INSTALL, "2026-09-19T02:02:00.000Z", 1);
@@ -179,6 +196,7 @@ it.effect(
         trigger: "configuration-change",
         draft: false,
         occurredAt: "2026-09-19T02:02:30.000Z",
+        secretValues: context.secretValues,
       });
 
       assert(failed.outcome.status === "failed");
@@ -205,6 +223,7 @@ it.effect(
         trigger: "manual",
         draft: false,
         occurredAt: "2026-09-19T02:01:00.000Z",
+        secretValues: context.secretValues,
       });
 
       const skipped = yield* context.runner.run({
@@ -213,6 +232,7 @@ it.effect(
         trigger: "recurring",
         draft: false,
         occurredAt: "2026-09-20T02:01:00.000Z",
+        secretValues: context.secretValues,
       });
 
       assert(skipped.outcome.status === "skipped");
@@ -239,6 +259,7 @@ it.effect(
         trigger: "agent-requested",
         draft: true,
         occurredAt: "2026-09-19T02:01:00.000Z",
+        secretValues: context.secretValues,
       });
 
       expect(draft.draft).toBe(true);
@@ -252,4 +273,44 @@ it.effect(
       expect((yield* context.environments.list)[0]?.activeBuildId).toBe("build-draft");
     }).pipe(Effect.scoped, TestClock.withLive, Effect.provide(TestLayer)),
   120_000,
+);
+
+it.effect("rejects a Build before it starts when ports collide or Build secrets are missing", () =>
+  Effect.gen(function* () {
+    const context = yield* fixture();
+    const colliding = yield* context.runner
+      .run({
+        buildId: CloudEnvironmentBuildId.make("build-ports"),
+        version: {
+          ...context.version,
+          config: {
+            ...context.version.config,
+            ports: [
+              { name: "web", port: 5173 },
+              { name: "dup", port: 5173 },
+            ],
+          },
+        },
+        trigger: "manual",
+        draft: false,
+        occurredAt: "2026-09-19T02:01:00.000Z",
+        secretValues: context.secretValues,
+      })
+      .pipe(Effect.flip);
+    const missingSecret = yield* context.runner
+      .run({
+        buildId: CloudEnvironmentBuildId.make("build-secret"),
+        version: context.version,
+        trigger: "manual",
+        draft: false,
+        occurredAt: "2026-09-19T02:01:00.000Z",
+      })
+      .pipe(Effect.flip);
+
+    expect(colliding.reason).toBe("admission-rejected");
+    expect(colliding.message).toContain("Port 5173");
+    expect(missingSecret.reason).toBe("admission-rejected");
+    expect(missingSecret.message).toContain("NPM_TOKEN");
+    expect(yield* context.builds.list).toEqual([]);
+  }).pipe(Effect.scoped, TestClock.withLive, Effect.provide(TestLayer)),
 );
