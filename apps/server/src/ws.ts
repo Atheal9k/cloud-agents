@@ -130,6 +130,7 @@ import * as CloudEnvironmentBuildRunner from "./cloud/CloudEnvironmentBuildRunne
 import * as CloudReadiness from "./cloud/CloudReadiness.ts";
 import { cloudGuidedSetupSaveInput } from "./cloud/cloudGuidedSetup.ts";
 import * as SharedBrowserGateway from "./cloud/SharedBrowserGateway.ts";
+import * as DeviceDisplayGateway from "./cloud/DeviceDisplayGateway.ts";
 import * as ServerLifecycleEvents from "./serverLifecycleEvents.ts";
 import * as ServerRuntimeStartup from "./serverRuntimeStartup.ts";
 import * as ServerSettings from "./serverSettings.ts";
@@ -574,6 +575,7 @@ const makeWsRpcLayer = (
       const previewManager = yield* PreviewManager.PreviewManager;
       const previewGateway = yield* PreviewGateway.PreviewGateway;
       const sharedBrowserGateway = yield* SharedBrowserGateway.SharedBrowserGateway;
+      const deviceDisplayGateway = yield* DeviceDisplayGateway.DeviceDisplayGateway;
       const cloudArtifactAccess = yield* CloudArtifactAccess.CloudArtifactAccess;
       const cloudAgentReview = yield* CloudAgentReview.CloudAgentReviewService;
       const cloudHandoff = yield* CloudHandoff.CloudHandoff;
@@ -3628,6 +3630,38 @@ const makeWsRpcLayer = (
         [WS_METHODS.sharedBrowserRelease]: (input) =>
           observeRpcEffect(WS_METHODS.sharedBrowserRelease, sharedBrowserGateway.release(input), {
             "rpc.aggregate": "shared-browser",
+          }),
+        [WS_METHODS.deviceDisplayIssue]: (input) =>
+          observeRpcEffect(WS_METHODS.deviceDisplayIssue, deviceDisplayGateway.issue(input), {
+            "rpc.aggregate": "device-display",
+          }),
+        [WS_METHODS.deviceDisplayKeepAlive]: (input) =>
+          observeRpcEffect(
+            WS_METHODS.deviceDisplayKeepAlive,
+            deviceDisplayGateway.keepAlive(input),
+            {
+              "rpc.aggregate": "device-display",
+            },
+          ),
+        [WS_METHODS.deviceDisplayTakeControl]: (input) =>
+          observeRpcEffect(
+            WS_METHODS.deviceDisplayTakeControl,
+            deviceDisplayGateway.takeControl(input),
+            {
+              "rpc.aggregate": "device-display",
+            },
+          ),
+        [WS_METHODS.deviceDisplayReturnControl]: (input) =>
+          observeRpcEffect(
+            WS_METHODS.deviceDisplayReturnControl,
+            deviceDisplayGateway.returnControl(input),
+            {
+              "rpc.aggregate": "device-display",
+            },
+          ),
+        [WS_METHODS.deviceDisplayRelease]: (input) =>
+          observeRpcEffect(WS_METHODS.deviceDisplayRelease, deviceDisplayGateway.release(input), {
+            "rpc.aggregate": "device-display",
           }),
         [WS_METHODS.cloudArtifactsGrant]: (input) =>
           observeRpcEffect(WS_METHODS.cloudArtifactsGrant, cloudArtifactAccess.grant(input), {

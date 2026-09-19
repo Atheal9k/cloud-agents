@@ -27,4 +27,7 @@ Hibernation snapshots AVD data separately from the environment Build. If that
 directory is missing on wake, the worker creates a new AVD and reports that app
 and login state did not persist.
 
-Live emulator display in the thread is CA-39.
+Live emulator display in the thread is served through serve-emu on loopback
+and the worker's `/api/device-display` route. The thread preview selects the
+Android device for this profile. ADB stays on loopback; the display route does
+not forward shell, public ADB, or unrelated desktop sessions.

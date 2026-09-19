@@ -23,6 +23,7 @@ import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
 import * as Exit from "effect/Exit";
 import * as Layer from "effect/Layer";
+import * as Option from "effect/Option";
 import * as Ref from "effect/Ref";
 import * as Scope from "effect/Scope";
 
@@ -30,6 +31,8 @@ import * as CheckpointStore from "../checkpointing/CheckpointStore.ts";
 import { parseTurnDiffFilesFromNumstat } from "../checkpointing/Diffs.ts";
 import { ProjectionSnapshotQuery } from "../orchestration/Services/ProjectionSnapshotQuery.ts";
 import * as CloudEnvironmentRuntimeBoot from "./CloudEnvironmentRuntimeBoot.ts";
+import { DeviceDisplayGateway } from "./DeviceDisplayGateway.ts";
+import { DeviceDisplayHost } from "./DeviceDisplayHost.ts";
 
 /** The baseline a reopened session is diffed against, one per runtime attempt. */
 export function cloudSessionBaseRef(input: {
@@ -276,6 +279,36 @@ export const make = Effect.fn("CloudWorkerReopen.make")(function* () {
         Effect.provideService(Scope.Scope, scope),
         Effect.onError(() => Scope.close(scope, Exit.void)),
       );
+      const deviceDisplayGateway = yield* Effect.serviceOption(DeviceDisplayGateway);
+      const deviceDisplayHost = yield* Effect.serviceOption(DeviceDisplayHost);
+      if (Option.isSome(deviceDisplayHost) && deviceDisplayHost.value.available) {
+        if (Option.isSome(deviceDisplayGateway)) {
+          yield* deviceDisplayGateway.value.restore(input.threadId).pipe(
+            Effect.catch((error) =>
+              Effect.logWarning(
+                "Device display restore failed; the viewer can retry after reopen.",
+                {
+                  threadId: input.threadId,
+                  error: String(error),
+                },
+              ),
+            ),
+          );
+        } else {
+          yield* deviceDisplayHost.value.reset();
+          yield* deviceDisplayHost.value.prepare(input.threadId).pipe(
+            Effect.catch((error) =>
+              Effect.logWarning(
+                "Device display restore failed; the viewer can retry after reopen.",
+                {
+                  threadId: input.threadId,
+                  error: String(error),
+                },
+              ),
+            ),
+          );
+        }
+      }
       yield* Ref.set(open, scope);
       return record;
     },

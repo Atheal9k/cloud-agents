@@ -79,7 +79,7 @@ describe("iOS input startup", () => {
     vi.unstubAllGlobals();
   });
 
-  const setup = () => {
+  const setup = (interactive = true) => {
     vi.useFakeTimers();
     const sockets: FakeSocket[] = [];
     class FakeSocket {
@@ -123,6 +123,7 @@ describe("iOS input startup", () => {
           credentials: true,
           query: {},
         },
+        interactive,
       },
       { getContext: () => null } as unknown as HTMLCanvasElement,
       {
@@ -142,6 +143,14 @@ describe("iOS input startup", () => {
     await vi.advanceTimersByTimeAsync(2_000);
     expect(signals[0]?.aborted).toBe(true);
     expect(sockets).toHaveLength(1);
+    client.stop();
+  });
+
+  it("does not open the iOS input socket when the viewer is watch-only", async () => {
+    const { client, sockets } = setup(false);
+    client.start();
+    await vi.advanceTimersByTimeAsync(2_000);
+    expect(sockets).toHaveLength(0);
     client.stop();
   });
 

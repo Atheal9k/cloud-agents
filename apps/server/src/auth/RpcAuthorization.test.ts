@@ -68,6 +68,21 @@ describe("RPC authorization scopes", () => {
     expect(requiredScopeForRpcMethod(WS_METHODS.sharedBrowserReturnControl)).toBe(
       AuthOrchestrationOperateScope,
     );
+    expect(requiredScopeForRpcMethod(WS_METHODS.deviceDisplayIssue)).toBe(
+      AuthOrchestrationReadScope,
+    );
+    expect(requiredScopeForRpcMethod(WS_METHODS.deviceDisplayKeepAlive)).toBe(
+      AuthOrchestrationReadScope,
+    );
+    expect(requiredScopeForRpcMethod(WS_METHODS.deviceDisplayRelease)).toBe(
+      AuthOrchestrationReadScope,
+    );
+    expect(requiredScopeForRpcMethod(WS_METHODS.deviceDisplayTakeControl)).toBe(
+      AuthOrchestrationOperateScope,
+    );
+    expect(requiredScopeForRpcMethod(WS_METHODS.deviceDisplayReturnControl)).toBe(
+      AuthOrchestrationOperateScope,
+    );
   });
 
   it("requires permission to operate on a thread before uploading feedback", () => {

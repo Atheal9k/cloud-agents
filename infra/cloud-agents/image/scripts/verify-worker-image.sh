@@ -142,6 +142,32 @@ if [[ "${INSTALL_ANDROID_SDK:-false}" == "true" ]]; then
   [[ -d /opt/android-sdk/avd-template/t3-android-template ]] || fail "template AVD is missing"
   jq --exit-status '.capabilities.androidEmulator == true' /opt/t3/worker-image-manifest.json >/dev/null \
     || fail "android image manifest does not declare the emulator"
+  [[ -x /opt/t3/bin/cloud-agent-device-display ]] || fail "android device display helper is missing"
+  jq --exit-status '.capabilities.deviceDisplayService == "android"' /opt/t3/worker-image-manifest.json >/dev/null \
+    || fail "android image manifest does not declare device display"
+  cat >>/etc/t3/worker.env <<'ENV'
+T3CODE_DEVICE_DISPLAY_PLATFORM=android
+T3CODE_DEVICE_DISPLAY_ATTEMPT_KEY=image-build:1
+T3CODE_DEVICE_DISPLAY_THREAD_ID=image-build-verification
+ENV
+  cat >/run/t3-worker/device-display.env <<'ENV'
+T3CODE_DEVICE_DISPLAY_SERIAL=emulator-5554
+T3CODE_DEVICE_DISPLAY_DEVICE_NAME=t3-android-template
+T3CODE_DEVICE_DISPLAY_RUNTIME=Android 36
+T3CODE_DEVICE_DISPLAY_BUILD_REVISION=debug
+T3CODE_DEVICE_DISPLAY_CONNECTION_STATE=booted
+ENV
+  chmod 0640 /run/t3-worker/device-display.env
+  android_descriptor="$(sudo -u cloudagent /opt/t3/bin/cloud-agent-device-display)" \
+    || fail "android device display helper failed"
+  jq --exit-status \
+    '.session.platform == "android" and .session.transport == "serve-emu" and .session.serial == "emulator-5554"' \
+    <<<"${android_descriptor}" >/dev/null \
+    || fail "android device display helper returned an invalid descriptor"
+  sudo -u cloudagent /opt/t3/bin/cloud-agent-device-display-permissions human \
+    || fail "android device display input permissions could not be granted"
+  sudo -u cloudagent /opt/t3/bin/cloud-agent-device-display-permissions agent \
+    || fail "android device display input permissions could not be revoked"
 fi
 
 if [[ "${INSTALL_DESKTOP_DEPENDENCIES}" == "true" ]]; then

@@ -340,6 +340,13 @@ import {
   SharedBrowserReleaseResult,
   SharedBrowserViewerInput,
 } from "./sharedBrowser.ts";
+import {
+  DeviceDisplayError,
+  DeviceDisplayGrant,
+  DeviceDisplayIssueInput,
+  DeviceDisplayReleaseResult,
+  DeviceDisplayViewerInput,
+} from "./deviceDisplay.ts";
 
 export const WS_METHODS = {
   // Project registry methods
@@ -486,6 +493,11 @@ export const WS_METHODS = {
   sharedBrowserTakeControl: "sharedBrowser.takeControl",
   sharedBrowserReturnControl: "sharedBrowser.returnControl",
   sharedBrowserRelease: "sharedBrowser.release",
+  deviceDisplayIssue: "deviceDisplay.issue",
+  deviceDisplayKeepAlive: "deviceDisplay.keepAlive",
+  deviceDisplayTakeControl: "deviceDisplay.takeControl",
+  deviceDisplayReturnControl: "deviceDisplay.returnControl",
+  deviceDisplayRelease: "deviceDisplay.release",
 
   // Pull request methods
   pullRequestsList: "pullRequests.list",
@@ -984,6 +996,36 @@ const WsSharedBrowserReleaseRpc = Rpc.make(WS_METHODS.sharedBrowserRelease, {
   payload: SharedBrowserViewerInput,
   success: SharedBrowserReleaseResult,
   error: Schema.Union([SharedBrowserError, EnvironmentAuthorizationError]),
+});
+
+const WsDeviceDisplayIssueRpc = Rpc.make(WS_METHODS.deviceDisplayIssue, {
+  payload: DeviceDisplayIssueInput,
+  success: DeviceDisplayGrant,
+  error: Schema.Union([DeviceDisplayError, EnvironmentAuthorizationError]),
+});
+
+const WsDeviceDisplayKeepAliveRpc = Rpc.make(WS_METHODS.deviceDisplayKeepAlive, {
+  payload: DeviceDisplayViewerInput,
+  success: DeviceDisplayGrant,
+  error: Schema.Union([DeviceDisplayError, EnvironmentAuthorizationError]),
+});
+
+const WsDeviceDisplayTakeControlRpc = Rpc.make(WS_METHODS.deviceDisplayTakeControl, {
+  payload: DeviceDisplayViewerInput,
+  success: DeviceDisplayGrant,
+  error: Schema.Union([DeviceDisplayError, EnvironmentAuthorizationError]),
+});
+
+const WsDeviceDisplayReturnControlRpc = Rpc.make(WS_METHODS.deviceDisplayReturnControl, {
+  payload: DeviceDisplayViewerInput,
+  success: DeviceDisplayGrant,
+  error: Schema.Union([DeviceDisplayError, EnvironmentAuthorizationError]),
+});
+
+const WsDeviceDisplayReleaseRpc = Rpc.make(WS_METHODS.deviceDisplayRelease, {
+  payload: DeviceDisplayViewerInput,
+  success: DeviceDisplayReleaseResult,
+  error: Schema.Union([DeviceDisplayError, EnvironmentAuthorizationError]),
 });
 
 const WsSubscribeCloudAllocationsRpc = Rpc.make(WS_METHODS.subscribeCloudAllocations, {
@@ -1765,6 +1807,11 @@ export const WsRpcGroup = RpcGroup.make(
   WsSharedBrowserTakeControlRpc,
   WsSharedBrowserReturnControlRpc,
   WsSharedBrowserReleaseRpc,
+  WsDeviceDisplayIssueRpc,
+  WsDeviceDisplayKeepAliveRpc,
+  WsDeviceDisplayTakeControlRpc,
+  WsDeviceDisplayReturnControlRpc,
+  WsDeviceDisplayReleaseRpc,
   WsPullRequestsListRpc,
   WsPullRequestsListStatsRpc,
   WsPullRequestsSummaryRpc,

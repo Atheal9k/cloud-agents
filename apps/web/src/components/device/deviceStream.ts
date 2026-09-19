@@ -47,6 +47,7 @@ export interface DeviceStreamTarget {
   readonly platform: DevicePlatform;
   readonly deviceId: string;
   readonly access: DeviceHubAccess;
+  readonly interactive?: boolean;
 }
 
 export type DeviceHardwareButton = "home" | "back" | "recents" | "power" | "appSwitcher";
@@ -275,6 +276,7 @@ export function createDeviceStreamClient(
   events: DeviceStreamEvents,
 ): DeviceStreamClient {
   const { access, platform, deviceId } = target;
+  const interactive = target.interactive !== false;
   const vendor = platform === "ios" ? "/vendor/serve-sim" : "/vendor/serve-emu";
   const device = encodeURIComponent(deviceId);
   const httpUrl = (path: string) =>
@@ -598,7 +600,8 @@ export function createDeviceStreamClient(
     firstFrame = false;
     events.onStatus("connecting");
     if (platform === "ios") {
-      void connectIosInput();
+      if (interactive) void connectIosInput();
+      else events.onInputConnected(false);
       if (useWebCodecs) void readIosVideo();
       else fallBackToMjpeg();
     } else if (useWebCodecs) {
@@ -647,6 +650,7 @@ export function createDeviceStreamClient(
     start,
     stop,
     sendTouch: (phase, x, y) => {
+      if (!interactive) return;
       if (platform === "ios") {
         send(taggedJson(IOS_MSG_TOUCH, { type: phase, ...rawPoint(x, y) }));
         return;
@@ -655,6 +659,7 @@ export function createDeviceStreamClient(
       send(JSON.stringify({ type: "touch", action, x, y }));
     },
     sendKey: (event, phase) => {
+      if (!interactive) return;
       if (platform === "ios") {
         const usage = hidUsageForCode(event.code);
         if (usage !== null) send(taggedJson(IOS_MSG_KEY, { type: phase, usage }));
@@ -669,6 +674,7 @@ export function createDeviceStreamClient(
       }
     },
     pressButton: (button) => {
+      if (!interactive) return;
       if (platform === "ios") {
         const name =
           button === "home"
@@ -687,7 +693,7 @@ export function createDeviceStreamClient(
       }
     },
     rotate: () => {
-      if (platform !== "ios") return;
+      if (!interactive || platform !== "ios") return;
       const current = screen?.orientation ?? "portrait";
       const next =
         IOS_ORIENTATIONS[(IOS_ORIENTATIONS.indexOf(current) + 1) % IOS_ORIENTATIONS.length]!;

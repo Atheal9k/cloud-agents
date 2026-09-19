@@ -175,6 +175,13 @@ export const ExecutionEnvironmentCapabilities = Schema.Struct({
       Missing on older and ordinary worker environments, so clients must hide
       cloud-run actions unless this is explicitly true. */
   cloudAllocations: Schema.optionalKey(Schema.Boolean),
+  /**
+   * Worker-owned Android emulator or iOS Simulator display in the thread
+   * preview. Absent on ordinary environments and linux-web workers, which keep
+   * the app/web and DCV surfaces. Clients must not treat a missing value as
+   * both platforms being available.
+   */
+  deviceDisplay: Schema.optionalKey(Schema.Literals(["android", "ios"])),
 });
 export type ExecutionEnvironmentCapabilities = typeof ExecutionEnvironmentCapabilities.Type;
 

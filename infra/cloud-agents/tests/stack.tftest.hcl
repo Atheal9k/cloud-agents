@@ -499,6 +499,8 @@ run "linux_android_profile" {
         specification.tags["CloudAgentCapabilities"]
         if specification.resource_type == "instance"
       ]) == "android-emulator,coding",
+      strcontains(base64decode(aws_launch_template.worker["linux-android"].user_data), "T3CODE_DEVICE_DISPLAY_PLATFORM=android"),
+      strcontains(base64decode(aws_launch_template.worker["linux-android"].user_data), "T3CODE_DEVICE_DISPLAY_COMMAND"),
     ])
     error_message = "The linux-android profile must use nested-virtualization sizing and bake the Android SDK."
   }
@@ -549,6 +551,9 @@ run "macos_ios_profile" {
         if specification.resource_type == "instance"
       ]) == "dedicated-host",
       strcontains(base64decode(aws_launch_template.mac_worker["macos-ios"].user_data), "no hard TTL shutdown"),
+      strcontains(base64decode(aws_launch_template.mac_worker["macos-ios"].user_data), "T3CODE_DEVICE_DISPLAY_PLATFORM=ios"),
+      strcontains(base64decode(aws_launch_template.mac_worker["macos-ios"].user_data), "T3CODE_DEVICE_DISPLAY_ATTEMPT_KEY"),
+      strcontains(base64decode(aws_launch_template.mac_worker["macos-ios"].user_data), "CloudAgentAllocationId"),
     ])
     error_message = "The macos-ios profile must keep the Dedicated Host and must not use the Linux disposable TTL."
   }

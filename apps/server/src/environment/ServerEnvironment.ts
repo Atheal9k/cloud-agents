@@ -12,6 +12,8 @@ import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
 import * as Path from "effect/Path";
 import * as Schema from "effect/Schema";
+import * as Config from "effect/Config";
+import * as Option from "effect/Option";
 
 import packageJson from "../../package.json" with { type: "json" };
 import * as ServerSecretStore from "../auth/ServerSecretStore.ts";
@@ -203,6 +205,9 @@ export const make = Effect.gen(function* () {
   // the fd and correctly do not advertise.
   const desktopAppUpdate =
     serverSelfUpdate === "desktop-managed" && serverConfig.desktopTelemetryControlFd !== undefined;
+  const deviceDisplay = Option.getOrUndefined(
+    yield* Config.literals(["android", "ios"], "T3CODE_DEVICE_DISPLAY_PLATFORM").pipe(Config.option),
+  );
 
   const descriptor: ExecutionEnvironmentDescriptor = {
     environmentId,
@@ -248,6 +253,7 @@ export const make = Effect.gen(function* () {
         : {}),
       ...(desktopAppUpdate ? { desktopAppUpdate: true } : {}),
       ...(serverConfig.cloudControllerEnabled === true ? { cloudAllocations: true } : {}),
+      ...(deviceDisplay === undefined ? {} : { deviceDisplay }),
     },
   };
 

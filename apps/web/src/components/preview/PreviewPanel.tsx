@@ -5,8 +5,11 @@ import { useState } from "react";
 
 import type { ComposerImageAttachment } from "~/composerDraftStore";
 import { Button } from "~/components/ui/button";
+import { useServerConfigs } from "~/state/entities";
+import { DeviceDisplayView } from "./DeviceDisplayView";
 import { PreviewPanelShell, type PreviewPanelMode } from "./PreviewPanelShell";
 import { PreviewView } from "./PreviewView";
+import { previewPanelKind } from "./previewPanelKind";
 import { SharedBrowserView } from "./SharedBrowserView";
 
 interface Props {
@@ -30,6 +33,18 @@ export function PreviewPanel({
   onSendAnnotation,
 }: Props) {
   const [surface, setSurface] = useState<"direct" | "agent">("direct");
+  const serverConfigs = useServerConfigs();
+  const kind = previewPanelKind(
+    serverConfigs.get(threadRef.environmentId)?.environment.capabilities.deviceDisplay,
+  );
+
+  if (kind === "android" || kind === "ios") {
+    return (
+      <PreviewPanelShell mode={mode}>
+        <DeviceDisplayView threadRef={threadRef} visible={visible} />
+      </PreviewPanelShell>
+    );
+  }
 
   return (
     <PreviewPanelShell mode={mode}>
