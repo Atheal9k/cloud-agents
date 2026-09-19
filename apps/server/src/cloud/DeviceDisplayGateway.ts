@@ -169,18 +169,17 @@ export const make = Effect.fn("DeviceDisplayGateway.make")(function* () {
       const closing = [...current.connections.values()].filter(
         (connection) => keepViewerId === undefined || connection.viewerId !== keepViewerId,
       );
-      yield* Effect.forEach(closing, (connection) => Deferred.succeed(connection.disconnect, undefined));
+      yield* Effect.forEach(closing, (connection) =>
+        Deferred.succeed(connection.disconnect, undefined),
+      );
       yield* Effect.forEach(closing, (connection) => Deferred.await(connection.closed));
     });
 
   /** A handoff that did not complete leaves nobody driving, which the viewer shows. */
-  const releaseControlAfterFailedHandoff = Ref.update(
-    state,
-    (latest): DeviceDisplayState => ({
-      ...latest,
-      control: { owner: "none", reason: "handoff-failed" },
-    }),
-  );
+  const releaseControlAfterFailedHandoff = Ref.update(state, (latest): DeviceDisplayState => ({
+    ...latest,
+    control: { owner: "none", reason: "handoff-failed" },
+  }));
 
   const purgeExpired = Effect.fn("DeviceDisplayGateway.purgeExpired")(function* () {
     yield* semaphore
