@@ -35,9 +35,11 @@ Do not use Linear or the pstack tickets workflow.
    The PR body must state the problem, the fix, the direct verification performed, and
    the model and harness used. Add required UI evidence when the change affects UI.
 7. After the pull request exists, add this line to the selected ticket in the plan:
-   `Status: Done on <date> in [PR #<number>](<url>).` Commit and push that plan change
-   on the same branch so the pull request itself contains the link. Do not mark the
-   ticket done before its pull request URL is known.
+   `Status: Done on <date> in [PR #<number>](<url>).` In the same edit, strike the
+   ticket ID in the "Dependency-safe implementation waves" table so it reads
+   `~~CA-NN~~`, leaving the other IDs in that row untouched. Commit and push that plan
+   change on the same branch so the pull request itself contains the link. Do not mark
+   the ticket done before its pull request URL is known.
 8. Register the pull request with the active T3 thread when that capability is available.
    Confirm the linked status commit appears in the pull request, then report the branch,
    commits, PR URL, and verification results.
