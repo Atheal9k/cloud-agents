@@ -62,6 +62,7 @@ function withAccess(status: CloudResultRetentionStatus) {
         startContinuation: () => Effect.die("unused"),
         purgeAllocation: () => Effect.die("unused"),
         purgeExpired: Effect.die("unused"),
+        attachProvenance: () => Effect.die("unused"),
       }),
     ),
   );

@@ -53,6 +53,25 @@ describe("ExecutionEnvironmentDescriptor", () => {
     ).toBe(true);
   });
 
+  it("treats a missing device-display capability as unsupported", () => {
+    expect(decodeDescriptor(descriptor).capabilities.deviceDisplay).toBeUndefined();
+  });
+
+  it("preserves an advertised Android or iOS device-display capability separately", () => {
+    expect(
+      decodeDescriptor({
+        ...descriptor,
+        capabilities: { ...descriptor.capabilities, deviceDisplay: "android" },
+      }).capabilities.deviceDisplay,
+    ).toBe("android");
+    expect(
+      decodeDescriptor({
+        ...descriptor,
+        capabilities: { ...descriptor.capabilities, deviceDisplay: "ios" },
+      }).capabilities.deviceDisplay,
+    ).toBe("ios");
+  });
+
   it("preserves the server's generic attachment upload limit", () => {
     expect(
       decodeDescriptor({

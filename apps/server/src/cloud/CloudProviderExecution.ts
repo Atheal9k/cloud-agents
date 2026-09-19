@@ -8,13 +8,14 @@ import {
   type CloudProviderInterruptInput,
   type CloudProviderUserInput,
   CommandId,
+  DeviceDisplayError,
   type OrchestrationCommand,
   type OrchestrationEvent,
   ProjectId,
   ProviderDriverKind,
   type ProjectScript,
   type ServerProvider,
-  type SharedBrowserError,
+  SharedBrowserError,
   type ThreadId,
 } from "@t3tools/contracts";
 import * as Context from "effect/Context";
@@ -31,6 +32,7 @@ import * as Stream from "effect/Stream";
 import { OrchestrationEngineService } from "../orchestration/Services/OrchestrationEngine.ts";
 import { ProviderRegistry } from "../provider/Services/ProviderRegistry.ts";
 import { SharedBrowserHost } from "./SharedBrowserHost.ts";
+import { DeviceDisplayHost } from "./DeviceDisplayHost.ts";
 import {
   installCloudEnvSetupSkillPackage,
   loadCloudEnvSetupSkillPackage,
@@ -141,6 +143,7 @@ const build = Effect.fn("CloudProviderExecution.build")(function* (input?: {
   readonly maxInputWaitSeconds?: number;
   readonly skillsHome?: string;
   readonly prepareSharedBrowser?: (threadId: ThreadId) => Effect.Effect<void, SharedBrowserError>;
+  readonly prepareDeviceDisplay?: (threadId: ThreadId) => Effect.Effect<void, DeviceDisplayError>;
 }) {
   const orchestration = yield* OrchestrationEngineService;
   const providers = yield* ProviderRegistry;
@@ -325,6 +328,16 @@ const build = Effect.fn("CloudProviderExecution.build")(function* (input?: {
         ),
       );
     }
+    if (input?.prepareDeviceDisplay !== undefined) {
+      yield* input.prepareDeviceDisplay(request.threadId).pipe(
+        Effect.catch((error) =>
+          Effect.logWarning("Device display preparation failed; continuing without a viewer.", {
+            threadId: request.threadId,
+            error: String(error),
+          }),
+        ),
+      );
+    }
     requestPolicies.set(request.threadId, request.unansweredRequestSeconds);
 
     const executionProjectId = projectId(request.preparation);
@@ -486,6 +499,7 @@ export const make = Effect.fn("CloudProviderExecution.make")(function* (input?: 
   readonly maxInputWaitSeconds?: number;
   readonly skillsHome?: string;
   readonly prepareSharedBrowser?: (threadId: ThreadId) => Effect.Effect<void, SharedBrowserError>;
+  readonly prepareDeviceDisplay?: (threadId: ThreadId) => Effect.Effect<void, DeviceDisplayError>;
 }) {
   return (yield* build(input)).service;
 });
@@ -495,6 +509,7 @@ export const layer = Layer.effect(
   Effect.gen(function* () {
     const orchestration = yield* OrchestrationEngineService;
     const sharedBrowserHost = yield* Effect.serviceOption(SharedBrowserHost);
+    const deviceDisplayHost = yield* Effect.serviceOption(DeviceDisplayHost);
     const events = yield* orchestration.subscribeDomainEvents;
     const maxInputWaitSeconds = yield* Config.int("T3CODE_CLOUD_MAX_INPUT_WAIT_SECONDS").pipe(
       Config.withDefault(15 * 60),
@@ -509,6 +524,12 @@ export const layer = Layer.effect(
         ? {
             prepareSharedBrowser: (threadId: ThreadId) =>
               sharedBrowserHost.value.prepare(threadId).pipe(Effect.asVoid),
+          }
+        : {}),
+      ...(Option.isSome(deviceDisplayHost) && deviceDisplayHost.value.available
+        ? {
+            prepareDeviceDisplay: (threadId: ThreadId) =>
+              deviceDisplayHost.value.prepare(threadId).pipe(Effect.asVoid),
           }
         : {}),
     });

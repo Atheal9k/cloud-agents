@@ -345,6 +345,7 @@ export function exportUsageReport(input: {
   readonly usages: ReadonlyArray<CloudRunUsage>;
   readonly spendLimits: ReadonlyArray<CloudSpendLimit>;
   readonly invoices: ReadonlyArray<CloudInvoiceLine>;
+  readonly provenance?: CloudUsageExport["provenance"];
 }): CloudUsageExport {
   const start = parseMillis(input.periodStart) ?? 0;
   const end = parseMillis(input.periodEnd) ?? 0;
@@ -374,6 +375,9 @@ export function exportUsageReport(input: {
     lines,
     spendLimits: input.spendLimits,
     invoices,
+    ...(input.provenance === undefined || input.provenance.length === 0
+      ? {}
+      : { provenance: input.provenance }),
   };
 }
 

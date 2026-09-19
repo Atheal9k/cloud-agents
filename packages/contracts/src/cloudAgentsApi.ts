@@ -2,6 +2,7 @@ import * as Schema from "effect/Schema";
 
 import { IsoDateTime, NonNegativeInt, TrimmedNonEmptyString } from "./baseSchemas.ts";
 import { CloudAgentStatus, CloudRunStatus } from "./cloudAllocation.ts";
+import { CloudCommitProvenance } from "./cloudCommitProvenance.ts";
 
 export const CLOUD_AGENTS_API_PREFIX = "/v1";
 export const CLOUD_AGENTS_API_STREAM_RETENTION_SECONDS = 24 * 60 * 60;
@@ -242,6 +243,7 @@ export const CloudAgentsApiRun = Schema.Struct({
   durationMs: Schema.optionalKey(NonNegativeInt),
   result: Schema.optionalKey(Schema.String),
   git: Schema.optionalKey(CloudAgentsApiGit),
+  provenance: Schema.optionalKey(CloudCommitProvenance),
 });
 export type CloudAgentsApiRun = typeof CloudAgentsApiRun.Type;
 

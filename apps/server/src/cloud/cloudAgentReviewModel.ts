@@ -132,6 +132,7 @@ export function inspectPublication(
     ...(record.outcome.status === "published"
       ? { pullRequestUrl: record.outcome.pullRequestUrl }
       : {}),
+    ...(record.provenance === undefined ? {} : { provenance: record.provenance }),
   };
 }
 

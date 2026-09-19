@@ -148,6 +148,7 @@ import {
 } from "./cloud/CloudAgentsApiHttp.ts";
 import * as CloudCollaboration from "./cloud/CloudCollaboration.ts";
 import { cloudCollaborationRouteLayer } from "./cloud/CloudCollaborationHttp.ts";
+import * as CloudGithubTriggers from "./cloud/CloudGithubTriggers.ts";
 import * as CloudSelfHosted from "./cloud/CloudSelfHosted.ts";
 import { cloudSelfHostedRouteLayer } from "./cloud/CloudSelfHostedHttp.ts";
 import * as CloudAllocationReconciler from "./cloud/CloudAllocationReconciler.ts";
@@ -167,6 +168,9 @@ import * as CloudProviderExecution from "./cloud/CloudProviderExecution.ts";
 import * as SharedBrowserGateway from "./cloud/SharedBrowserGateway.ts";
 import * as SharedBrowserAgentHandoff from "./cloud/SharedBrowserAgentHandoff.ts";
 import * as SharedBrowserHost from "./cloud/SharedBrowserHost.ts";
+import * as DeviceDisplayHost from "./cloud/DeviceDisplayHost.ts";
+import * as DeviceDisplayGateway from "./cloud/DeviceDisplayGateway.ts";
+import { deviceDisplayProxyRouteLayer } from "./cloud/DeviceDisplayProxy.ts";
 import {
   sharedBrowserBootstrapRouteLayer,
   sharedBrowserProxyMiddlewareLayer,
@@ -176,6 +180,7 @@ import * as CloudAgentReview from "./cloud/CloudAgentReview.ts";
 import * as CloudHandoff from "./cloud/CloudHandoff.ts";
 import * as CloudReadiness from "./cloud/CloudReadiness.ts";
 import * as CloudRunControl from "./cloud/CloudRunControl.ts";
+import * as CloudCommitSigner from "./cloud/CloudCommitSigner.ts";
 import * as CloudRunPublication from "./cloud/CloudRunPublication.ts";
 import * as CloudRunResults from "./cloud/CloudRunResults.ts";
 import * as ServerSelfUpdate from "./cloud/selfUpdate.ts";
@@ -360,8 +365,11 @@ const CloudEnvironmentBuildRunnerLayerLive = CloudEnvironmentBuildRunner.layer.p
 
 const CloudDiagnosticsCatalogLayerLive = CloudDiagnosticsCatalog.layer;
 
+const CloudCommitSignerLayerLive = CloudCommitSigner.layer.pipe(Layer.provide(ProcessRunner.layer));
+
 const CloudRunPublicationLayerLive = CloudRunPublication.layer.pipe(
   Layer.provide(ProcessRunner.layer),
+  Layer.provideMerge(CloudCommitSignerLayerLive),
   Layer.provideMerge(CloudGitCredentialsLayerLive),
   Layer.provideMerge(CloudAllocationControllerLayerLive),
 );
@@ -631,6 +639,7 @@ const RuntimeCoreDependenciesBaseLive = ReactorLayerLive.pipe(
   Layer.provideMerge(AuthLayerLive),
   Layer.provideMerge(ServerSecretStore.layer),
   Layer.provideMerge(SharedBrowserHost.layer.pipe(Layer.provide(ProcessRunner.layer))),
+  Layer.provideMerge(DeviceDisplayHost.layer.pipe(Layer.provide(ProcessRunner.layer))),
   Layer.provideMerge(
     Layer.mergeAll(
       CloudCliTokenManager.layer.pipe(
@@ -696,9 +705,13 @@ const PreviewGatewayLayerLive = PreviewGateway.layer;
 const SharedBrowserGatewayLayerLive = SharedBrowserGateway.layer.pipe(
   Layer.provide(SharedBrowserAgentHandoff.layer),
 );
+const DeviceDisplayGatewayLayerLive = DeviceDisplayGateway.layer.pipe(
+  Layer.provide(SharedBrowserAgentHandoff.layer),
+);
 const BrowserGatewayLayersLive = Layer.mergeAll(
   PreviewGatewayLayerLive,
   SharedBrowserGatewayLayerLive,
+  DeviceDisplayGatewayLayerLive,
 );
 
 export const makeRoutesLayer = Layer.mergeAll(
@@ -719,9 +732,10 @@ export const makeRoutesLayer = Layer.mergeAll(
     cloudAgentReviewRouteLayer,
     cloudWorkerSessionRouteLayer,
     cloudAgentsApiRouteLayer,
-    cloudCollaborationRouteLayer,
+    cloudCollaborationRouteLayer.pipe(Layer.provide(CloudGithubTriggers.layer)),
     cloudSelfHostedRouteLayer,
     deviceHubProxyRouteLayer,
+    deviceDisplayProxyRouteLayer,
     previewGatewayBootstrapRouteLayer,
     sharedBrowserBootstrapRouteLayer,
     staticAndDevRouteLayer,

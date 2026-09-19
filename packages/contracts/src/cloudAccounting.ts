@@ -1,5 +1,6 @@
 import * as Schema from "effect/Schema";
 
+import { CloudCommitProvenance } from "./cloudCommitProvenance.ts";
 import {
   IsoDateTime,
   NonNegativeInt,
@@ -142,6 +143,7 @@ export const CloudUsageExport = Schema.Struct({
   lines: Schema.Array(CloudUsageExportLine),
   spendLimits: Schema.Array(CloudSpendLimit),
   invoices: Schema.Array(CloudInvoiceLine),
+  provenance: Schema.optionalKey(Schema.Array(CloudCommitProvenance)),
 });
 export type CloudUsageExport = typeof CloudUsageExport.Type;
 

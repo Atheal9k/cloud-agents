@@ -1,0 +1,13 @@
+#!/bin/bash
+set -euo pipefail
+
+fail() {
+  echo "device display permission failed: $*" >&2
+  exit 1
+}
+
+mode="${1:-}"
+[[ "${mode}" == "human" || "${mode}" == "agent" ]] || fail "mode must be human or agent"
+install -d -m 0700 /run/t3-worker
+printf '%s\n' "${mode}" >/run/t3-worker/device-display-input
+chmod 0640 /run/t3-worker/device-display-input

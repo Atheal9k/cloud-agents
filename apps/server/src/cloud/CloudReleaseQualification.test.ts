@@ -28,6 +28,7 @@ import * as ServerConfig from "../config.ts";
 import * as ProcessRunner from "../processRunner.ts";
 import * as VcsDriverRegistry from "../vcs/VcsDriverRegistry.ts";
 import * as VcsProcess from "../vcs/VcsProcess.ts";
+import * as CloudCommitSigner from "./CloudCommitSigner.ts";
 import * as CloudGitCredentials from "./CloudGitCredentials.ts";
 import * as CloudProviderExecution from "./CloudProviderExecution.ts";
 import * as CloudRepositoryPreparation from "./CloudRepositoryPreparation.ts";
@@ -335,12 +336,16 @@ it.layer(TestLayer)("cloud release qualification", (it) => {
         expect((yield* results.status(result.resultId)).status).toBe("retained");
         expect(yield* results.readText(result.resultId, "diff")).toContain("+after");
 
+        const signer = yield* CloudCommitSigner.make({
+          keyRoot: path.join(root, "signing-keys"),
+        }).pipe(Effect.provideService(ProcessRunner.ProcessRunner, runner));
         const publication = yield* CloudRunPublication.make({
           publicationRoot: path.join(root, "publications"),
           readAllocation: () => Effect.succeed(allocation),
         }).pipe(
           Effect.provideService(ProcessRunner.ProcessRunner, runner),
           Effect.provideService(CloudGitCredentials.CloudGitCredentials, credentials),
+          Effect.provideService(CloudCommitSigner.CloudCommitSigner, signer),
         );
         const published = yield* publication.finalize({ preparation, verification, result });
         expect(published.outcome).toMatchObject({

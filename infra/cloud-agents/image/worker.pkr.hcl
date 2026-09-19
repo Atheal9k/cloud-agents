@@ -314,6 +314,16 @@ build {
     destination = "/tmp/cloud-agent-android-job-cleanup"
   }
 
+  provisioner "file" {
+    source      = "${path.root}/scripts/cloud-agent-device-display"
+    destination = "/tmp/cloud-agent-device-display"
+  }
+
+  provisioner "file" {
+    source      = "${path.root}/scripts/cloud-agent-device-display-permissions"
+    destination = "/tmp/cloud-agent-device-display-permissions"
+  }
+
   provisioner "shell" {
     environment_vars = [
       "CLAUDE_CODE_VERSION=${var.claude_code_version}",
