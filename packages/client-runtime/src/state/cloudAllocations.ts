@@ -1,4 +1,5 @@
 import {
+  type CloudAdmissionControlInput,
   type CloudArtifactAccessInput,
   type CloudAgentReviewActInput,
   type CloudAgentReviewInspectInput,
@@ -10,6 +11,9 @@ import {
   type CloudEnvironmentResolutionInput,
   type CloudEnvironmentRestoreInput,
   type CloudEnvironmentSaveInput,
+  type CloudControllerDefaultsInput,
+  type CloudGuidedSetupInput,
+  type CloudReadinessCheckInput,
   type RunAllocationCommand,
   WS_METHODS,
 } from "@t3tools/contracts";
@@ -39,6 +43,50 @@ export function createCloudAllocationAtoms<R, E>(
       key: ({ environmentId, input }) => `${environmentId}:${input.commandId}`,
     },
     execute: (input: RunAllocationCommand) => request(WS_METHODS.cloudAllocationDispatch, input),
+  });
+  const setAdmission = createEnvironmentRpcCommand(runtime, {
+    label: "environment-data:cloud-allocations:set-admission",
+    tag: WS_METHODS.cloudAllocationSetAdmission,
+    scheduler,
+    concurrency: { mode: "singleFlight", key: ({ environmentId }) => environmentId },
+    execute: (input: CloudAdmissionControlInput) =>
+      request(WS_METHODS.cloudAllocationSetAdmission, input),
+  });
+  const setDefaults = createEnvironmentRpcCommand(runtime, {
+    label: "environment-data:cloud-allocations:set-defaults",
+    tag: WS_METHODS.cloudAllocationSetDefaults,
+    scheduler,
+    concurrency: { mode: "singleFlight", key: ({ environmentId }) => environmentId },
+    execute: (input: CloudControllerDefaultsInput) =>
+      request(WS_METHODS.cloudAllocationSetDefaults, input),
+  });
+  const readiness = createEnvironmentRpcCommand(runtime, {
+    label: "environment-data:cloud-readiness:get",
+    tag: WS_METHODS.cloudReadinessGet,
+    scheduler,
+    concurrency: { mode: "singleFlight", key: ({ environmentId }) => environmentId },
+    execute: () => request(WS_METHODS.cloudReadinessGet, {}),
+  });
+  /** Keyed by the requested checks so re-running IAM does not cancel KVM. */
+  const runReadinessChecks = createEnvironmentRpcCommand(runtime, {
+    label: "environment-data:cloud-readiness:check",
+    tag: WS_METHODS.cloudReadinessCheck,
+    scheduler,
+    concurrency: {
+      mode: "singleFlight",
+      key: ({ environmentId, input }) => `${environmentId}:${[...input.checks].sort().join(",")}`,
+    },
+    execute: (input: CloudReadinessCheckInput) => request(WS_METHODS.cloudReadinessCheck, input),
+  });
+  const runGuidedSetup = createEnvironmentRpcCommand(runtime, {
+    label: "environment-data:cloud-readiness:guided-setup",
+    tag: WS_METHODS.cloudReadinessGuidedSetup,
+    scheduler,
+    concurrency: {
+      mode: "singleFlight",
+      key: ({ environmentId, input }) => `${environmentId}:${input.environmentId}`,
+    },
+    execute: (input: CloudGuidedSetupInput) => request(WS_METHODS.cloudReadinessGuidedSetup, input),
   });
   const saveEnvironment = createEnvironmentRpcCommand(runtime, {
     label: "environment-data:cloud-environments:save",
@@ -162,6 +210,11 @@ export function createCloudAllocationAtoms<R, E>(
   return {
     snapshot,
     dispatch,
+    setAdmission,
+    setDefaults,
+    readiness,
+    runReadinessChecks,
+    runGuidedSetup,
     saveEnvironment,
     restoreEnvironment,
     resolveEnvironment,

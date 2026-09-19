@@ -1,10 +1,14 @@
 /**
- * The controller's singleton settings row: admission, and the cutover fence.
+ * The controller's singleton settings row: admission, launch defaults, and the
+ * cutover fence.
  *
  * Both the running controller and the offline `t3 cloud` commands read and
  * write this row, so the SQL lives here rather than inside either one.
  */
-import type { CloudAllocationControllerWritability } from "@t3tools/contracts";
+import type {
+  CloudAllocationControllerWritability,
+  CloudControllerDefaults,
+} from "@t3tools/contracts";
 import * as Effect from "effect/Effect";
 import * as Schema from "effect/Schema";
 import * as SqlClient from "effect/unstable/sql/SqlClient";
@@ -17,6 +21,9 @@ export const ControllerSettingsRow = Schema.Struct({
   admissionUpdatedAt: Schema.NullOr(Schema.String),
   fencedAt: Schema.NullOr(Schema.String),
   fenceReason: Schema.NullOr(Schema.String),
+  defaultModel: Schema.NullOr(Schema.String),
+  defaultRepository: Schema.NullOr(Schema.String),
+  defaultRef: Schema.NullOr(Schema.String),
 });
 export type ControllerSettingsRow = typeof ControllerSettingsRow.Type;
 
@@ -29,6 +36,31 @@ const FenceUpdate = Schema.Struct({
   fencedAt: Schema.String,
   reason: Schema.String,
 });
+
+const DefaultsUpdate = Schema.Struct({
+  defaultModel: Schema.NullOr(Schema.String),
+  defaultRepository: Schema.NullOr(Schema.String),
+  defaultRef: Schema.NullOr(Schema.String),
+});
+
+/**
+ * A blank column is the absence of a default, not a default of "". Trimming
+ * here means the screen and the launcher agree about what "unset" looks like.
+ */
+export const defaultsFromRow = (row: ControllerSettingsRow): CloudControllerDefaults => {
+  const value = (raw: string | null) => {
+    const trimmed = raw?.trim() ?? "";
+    return trimmed.length === 0 ? undefined : trimmed;
+  };
+  const model = value(row.defaultModel);
+  const repository = value(row.defaultRepository);
+  const ref = value(row.defaultRef);
+  return {
+    ...(model === undefined ? {} : { model }),
+    ...(repository === undefined ? {} : { repository }),
+    ...(ref === undefined ? {} : { ref }),
+  };
+};
 
 /**
  * A fence with no timestamp is not a fence: the marker is what a cutover
@@ -59,7 +91,10 @@ export const make = Effect.fn("cloud.controllerSettings.make")(function* () {
         admission_open AS "admissionOpen",
         admission_updated_at AS "admissionUpdatedAt",
         fenced_at AS "fencedAt",
-        fence_reason AS "fenceReason"
+        fence_reason AS "fenceReason",
+        default_model AS "defaultModel",
+        default_repository AS "defaultRepository",
+        default_ref AS "defaultRef"
       FROM cloud_controller_settings
       WHERE singleton_id = 1
     `,
@@ -91,6 +126,18 @@ export const make = Effect.fn("cloud.controllerSettings.make")(function* () {
     `,
   });
 
+  const writeDefaults = SqlSchema.void({
+    Request: DefaultsUpdate,
+    execute: ({ defaultModel, defaultRepository, defaultRef }) => sql`
+      UPDATE cloud_controller_settings
+      SET
+        default_model = ${defaultModel},
+        default_repository = ${defaultRepository},
+        default_ref = ${defaultRef}
+      WHERE singleton_id = 1
+    `,
+  });
+
   const clearFence = SqlSchema.void({
     Request: EmptyRequest,
     execute: () => sql`
@@ -100,5 +147,5 @@ export const make = Effect.fn("cloud.controllerSettings.make")(function* () {
     `,
   });
 
-  return { read, writeAdmission, writeFence, clearFence } as const;
+  return { read, writeAdmission, writeDefaults, writeFence, clearFence } as const;
 });

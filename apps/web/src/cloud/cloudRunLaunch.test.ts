@@ -1,5 +1,6 @@
 import {
   type CloudAllocationLimits,
+  type CloudAllocationSnapshot,
   LINUX_ANDROID_WORKER_PROFILE_ID,
   type RepositoryIdentity,
 } from "@t3tools/contracts";
@@ -85,6 +86,63 @@ describe("cloud run launch", () => {
       runMinutes: "4320",
       publication: "automatic-draft-pr",
     });
+  });
+
+  it("starts a draft from the controller's saved defaults", () => {
+    const snapshot = {
+      controller: {
+        mode: "permanent",
+        requiresHostOnline: false,
+        admission: { status: "open" },
+        defaults: { model: "gpt-5.6-sol", repository: "t3tools/t3code", ref: "release" },
+      },
+      limits,
+      workerPriceAssumptions: [],
+      spendingControl: "estimate-only",
+      allocations: [],
+      usage: [],
+    } as unknown as CloudAllocationSnapshot;
+    const providers = [
+      {
+        instanceId: "codex",
+        models: [
+          { slug: "gpt-5.6-sol", isDefault: false, isCustom: false },
+          { slug: "other", isDefault: true, isCustom: false },
+        ],
+      },
+    ] as unknown as Parameters<typeof createInitialCloudRunDraft>[1];
+
+    expect(createInitialCloudRunDraft(snapshot, providers)).toMatchObject({
+      repository: "t3tools/t3code",
+      selectedRef: "release",
+      baseBranch: "release",
+      model: "gpt-5.6-sol",
+    });
+    // An explicit repository still wins: the default only fills a blank.
+    expect(createInitialCloudRunDraft(snapshot, providers, "pingdotgg/t3code").repository).toBe(
+      "pingdotgg/t3code",
+    );
+  });
+
+  it("ignores a default model the selected provider does not offer", () => {
+    const snapshot = {
+      controller: {
+        mode: "permanent",
+        requiresHostOnline: false,
+        admission: { status: "open" },
+        defaults: { model: "retired-model" },
+      },
+      limits,
+      workerPriceAssumptions: [],
+      spendingControl: "estimate-only",
+      allocations: [],
+      usage: [],
+    } as unknown as CloudAllocationSnapshot;
+    const providers = [
+      { instanceId: "codex", models: [{ slug: "other", isDefault: true, isCustom: false }] },
+    ] as unknown as Parameters<typeof createInitialCloudRunDraft>[1];
+
+    expect(createInitialCloudRunDraft(snapshot, providers).model).toBe("other");
   });
 
   it("requires a saved GitHub project", () => {

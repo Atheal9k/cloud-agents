@@ -265,6 +265,7 @@ it.effect("persists allocation events and rebuilds the catalog after restart", (
       requiresHostOnline: true,
       admission: { status: "open" },
       writability: { status: "writable" },
+      defaults: {},
     });
     expect(snapshot.limits.maxRunSeconds).toBe(3 * 24 * 60 * 60);
     expect(snapshot.allocations).toEqual([launched]);
@@ -879,5 +880,62 @@ it.effect("erases a permanently deleted agent and keeps only its tombstone", () 
       )
       .pipe(Effect.flip);
     expect(relaunch.reason).toBe("agent-deleted");
+  }).pipe(Effect.provide(SqlitePersistenceMemory)),
+);
+
+it.effect("keeps launch defaults across a restart and treats blanks as unset", () =>
+  Effect.gen(function* () {
+    const controller = yield* make({ enabled: true });
+
+    const saved = yield* controller.setDefaults({
+      defaults: { model: "gpt-5.6-sol", repository: "t3tools/t3code", ref: "main" },
+      occurredAt: "2026-09-19T12:00:00.000Z",
+    });
+    expect(saved.controller.defaults).toEqual({
+      model: "gpt-5.6-sol",
+      repository: "t3tools/t3code",
+      ref: "main",
+    });
+
+    // A cleared field is the absence of a default, not a default of "".
+    yield* controller.setDefaults({
+      defaults: { repository: "t3tools/t3code" },
+      occurredAt: "2026-09-19T12:01:00.000Z",
+    });
+    const restarted = yield* make({ enabled: true });
+    expect((yield* restarted.snapshot).controller.defaults).toEqual({
+      repository: "t3tools/t3code",
+    });
+  }).pipe(Effect.provide(SqlitePersistenceMemory)),
+);
+
+it.effect("stops admission without disturbing defaults, runs, or review", () =>
+  Effect.gen(function* () {
+    const controller = yield* make({ enabled: true });
+    yield* controller.dispatch(launch);
+    yield* controller.setDefaults({
+      defaults: { ref: "main" },
+      occurredAt: "2026-09-19T12:00:00.000Z",
+    });
+
+    const stopped = yield* controller.setAdmission({
+      admissionOpen: false,
+      occurredAt: "2026-09-19T12:02:00.000Z",
+    });
+
+    expect(stopped.controller.admission).toEqual({
+      status: "stopped",
+      stoppedAt: "2026-09-19T12:02:00.000Z",
+    });
+    expect(stopped.controller.defaults).toEqual({ ref: "main" });
+    expect(stopped.allocations).toHaveLength(1);
+    // Defaults stay writable while admission is stopped: they only describe
+    // what a future run would start from.
+    const reopened = yield* controller.setDefaults({
+      defaults: { ref: "release" },
+      occurredAt: "2026-09-19T12:03:00.000Z",
+    });
+    expect(reopened.controller.admission.status).toBe("stopped");
+    expect(reopened.controller.defaults).toEqual({ ref: "release" });
   }).pipe(Effect.provide(SqlitePersistenceMemory)),
 );

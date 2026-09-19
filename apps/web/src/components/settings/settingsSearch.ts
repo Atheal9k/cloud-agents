@@ -18,6 +18,7 @@ export type SettingsPath =
   | "/settings/integrations"
   | "/settings/source-control"
   | "/settings/connections"
+  | "/settings/cloud-agents"
   | "/settings/archived";
 
 /**
@@ -81,6 +82,7 @@ export const SETTINGS_SECTION_LABELS: Readonly<Record<SettingsPath, string>> = {
   "/settings/integrations": "Integrations",
   "/settings/source-control": "Source Control",
   "/settings/connections": "Connections",
+  "/settings/cloud-agents": "Cloud agents",
   "/settings/archived": "Archive",
 };
 
@@ -697,6 +699,40 @@ export const SETTINGS_SEARCH_ITEMS = [
     cloudOnly: true,
   },
   {
+    id: "cloud-readiness",
+    title: "Cloud readiness",
+    to: "/settings/cloud-agents",
+    searchTerms: ["aws account region admission stop resume fence controller health status"],
+  },
+  {
+    id: "cloud-checks",
+    title: "Cloud checks",
+    to: "/settings/cloud-agents",
+    searchTerms: [
+      "iam kvm firecracker image snapshot artifact registration ssm diagnostics validate",
+    ],
+  },
+  {
+    id: "cloud-environments",
+    title: "Cloud environments and Builds",
+    to: "/settings/cloud-agents",
+    searchTerms: [
+      "environment build snapshot stale threshold egress secrets guided setup activate",
+    ],
+  },
+  {
+    id: "cloud-defaults",
+    title: "Cloud run defaults",
+    to: "/settings/cloud-agents",
+    searchTerms: ["default model repository ref retention instance types policy"],
+  },
+  {
+    id: "cloud-config-precedence",
+    title: "Cloud config precedence",
+    to: "/settings/cloud-agents",
+    searchTerms: ["config source order repository personal team default resolution"],
+  },
+  {
     id: "connections-environment",
     title: "This machine",
     to: "/settings/connections",
@@ -748,6 +784,7 @@ const SETTINGS_CATEGORY_SCOPES: Readonly<Record<SettingsPath, SettingsSearchScop
   "/settings/integrations": null,
   "/settings/source-control": "environment-defaults",
   "/settings/connections": "connections",
+  "/settings/cloud-agents": null,
   "/settings/archived": "project-defaults",
 };
 

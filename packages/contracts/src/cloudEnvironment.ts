@@ -5,6 +5,7 @@ import {
   CloudEnvironmentId,
   CloudEnvironmentVersionId,
   IsoDateTime,
+  NonNegativeInt,
   PortSchema,
   PositiveInt,
   TrimmedNonEmptyString,
@@ -227,6 +228,12 @@ export const CloudEnvironment = Schema.Struct({
   /** Newest first, including the current version. */
   history: Schema.Array(CloudEnvironmentVersionSummary).pipe(Schema.check(Schema.isMinLength(1))),
   activeBuildId: Schema.optionalKey(CloudEnvironmentBuildId),
+  /**
+   * How long an active Build stays usable before a run refreshes it. Absent
+   * when decoding snapshots from controllers older than CA-05, which means the
+   * shipped default applies.
+   */
+  staleBuildThresholdSeconds: Schema.optionalKey(NonNegativeInt),
   createdAt: IsoDateTime,
   updatedAt: IsoDateTime,
 });

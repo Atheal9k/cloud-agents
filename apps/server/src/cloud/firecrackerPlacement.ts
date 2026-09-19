@@ -53,6 +53,9 @@ export type CloudHypervisorHost = {
   readonly profiles: ReadonlyArray<string>;
   readonly credentialsPath: string;
   readonly kvm: boolean;
+  /** Packer image tags, so an operator can see what a host is running. */
+  readonly guestImageVersion?: string;
+  readonly hypervisorImageVersion?: string;
 };
 
 export type CloudHypervisorFleet = {
