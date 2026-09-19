@@ -171,6 +171,13 @@ export const CloudEnvironmentBuildSaveInput = Schema.Struct({
 });
 export type CloudEnvironmentBuildSaveInput = typeof CloudEnvironmentBuildSaveInput.Type;
 
+/** Repoint an environment at any saved successful Build, including an older one. */
+export const CloudEnvironmentBuildActivateInput = Schema.Struct({
+  buildId: CloudEnvironmentBuildId,
+  occurredAt: IsoDateTime,
+});
+export type CloudEnvironmentBuildActivateInput = typeof CloudEnvironmentBuildActivateInput.Type;
+
 export const CloudEnvironmentBuildStaleThresholdInput = Schema.Struct({
   environmentId: CloudEnvironmentId,
   staleThresholdSeconds: NonNegativeInt,
@@ -186,6 +193,7 @@ export class CloudEnvironmentBuildError extends Schema.TaggedError<CloudEnvironm
       "environment-not-found",
       "build-not-found",
       "build-not-draft",
+      "build-not-saved",
       "build-unsuccessful",
       "build-already-settled",
       "build-in-progress",

@@ -8,12 +8,14 @@ import {
   CloudAllocationLimits,
   type CloudAllocationSnapshot,
   type CloudAuditListInput,
+  type CloudAuditAction,
   DEFAULT_IDLE_RELEASE_SECONDS,
   DEFAULT_PREVIEW_LEASE_MAX_SECONDS,
   DEFAULT_PREVIEW_LEASE_SECONDS,
   type CloudEnvironment,
   type CloudEnvironmentBuild,
   cloudEnvironmentBuildReference,
+  type CloudEnvironmentBuildActivateInput,
   type CloudEnvironmentBuildCancelInput,
   type CloudEnvironmentBuildError,
   type CloudEnvironmentBuildSaveInput,
@@ -168,6 +170,14 @@ export class CloudAllocationController extends Context.Service<
       ReadonlyArray<import("@t3tools/contracts").CloudAuditEvent>,
       CloudAllocationControllerError
     >;
+    readonly recordAdminAudit: (input: {
+      readonly id: string;
+      readonly occurredAt: string;
+      readonly action: CloudAuditAction;
+      readonly resourceType: string;
+      readonly resourceId: string;
+      readonly summary: string;
+    }) => Effect.Effect<void, CloudAllocationControllerError>;
     readonly saveEnvironment: (
       input: CloudEnvironmentSaveInput,
     ) => Effect.Effect<CloudEnvironment, CloudAllocationControllerError | CloudEnvironmentError>;
@@ -184,6 +194,12 @@ export class CloudAllocationController extends Context.Service<
     readonly refresh: Effect.Effect<CloudAllocationSnapshot, CloudAllocationControllerError>;
     readonly saveBuild: (
       input: CloudEnvironmentBuildSaveInput,
+    ) => Effect.Effect<
+      CloudEnvironmentBuild,
+      CloudAllocationControllerError | CloudEnvironmentBuildError
+    >;
+    readonly activateBuild: (
+      input: CloudEnvironmentBuildActivateInput,
     ) => Effect.Effect<
       CloudEnvironmentBuild,
       CloudAllocationControllerError | CloudEnvironmentBuildError
@@ -1320,8 +1336,19 @@ export const make = Effect.fn("CloudAllocationController.make")(function* (input
       }),
     );
 
+  const recordAdminAudit: CloudAllocationController["Service"]["recordAdminAudit"] = (input) =>
+    mutex.withPermits(1)(
+      Effect.gen(function* () {
+        yield* requireWritable;
+        yield* accounting.appendAudit(auditEvent(input)).pipe(Effect.mapError(persistenceError));
+        yield* PubSub.publish(changes, yield* readSnapshot);
+      }),
+    );
+
   const saveBuild: CloudAllocationController["Service"]["saveBuild"] = (input) =>
     publishBuildChange(builds.save(input));
+  const activateBuild: CloudAllocationController["Service"]["activateBuild"] = (input) =>
+    publishBuildChange(builds.activate(input));
   const cancelBuild: CloudAllocationController["Service"]["cancelBuild"] = (input) =>
     publishBuildChange(builds.cancel(input));
   const setBuildStaleThreshold: CloudAllocationController["Service"]["setBuildStaleThreshold"] = (
@@ -1353,8 +1380,10 @@ export const make = Effect.fn("CloudAllocationController.make")(function* (input
     recordInvoice,
     exportUsage,
     listAudit,
+    recordAdminAudit,
     refresh,
     saveBuild,
+    activateBuild,
     cancelBuild,
     setBuildStaleThreshold,
     saveEnvironment,

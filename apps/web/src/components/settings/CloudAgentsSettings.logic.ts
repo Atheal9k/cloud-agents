@@ -2,8 +2,11 @@ import {
   cloudEnvironmentBase,
   type CloudControllerDefaults,
   type CloudEnvironment,
+  type CloudEnvironmentSecretReference,
   type CloudEnvironmentSource,
   type CloudGuidedSetupInput,
+  type CloudNetworkProfileKind,
+  type CloudPrivateDependency,
   type CloudReadinessCheck,
   type CloudReadinessCheckOutcome,
   type CloudReadinessReport,
@@ -108,6 +111,12 @@ export interface CloudGuidedSetupDraft {
   readonly dockerfile: string;
   readonly install: string;
   readonly start: string;
+  readonly egressMode: CloudEnvironment["current"]["effectivePolicy"]["egressMode"];
+  readonly egressAllowlist: string;
+  readonly networkProfileKind: CloudNetworkProfileKind;
+  readonly networkProfileEnabled: boolean;
+  readonly privateDependencies: string;
+  readonly secretReferences: string;
 }
 
 export function createCloudGuidedSetupDraft(
@@ -136,12 +145,100 @@ export function createCloudGuidedSetupDraft(
     dockerfile: current?.config.build?.dockerfile ?? "Dockerfile",
     install: current?.config.install ?? "",
     start: current?.config.start ?? "",
+    egressMode: current?.effectivePolicy.egressMode ?? "default_with_network_settings",
+    egressAllowlist: (current?.effectivePolicy.egressAllowlist ?? []).join("\n"),
+    networkProfileKind: current?.config.networkProfile?.kind ?? "public",
+    networkProfileEnabled: current?.config.networkProfile?.enabled !== false,
+    privateDependencies: (current?.effectivePolicy.privateDependencies ?? [])
+      .map(
+        (dependency) =>
+          `${dependency.id} ${dependency.kind} ${dependency.destination}${dependency.secretName === undefined ? "" : ` ${dependency.secretName}`}`,
+      )
+      .join("\n"),
+    secretReferences: (current?.secretReferences ?? [])
+      .map(
+        (secret) =>
+          `${secret.name} ${secret.reference} ${secret.availability} ${secret.scope ?? "environment"}${secret.owner === undefined ? "" : ` ${secret.owner}`}`,
+      )
+      .join("\n"),
   };
 }
 
 export type CloudGuidedSetupValidation =
   | { readonly status: "invalid"; readonly message: string }
   | { readonly status: "valid"; readonly input: CloudGuidedSetupInput };
+
+function parsePrivateDependencies(value: string):
+  | { readonly status: "valid"; readonly value: ReadonlyArray<CloudPrivateDependency> }
+  | {
+      readonly status: "invalid";
+      readonly message: string;
+    } {
+  const dependencies: Array<CloudPrivateDependency> = [];
+  for (const line of value.split(/\r?\n/)) {
+    const trimmed = line.trim();
+    if (trimmed.length === 0) continue;
+    const [id, kind, destination, secretName, ...extra] = trimmed.split(/\s+/);
+    if (
+      id === undefined ||
+      destination === undefined ||
+      extra.length > 0 ||
+      (kind !== "submodule" && kind !== "lfs" && kind !== "package-registry")
+    ) {
+      return {
+        status: "invalid",
+        message: "Private dependencies use: id kind destination [secret-name].",
+      };
+    }
+    dependencies.push({
+      id,
+      kind,
+      destination,
+      ...(secretName === undefined ? {} : { secretName }),
+    });
+  }
+  return { status: "valid", value: dependencies };
+}
+
+function parseSecretReferences(value: string):
+  | { readonly status: "valid"; readonly value: ReadonlyArray<CloudEnvironmentSecretReference> }
+  | {
+      readonly status: "invalid";
+      readonly message: string;
+    } {
+  const secrets: Array<CloudEnvironmentSecretReference> = [];
+  for (const line of value.split(/\r?\n/)) {
+    const trimmed = line.trim();
+    if (trimmed.length === 0) continue;
+    const [name, reference, availability, scope = "environment", owner, ...extra] =
+      trimmed.split(/\s+/);
+    if (
+      name === undefined ||
+      reference === undefined ||
+      extra.length > 0 ||
+      (availability !== "build" &&
+        availability !== "runtime" &&
+        availability !== "runtime-redacted") ||
+      (scope !== "environment" && scope !== "user" && scope !== "team")
+    ) {
+      return {
+        status: "invalid",
+        message: "Secrets use: name reference availability [scope] [owner].",
+      };
+    }
+    if (scope !== "environment" && owner === undefined) {
+      return { status: "invalid", message: `${scope} secret '${name}' needs an owner.` };
+    }
+    secrets.push({
+      name,
+      reference,
+      availability,
+      scope,
+      ...(owner === undefined ? {} : { owner }),
+    });
+  }
+  return { status: "valid", value: secrets };
+}
 
 /**
  * A repository-owned environment is created by the agent-led setup flow, so
@@ -181,6 +278,10 @@ export function validateCloudGuidedSetupDraft(input: {
   }
   const install = draft.install.trim();
   const start = draft.start.trim();
+  const privateDependencies = parsePrivateDependencies(draft.privateDependencies);
+  if (privateDependencies.status === "invalid") return privateDependencies;
+  const secretReferences = parseSecretReferences(draft.secretReferences);
+  if (secretReferences.status === "invalid") return secretReferences;
   const additionalRepositories = draft.additionalRepositories.split(/\r?\n/).flatMap((line) => {
     const trimmed = line.trim();
     if (trimmed.length === 0) return [];
@@ -203,7 +304,17 @@ export function validateCloudGuidedSetupDraft(input: {
       base,
       ...(install.length === 0 ? {} : { install }),
       ...(start.length === 0 ? {} : { start }),
-      secretReferences: [],
+      egressMode: draft.egressMode,
+      egressAllowlist: draft.egressAllowlist
+        .split(/[\r\n,]+/)
+        .map((value) => value.trim())
+        .filter((value) => value.length > 0),
+      networkProfile: {
+        kind: draft.networkProfileKind,
+        enabled: draft.networkProfileEnabled,
+      },
+      privateDependencies: privateDependencies.value,
+      secretReferences: secretReferences.value,
       occurredAt: input.occurredAt,
     },
   };

@@ -86,6 +86,12 @@ function draft(overrides: Partial<CloudGuidedSetupDraft> = {}): CloudGuidedSetup
     dockerfile: "Dockerfile",
     install: "pnpm install",
     start: "",
+    egressMode: "default_with_network_settings",
+    egressAllowlist: "",
+    networkProfileKind: "public",
+    networkProfileEnabled: true,
+    privateDependencies: "",
+    secretReferences: "",
     ...overrides,
   };
 }
@@ -228,6 +234,77 @@ describe("validateCloudGuidedSetupDraft", () => {
     ]);
   });
 
+  it("parses network policy, private dependencies, and secret references", () => {
+    const result = validateCloudGuidedSetupDraft({
+      draft: draft({
+        egressMode: "network_settings_only",
+        egressAllowlist: "registry.npmjs.org\napi.github.com",
+        networkProfileKind: "tailscale",
+        privateDependencies:
+          "private-npm package-registry npm.acme.test NPM_TOKEN\nshared submodule git.acme.test",
+        secretReferences:
+          "NPM_TOKEN secret/npm build team platform\nRUNTIME_KEY secret/runtime runtime-redacted",
+      }),
+      buildId: "build:primary:2",
+      expectedVersion: 1,
+      occurredAt: NOW,
+    });
+
+    expect(result.status).toBe("valid");
+    if (result.status !== "valid") return;
+    expect(result.input).toMatchObject({
+      egressMode: "network_settings_only",
+      egressAllowlist: ["registry.npmjs.org", "api.github.com"],
+      networkProfile: { kind: "tailscale", enabled: true },
+      privateDependencies: [
+        {
+          id: "private-npm",
+          kind: "package-registry",
+          destination: "npm.acme.test",
+          secretName: "NPM_TOKEN",
+        },
+        { id: "shared", kind: "submodule", destination: "git.acme.test" },
+      ],
+      secretReferences: [
+        {
+          name: "NPM_TOKEN",
+          reference: "secret/npm",
+          availability: "build",
+          scope: "team",
+          owner: "platform",
+        },
+        {
+          name: "RUNTIME_KEY",
+          reference: "secret/runtime",
+          availability: "runtime-redacted",
+          scope: "environment",
+        },
+      ],
+    });
+  });
+
+  it("rejects malformed private dependency and secret lines", () => {
+    expect(
+      validateCloudGuidedSetupDraft({
+        draft: draft({ privateDependencies: "npm unknown npm.acme.test" }),
+        buildId: "build:primary:2",
+        expectedVersion: 1,
+        occurredAt: NOW,
+      }),
+    ).toEqual({
+      status: "invalid",
+      message: "Private dependencies use: id kind destination [secret-name].",
+    });
+    expect(
+      validateCloudGuidedSetupDraft({
+        draft: draft({ secretReferences: "TOKEN secret/token build team" }),
+        buildId: "build:primary:2",
+        expectedVersion: 1,
+        occurredAt: NOW,
+      }),
+    ).toEqual({ status: "invalid", message: "team secret 'TOKEN' needs an owner." });
+  });
+
   it("refuses an owned scope with no owner", () => {
     expect(
       validateCloudGuidedSetupDraft({
@@ -303,6 +380,7 @@ describe("createCloudGuidedSetupDraft", () => {
       baseKind: "image",
       image: "ubuntu:24.04",
       install: "pnpm install",
+      egressMode: "allow_all",
     });
   });
 

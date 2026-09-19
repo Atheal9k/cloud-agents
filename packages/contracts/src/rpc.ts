@@ -331,6 +331,7 @@ import {
 } from "./cloudEnvironment.ts";
 import {
   CloudEnvironmentBuild,
+  CloudEnvironmentBuildActivateInput,
   CloudEnvironmentBuildCancelInput,
   CloudEnvironmentBuildError,
   CloudEnvironmentBuildSaveInput,
@@ -488,6 +489,7 @@ export const WS_METHODS = {
   cloudEnvironmentBuildStart: "cloud.environments.builds.start",
   cloudEnvironmentBuildCancel: "cloud.environments.builds.cancel",
   cloudEnvironmentBuildSave: "cloud.environments.builds.save",
+  cloudEnvironmentBuildActivate: "cloud.environments.builds.activate",
   cloudEnvironmentBuildStaleThreshold: "cloud.environments.builds.staleThreshold",
   cloudArtifactsGrant: "cloud.artifacts.grant",
   cloudAgentReviewInspect: "cloud.agents.inspect",
@@ -911,6 +913,12 @@ const WsCloudEnvironmentBuildCancelRpc = Rpc.make(WS_METHODS.cloudEnvironmentBui
 
 const WsCloudEnvironmentBuildSaveRpc = Rpc.make(WS_METHODS.cloudEnvironmentBuildSave, {
   payload: CloudEnvironmentBuildSaveInput,
+  success: CloudEnvironmentBuild,
+  error: buildRpcError,
+});
+
+const WsCloudEnvironmentBuildActivateRpc = Rpc.make(WS_METHODS.cloudEnvironmentBuildActivate, {
+  payload: CloudEnvironmentBuildActivateInput,
   success: CloudEnvironmentBuild,
   error: buildRpcError,
 });
@@ -1812,6 +1820,7 @@ export const WsRpcGroup = RpcGroup.make(
   WsCloudEnvironmentBuildStartRpc,
   WsCloudEnvironmentBuildCancelRpc,
   WsCloudEnvironmentBuildSaveRpc,
+  WsCloudEnvironmentBuildActivateRpc,
   WsCloudEnvironmentBuildStaleThresholdRpc,
   WsCloudAllocationSetDefaultsRpc,
   WsCloudAccountingSetSpendLimitRpc,

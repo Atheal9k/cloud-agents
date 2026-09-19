@@ -11,7 +11,11 @@ import {
 } from "./baseSchemas.ts";
 import { CloudAllocationControllerStatus, CloudControllerDefaults } from "./cloudAllocation.ts";
 import { CloudEnvironmentSecretReference, CloudEnvironmentSource } from "./cloudEnvironment.ts";
-import { CloudNetworkProfileDetails, CloudPrivateDependency } from "./cloudPrivateNetwork.ts";
+import {
+  CloudNetworkProfile,
+  CloudNetworkProfileDetails,
+  CloudPrivateDependency,
+} from "./cloudPrivateNetwork.ts";
 import { CloudSecurityReport } from "./cloudSecurity.ts";
 
 /**
@@ -247,6 +251,17 @@ export const CloudGuidedSetupInput = Schema.Struct({
   base: CloudGuidedSetupBase,
   install: Schema.optionalKey(Schema.String),
   start: Schema.optionalKey(Schema.String),
+  egressMode: Schema.optionalKey(
+    Schema.Literals([
+      "allow_all",
+      "parent_plus_network_settings",
+      "default_with_network_settings",
+      "network_settings_only",
+    ]),
+  ),
+  egressAllowlist: Schema.optionalKey(Schema.Array(TrimmedNonEmptyString)),
+  privateDependencies: Schema.optionalKey(Schema.Array(CloudPrivateDependency)),
+  networkProfile: Schema.optionalKey(CloudNetworkProfile),
   secretReferences: Schema.Array(CloudEnvironmentSecretReference),
   occurredAt: IsoDateTime,
 });

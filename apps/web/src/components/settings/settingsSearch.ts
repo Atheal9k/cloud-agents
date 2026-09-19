@@ -713,6 +713,14 @@ export const SETTINGS_SEARCH_ITEMS = [
     ],
   },
   {
+    id: "cloud-capacity",
+    title: "Cloud agents and capacity",
+    to: "/settings/cloud-agents",
+    searchTerms: [
+      "agent runtime queue hypervisor slots warm inventory placement hibernated snapshot cleanup",
+    ],
+  },
+  {
     id: "cloud-environments",
     title: "Cloud environments and Builds",
     to: "/settings/cloud-agents",
@@ -735,6 +743,12 @@ export const SETTINGS_SEARCH_ITEMS = [
     searchTerms: [
       "github ghes gitlab bitbucket azure devops install repository scope team follow-up",
     ],
+  },
+  {
+    id: "cloud-audit",
+    title: "Cloud audit log",
+    to: "/settings/cloud-agents",
+    searchTerms: ["admin authorization mutation history actor resource spend build integration"],
   },
   {
     id: "cloud-config-precedence",

@@ -12,6 +12,20 @@ Dependent repositories and submodules cannot widen the triggering user's access.
 They must already sit in the intersection of the source-control install, the
 person who started the run, and the environment's configured repositories.
 
+## Administer environments remotely
+
+Open **Settings > Cloud agents** to create or revise an environment, inspect its
+version and Build history, restore an older version as a new one, or activate an
+older successful Build. Builds can be started manually, and the refresh interval
+controls when a run should rebuild a stale environment; set it to `0` to rebuild
+before every run.
+
+The same page reports controller capacity, queued work, runtime placement, warm
+guests, retained snapshots, cleanup, and recent administrative changes. Network
+policy, private dependencies, and secret references are part of the guided
+environment setup. Secret values stay in the configured secret backend and are
+never displayed by T3 Code.
+
 ## Start from scratch
 
 You can start a cloud agent without a repository. In the launch dialog choose
