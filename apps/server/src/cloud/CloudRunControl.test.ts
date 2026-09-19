@@ -233,6 +233,7 @@ function fixture(initial: RunAllocation, options?: { readonly captureFails?: boo
       startContinuation: () => Effect.die("unused"),
       purgeAllocation: () => Effect.die("unused"),
       purgeExpired: Effect.die("unused"),
+      attachProvenance: () => Effect.die("unused"),
     });
     const control = yield* make().pipe(
       Effect.provideService(CloudAllocationController.CloudAllocationController, controller),

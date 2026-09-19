@@ -1,4 +1,8 @@
-import type { CloudAgentReview, CloudAgentReviewAction } from "@t3tools/contracts";
+import type {
+  CloudAgentReview,
+  CloudAgentReviewAction,
+  CloudCommitProvenance,
+} from "@t3tools/contracts";
 
 export function cloudAgentStatusLabel(status: CloudAgentReview["agentStatus"]): string {
   switch (status) {
@@ -39,6 +43,11 @@ export function cloudReviewActionLabel(action: CloudAgentReviewAction): string {
     case "delete-pr":
       return "Delete pull request";
   }
+}
+
+export function cloudProvenanceLabel(provenance: CloudCommitProvenance): string {
+  const fingerprint = provenance.signature?.fingerprint ?? "unsigned";
+  return `${provenance.principal.kind}:${provenance.principal.id} · ${provenance.provider ?? "unknown"}/${provenance.model ?? "unknown"} · ${fingerprint}`;
 }
 
 export function cloudDiffInspectionLabel(review: CloudAgentReview["diff"]): string {

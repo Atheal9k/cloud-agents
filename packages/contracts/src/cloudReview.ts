@@ -26,6 +26,7 @@ import {
   CloudSessionLeases,
 } from "./cloudPreview.ts";
 import { CloudEnvironmentBuild } from "./cloudEnvironmentBuild.ts";
+import { CloudCommitProvenance } from "./cloudCommitProvenance.ts";
 import { CloudRunPublicationOutcome } from "./cloudPublication.ts";
 import { CloudArtifactEntry } from "./cloudResults.ts";
 
@@ -140,6 +141,7 @@ export const CloudPublicationInspection = Schema.Union([
     status: Schema.Literal("present"),
     outcome: CloudRunPublicationOutcome,
     pullRequestUrl: Schema.optionalKey(TrimmedNonEmptyString),
+    provenance: Schema.optionalKey(CloudCommitProvenance),
   }),
 ]);
 export type CloudPublicationInspection = typeof CloudPublicationInspection.Type;

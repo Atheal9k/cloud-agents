@@ -65,11 +65,15 @@ export function renderCloudAgentReviewPage(review: CloudAgentReview): string {
         ? `<a href="${escapeHtml(review.publication.outcome.pullRequestUrl)}">${escapeHtml(review.publication.outcome.pullRequestUrl)}</a>`
         : review.publication.outcome.status
       : review.publication.reason;
+  const provenance =
+    review.publication.status === "present" && review.publication.provenance !== undefined
+      ? `${review.publication.provenance.principal.kind}:${review.publication.provenance.principal.id} · ${review.publication.provenance.provider ?? "unknown"}/${review.publication.provenance.model ?? "unknown"} · ${review.publication.provenance.signature?.fingerprint ?? "unsigned"}`
+      : "None";
   const usage =
     review.usage === undefined
       ? "Unknown"
       : `${review.usage.elapsedWorkerSeconds} worker seconds`;
   const environmentName =
     review.environment?.current.name ?? review.environmentReference?.environmentId ?? "None";
-  return `<!doctype html><html><head><meta charset="utf-8"><title>${title}</title></head><body><main><h1>${title}</h1><p>This page inspects retained results. It does not wake a runtime.</p><dl><dt>Agent status</dt><dd>${escapeHtml(review.agentStatus)}</dd><dt>Latest run</dt><dd>${escapeHtml(review.latestRun.status)}</dd><dt>Preview</dt><dd>${escapeHtml(review.previewAvailability)}</dd><dt>Terminal</dt><dd>${escapeHtml(review.terminalAvailability)}</dd><dt>Usage</dt><dd>${escapeHtml(usage)}</dd><dt>Environment</dt><dd>${escapeHtml(environmentName)}</dd><dt>Build</dt><dd>${escapeHtml(build)}</dd><dt>Runtime snapshot</dt><dd>${escapeHtml(snapshotLabel(review))}</dd><dt>Pull request</dt><dd>${publication}</dd></dl><h2>Runs</h2><ul>${runRows}</ul><h2>Changes</h2>${textBlock(review.diff)}<h2>Verification</h2>${textBlock(review.verification)}<h2>Transcript</h2>${textBlock(review.transcript)}<h2>Artifacts</h2><ul>${artifactRows}</ul></main></body></html>`;
+  return `<!doctype html><html><head><meta charset="utf-8"><title>${title}</title></head><body><main><h1>${title}</h1><p>This page inspects retained results. It does not wake a runtime.</p><dl><dt>Agent status</dt><dd>${escapeHtml(review.agentStatus)}</dd><dt>Latest run</dt><dd>${escapeHtml(review.latestRun.status)}</dd><dt>Preview</dt><dd>${escapeHtml(review.previewAvailability)}</dd><dt>Terminal</dt><dd>${escapeHtml(review.terminalAvailability)}</dd><dt>Usage</dt><dd>${escapeHtml(usage)}</dd><dt>Environment</dt><dd>${escapeHtml(environmentName)}</dd><dt>Build</dt><dd>${escapeHtml(build)}</dd><dt>Runtime snapshot</dt><dd>${escapeHtml(snapshotLabel(review))}</dd><dt>Pull request</dt><dd>${publication}</dd><dt>Provenance</dt><dd>${escapeHtml(provenance)}</dd></dl><h2>Runs</h2><ul>${runRows}</ul><h2>Changes</h2>${textBlock(review.diff)}<h2>Verification</h2>${textBlock(review.verification)}<h2>Transcript</h2>${textBlock(review.transcript)}<h2>Artifacts</h2><ul>${artifactRows}</ul></main></body></html>`;
 }

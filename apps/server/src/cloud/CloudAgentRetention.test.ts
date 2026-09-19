@@ -159,6 +159,7 @@ function fixture(conversationRetentionDays = 0) {
         expiredSweeps += 1;
         return [] as ReadonlyArray<CloudRunResultId>;
       }),
+      attachProvenance: () => Effect.die("unused"),
     });
     const retention = yield* CloudAgentRetention.make().pipe(
       Effect.provideService(

@@ -18,6 +18,7 @@ import { randomUUID } from "../../lib/utils";
 import {
   cloudAgentStatusLabel,
   cloudDiffInspectionLabel,
+  cloudProvenanceLabel,
   cloudReviewActionLabel,
   cloudSessionAvailabilityLabel,
 } from "../../cloud/cloudAgentReviewPresentation";
@@ -163,6 +164,14 @@ export function CloudAgentReviewView(props: {
             ) : (
               review.publication.reason
             )}
+          </dd>
+        </div>
+        <div>
+          <dt className="text-muted-foreground">Provenance</dt>
+          <dd>
+            {review.publication.status === "present" && review.publication.provenance !== undefined
+              ? cloudProvenanceLabel(review.publication.provenance)
+              : "None"}
           </dd>
         </div>
       </dl>

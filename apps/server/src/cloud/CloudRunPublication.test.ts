@@ -12,6 +12,7 @@ import * as Schema from "effect/Schema";
 import * as ChildProcessSpawner from "effect/unstable/process/ChildProcessSpawner";
 
 import * as ProcessRunner from "../processRunner.ts";
+import * as CloudCommitSigner from "./CloudCommitSigner.ts";
 import * as CloudGitCredentials from "./CloudGitCredentials.ts";
 import { make } from "./CloudRunPublication.ts";
 
@@ -256,12 +257,16 @@ it.layer(NodeServices.layer)("CloudRunPublication", (it) => {
       syncPrivateGitDependencies: () =>
         Effect.die("private git deps should not run during publication"),
     });
+    const signer = yield* CloudCommitSigner.make({ keyRoot: path.join(root, "signing-keys") }).pipe(
+      Effect.provideService(ProcessRunner.ProcessRunner, runner),
+    );
     const publicationService = yield* make({
       publicationRoot: path.join(root, "publications"),
       readAllocation: () => Effect.succeed(allocation),
     }).pipe(
       Effect.provideService(ProcessRunner.ProcessRunner, runner),
       Effect.provideService(CloudGitCredentials.CloudGitCredentials, credentials),
+      Effect.provideService(CloudCommitSigner.CloudCommitSigner, signer),
     );
 
     return { fs, git, path, runner, workspace, request, publicationService, calls, state };
@@ -288,6 +293,8 @@ it.layer(NodeServices.layer)("CloudRunPublication", (it) => {
         "create-pr:Atheal9k/cloud-agents",
       ]);
       expect(yield* git(["log", "-1", "--pretty=%s"])).toBe("feat(cloud): publish retained work");
+      expect(record.provenance?.signature?.format).toBe("ssh");
+      expect(yield* git(["log", "-1", "--pretty=%b"])).toContain("T3-Cloud-Base:");
       expect(
         yield* publicationService.status(
           request.preparation.allocationId,
@@ -407,6 +414,10 @@ it.layer(NodeServices.layer)("CloudRunPublication", (it) => {
       expect(record.publications).toEqual([
         {
           repository: "acme/api",
+          provenance: expect.objectContaining({
+            repository: "acme/api",
+            signature: expect.objectContaining({ format: "ssh", algorithm: "ssh-ed25519" }),
+          }),
           outcome: expect.objectContaining({
             status: "published",
             pullRequestNumber: 7,

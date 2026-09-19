@@ -12,6 +12,7 @@ import {
   CloudRepositoryPreparationRecord,
   CloudRepositoryVerificationRecord,
 } from "./cloudRepository.ts";
+import { CloudCommitProvenance } from "./cloudCommitProvenance.ts";
 import { CloudResultManifest } from "./cloudResults.ts";
 
 export const CloudRunPublicationInput = Schema.Struct({
@@ -59,6 +60,13 @@ export const CloudRunPublicationOutcome = Schema.Union([
     failedAt: IsoDateTime,
   }),
   Schema.Struct({
+    status: Schema.Literal("signing-failed"),
+    commit: Schema.optionalKey(TrimmedNonEmptyString),
+    message: TrimmedNonEmptyString,
+    retryable: Schema.Boolean,
+    failedAt: IsoDateTime,
+  }),
+  Schema.Struct({
     status: Schema.Literal("published"),
     commit: TrimmedNonEmptyString,
     pullRequestNumber: Schema.Int,
@@ -77,6 +85,7 @@ export type CloudRunPublicationOutcome = typeof CloudRunPublicationOutcome.Type;
 export const CloudRunCoordinatedPublication = Schema.Struct({
   repository: TrimmedNonEmptyString,
   outcome: CloudRunPublicationOutcome,
+  provenance: Schema.optionalKey(CloudCommitProvenance),
 });
 export type CloudRunCoordinatedPublication = typeof CloudRunCoordinatedPublication.Type;
 
@@ -91,6 +100,7 @@ export const CloudRunPublicationRecord = Schema.Struct({
   resultId: CloudRunResultId,
   savedDiffPath: TrimmedNonEmptyString,
   outcome: CloudRunPublicationOutcome,
+  provenance: Schema.optionalKey(CloudCommitProvenance),
   /** One entry per additional repository that actually changed. */
   publications: Schema.optionalKey(Schema.Array(CloudRunCoordinatedPublication)),
 });

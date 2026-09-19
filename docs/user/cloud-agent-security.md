@@ -97,6 +97,17 @@ one's disk; the EC2 fallback has no per-guest key and the readiness screen says
 so. `T3CODE_CLOUD_PRIVACY_MODE=true` keeps prompts and diffs inside the
 environment.
 
+## Signed publication
+
+Trusted publication commits are signed with a per-service SSH key that lives on
+the controller, never in the guest. Set `T3CODE_CLOUD_KMS_KEY_ARN` so that key
+is KMS-wrapped at rest. Add the controller's SSH signing public key to GitHub,
+GitLab, Bitbucket, or Azure DevOps so those providers can verify the signature.
+Commit messages and pull request bodies include agent, run, environment
+version, Build, base, provider/model, and the triggering principal. They never
+include prompts or secrets. A remote branch that already moved is refused; the
+controller does not force-push.
+
 ## Repository access
 
 A run never gets access wider than the person who triggered it, the connected

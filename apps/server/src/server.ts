@@ -176,6 +176,7 @@ import * as CloudAgentReview from "./cloud/CloudAgentReview.ts";
 import * as CloudHandoff from "./cloud/CloudHandoff.ts";
 import * as CloudReadiness from "./cloud/CloudReadiness.ts";
 import * as CloudRunControl from "./cloud/CloudRunControl.ts";
+import * as CloudCommitSigner from "./cloud/CloudCommitSigner.ts";
 import * as CloudRunPublication from "./cloud/CloudRunPublication.ts";
 import * as CloudRunResults from "./cloud/CloudRunResults.ts";
 import * as ServerSelfUpdate from "./cloud/selfUpdate.ts";
@@ -360,8 +361,11 @@ const CloudEnvironmentBuildRunnerLayerLive = CloudEnvironmentBuildRunner.layer.p
 
 const CloudDiagnosticsCatalogLayerLive = CloudDiagnosticsCatalog.layer;
 
+const CloudCommitSignerLayerLive = CloudCommitSigner.layer.pipe(Layer.provide(ProcessRunner.layer));
+
 const CloudRunPublicationLayerLive = CloudRunPublication.layer.pipe(
   Layer.provide(ProcessRunner.layer),
+  Layer.provideMerge(CloudCommitSignerLayerLive),
   Layer.provideMerge(CloudGitCredentialsLayerLive),
   Layer.provideMerge(CloudAllocationControllerLayerLive),
 );

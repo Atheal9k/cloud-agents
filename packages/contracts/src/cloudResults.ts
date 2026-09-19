@@ -15,6 +15,7 @@ import {
   CloudProviderTurnInput,
   CloudProviderUnansweredRequestSeconds,
 } from "./cloudExecution.ts";
+import { CloudCommitProvenance } from "./cloudCommitProvenance.ts";
 import {
   CloudRepositoryPreparationRecord,
   CloudRepositoryVerificationRecord,
@@ -80,6 +81,7 @@ export const CloudResultManifest = Schema.Struct({
   verificationDownloadPath: TrimmedNonEmptyString,
   workspaceDownloadPath: TrimmedNonEmptyString,
   artifacts: Schema.Array(CloudResultArtifact),
+  provenance: Schema.optionalKey(CloudCommitProvenance),
   totalSizeBytes: NonNegativeInt,
   captureStartedAt: IsoDateTime,
   capturedAt: IsoDateTime,
