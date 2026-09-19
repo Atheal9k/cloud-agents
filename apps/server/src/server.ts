@@ -148,6 +148,7 @@ import {
 } from "./cloud/CloudAgentsApiHttp.ts";
 import * as CloudCollaboration from "./cloud/CloudCollaboration.ts";
 import { cloudCollaborationRouteLayer } from "./cloud/CloudCollaborationHttp.ts";
+import * as CloudGithubTriggers from "./cloud/CloudGithubTriggers.ts";
 import * as CloudSelfHosted from "./cloud/CloudSelfHosted.ts";
 import { cloudSelfHostedRouteLayer } from "./cloud/CloudSelfHostedHttp.ts";
 import * as CloudAllocationReconciler from "./cloud/CloudAllocationReconciler.ts";
@@ -719,7 +720,7 @@ export const makeRoutesLayer = Layer.mergeAll(
     cloudAgentReviewRouteLayer,
     cloudWorkerSessionRouteLayer,
     cloudAgentsApiRouteLayer,
-    cloudCollaborationRouteLayer,
+    cloudCollaborationRouteLayer.pipe(Layer.provide(CloudGithubTriggers.layer)),
     cloudSelfHostedRouteLayer,
     deviceHubProxyRouteLayer,
     previewGatewayBootstrapRouteLayer,
