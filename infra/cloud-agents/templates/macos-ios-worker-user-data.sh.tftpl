@@ -34,6 +34,43 @@ install -d -o cloudagent -g staff -m 0750 /etc/t3
 install -d -o cloudagent -g staff -m 0700 /var/lib/t3-worker
 install -d -o cloudagent -g staff -m 0700 /work
 
+install -d -o root -g staff -m 0750 /etc/t3
+metadata_base='http://169.254.169.254/latest'
+metadata_token="$(
+  curl --noproxy '*' --silent --show-error --fail --max-time 5 \
+    --request PUT \
+    --header 'X-aws-ec2-metadata-token-ttl-seconds: 60' \
+    "$${metadata_base}/api/token"
+)"
+allocation_id="$(
+  curl --noproxy '*' --silent --show-error --fail --max-time 5 \
+    --header "X-aws-ec2-metadata-token: $${metadata_token}" \
+    "$${metadata_base}/meta-data/tags/instance/CloudAgentAllocationId"
+)"
+attempt="$(
+  curl --noproxy '*' --silent --show-error --fail --max-time 5 \
+    --header "X-aws-ec2-metadata-token: $${metadata_token}" \
+    "$${metadata_base}/meta-data/tags/instance/CloudAgentAttempt"
+)"
+[[ "$${allocation_id}" =~ ^[A-Za-z0-9_-]{1,128}$ ]] || {
+  echo "cloud-agent bootstrap failed: allocation id tag is invalid" >&2
+  exit 1
+}
+[[ "$${attempt}" =~ ^[1-9][0-9]*$ ]] || {
+  echo "cloud-agent bootstrap failed: attempt tag is invalid" >&2
+  exit 1
+}
+cat >/etc/t3/worker.env <<ENV
+T3CODE_PORT=${service_port}
+T3CODE_DEVICE_DISPLAY_PLATFORM=ios
+T3CODE_DEVICE_DISPLAY_COMMAND=/opt/t3/bin/cloud-agent-device-display
+T3CODE_DEVICE_DISPLAY_PERMISSION_COMMAND=/opt/t3/bin/cloud-agent-device-display-permissions
+T3CODE_DEVICE_DISPLAY_THREAD_ID=thread-$${allocation_id}-$${attempt}
+T3CODE_DEVICE_DISPLAY_ATTEMPT_KEY=$${allocation_id}:$${attempt}
+ENV
+chown root:cloudagent /etc/t3/worker.env 2>/dev/null || chown root:staff /etc/t3/worker.env
+chmod 0640 /etc/t3/worker.env
+
 # Desktop/login session for Simulator. Without a console session simctl can
 # boot devices but GUI automation and screenshots fail. The authorized image
 # already completed first-login and Xcode license acceptance.

@@ -167,6 +167,9 @@ import * as CloudProviderExecution from "./cloud/CloudProviderExecution.ts";
 import * as SharedBrowserGateway from "./cloud/SharedBrowserGateway.ts";
 import * as SharedBrowserAgentHandoff from "./cloud/SharedBrowserAgentHandoff.ts";
 import * as SharedBrowserHost from "./cloud/SharedBrowserHost.ts";
+import * as DeviceDisplayHost from "./cloud/DeviceDisplayHost.ts";
+import * as DeviceDisplayGateway from "./cloud/DeviceDisplayGateway.ts";
+import { deviceDisplayProxyRouteLayer } from "./cloud/DeviceDisplayProxy.ts";
 import {
   sharedBrowserBootstrapRouteLayer,
   sharedBrowserProxyMiddlewareLayer,
@@ -631,6 +634,7 @@ const RuntimeCoreDependenciesBaseLive = ReactorLayerLive.pipe(
   Layer.provideMerge(AuthLayerLive),
   Layer.provideMerge(ServerSecretStore.layer),
   Layer.provideMerge(SharedBrowserHost.layer.pipe(Layer.provide(ProcessRunner.layer))),
+  Layer.provideMerge(DeviceDisplayHost.layer.pipe(Layer.provide(ProcessRunner.layer))),
   Layer.provideMerge(
     Layer.mergeAll(
       CloudCliTokenManager.layer.pipe(
@@ -696,9 +700,13 @@ const PreviewGatewayLayerLive = PreviewGateway.layer;
 const SharedBrowserGatewayLayerLive = SharedBrowserGateway.layer.pipe(
   Layer.provide(SharedBrowserAgentHandoff.layer),
 );
+const DeviceDisplayGatewayLayerLive = DeviceDisplayGateway.layer.pipe(
+  Layer.provide(SharedBrowserAgentHandoff.layer),
+);
 const BrowserGatewayLayersLive = Layer.mergeAll(
   PreviewGatewayLayerLive,
   SharedBrowserGatewayLayerLive,
+  DeviceDisplayGatewayLayerLive,
 );
 
 export const makeRoutesLayer = Layer.mergeAll(
@@ -722,6 +730,7 @@ export const makeRoutesLayer = Layer.mergeAll(
     cloudCollaborationRouteLayer,
     cloudSelfHostedRouteLayer,
     deviceHubProxyRouteLayer,
+    deviceDisplayProxyRouteLayer,
     previewGatewayBootstrapRouteLayer,
     sharedBrowserBootstrapRouteLayer,
     staticAndDevRouteLayer,

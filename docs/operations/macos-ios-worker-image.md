@@ -27,5 +27,7 @@ sudo IMAGE_VERSION=0.0.42-ca38.1 \
    and clean that UDID with `/opt/t3/bin/cloud-agent-ios-job-cleanup`. Cancelling
    a job does not release the Dedicated Host.
 
-Live Simulator display in the thread is CA-39. This image only needs a console
-session so `simctl` can boot, screenshot, and install.
+Live Simulator display in the thread is served through serve-sim on loopback
+and the worker's `/api/device-display` route. Linux DCV is not used. The
+thread preview selects the iOS device for this profile. The image still needs
+a console session so `simctl` can boot, screenshot, and install.
