@@ -33,6 +33,9 @@ it.layer(NodeServices.layer)("CloudRunPublication", (it) => {
     readonly verificationFailed?: boolean;
     readonly remoteCommit?: string | null;
     readonly losePrCreationResponse?: boolean;
+    readonly workspaceKind?: "scratch";
+    readonly scratchDraft?: { readonly name: string; readonly visibility: "private" | "internal" };
+    readonly extraRepository?: boolean;
   }) {
     const fs = yield* FileSystem.FileSystem;
     const path = yield* Path.Path;
@@ -69,6 +72,35 @@ it.layer(NodeServices.layer)("CloudRunPublication", (it) => {
     const baseCommit = yield* git(["rev-parse", "HEAD"]);
     yield* git(["switch", "-c", outputBranch]);
 
+    let additionalRepositories:
+      | Array<{ repository: string; baseCommit: string; branch: string }>
+      | undefined;
+    if (options?.extraRepository === true) {
+      const extraDir = path.join(root, "acme-api");
+      yield* fs.makeDirectory(extraDir, { recursive: true });
+      const extraGit = Effect.fn("CloudRunPublication.test.extraGit")(function* (
+        args: ReadonlyArray<string>,
+      ) {
+        const result = yield* runner
+          .run({ command: "git", args, cwd: extraDir })
+          .pipe(Effect.orDie);
+        expect(result.code).toBe(ChildProcessSpawner.ExitCode(0));
+        return result.stdout.trim();
+      });
+      yield* extraGit(["init", "--initial-branch=main"]);
+      yield* extraGit(["config", "user.name", "Publication Extra"]);
+      yield* extraGit(["config", "user.email", "publication-extra@example.test"]);
+      yield* fs.writeFileString(path.join(extraDir, "api.txt"), "base\n");
+      yield* extraGit(["add", "api.txt"]);
+      yield* extraGit(["commit", "-m", "base"]);
+      const extraBase = yield* extraGit(["rev-parse", "HEAD"]);
+      yield* extraGit(["switch", "-c", outputBranch]);
+      yield* fs.writeFileString(path.join(extraDir, "api.txt"), "changed\n");
+      additionalRepositories = [
+        { repository: "acme/api", baseCommit: extraBase, branch: outputBranch },
+      ];
+    }
+
     const publication =
       options?.publication === "review-only"
         ? ({ mode: "review-only" } as const)
@@ -82,9 +114,13 @@ it.layer(NodeServices.layer)("CloudRunPublication", (it) => {
       id: "allocation-publication-1",
       attempt: 1,
       target: {
-        repository: "Atheal9k/cloud-agents",
+        repository:
+          options?.workspaceKind === "scratch" ? "scratch/workspace" : "Atheal9k/cloud-agents",
         baseCommit,
         branch: outputBranch,
+        ...(options?.workspaceKind === undefined ? {} : { workspaceKind: options.workspaceKind }),
+        ...(options?.scratchDraft === undefined ? {} : { scratchDraft: options.scratchDraft }),
+        ...(additionalRepositories === undefined ? {} : { additionalRepositories }),
       },
       publication,
       profile: { id: "linux-web", os: "linux", arch: "x64", instanceType: "t3.medium" },
@@ -180,25 +216,37 @@ it.layer(NodeServices.layer)("CloudRunPublication", (it) => {
           calls.push("find-pr");
           return state.pullRequest;
         }),
-      push: () =>
+      push: (request) =>
         Effect.gen(function* () {
-          calls.push("push");
+          calls.push(`push:${request.repository}`);
           state.pushCount += 1;
-          state.remoteCommit = yield* git(["rev-parse", "HEAD"]);
+          if (request.repository === allocation.target.repository) {
+            state.remoteCommit = yield* git(["rev-parse", "HEAD"]);
+          }
         }),
-      createDraftPullRequest: () =>
+      createDraftPullRequest: (request) =>
         Effect.gen(function* () {
-          calls.push("create-pr");
+          calls.push(`create-pr:${request.repository}`);
           state.createCount += 1;
           const pullRequest = {
-            number: 42,
-            url: "https://github.com/Atheal9k/cloud-agents/pull/42",
+            number: request.repository === "acme/api" ? 7 : 42,
+            url: `https://github.com/${request.repository}/pull/${request.repository === "acme/api" ? 7 : 42}`,
           };
-          state.pullRequest = pullRequest;
-          if (options?.losePrCreationResponse === true) {
+          if (request.repository !== "acme/api") {
+            state.pullRequest = pullRequest;
+          }
+          if (options?.losePrCreationResponse === true && request.repository !== "acme/api") {
             return yield* credentialError("github-failed");
           }
           return pullRequest;
+        }),
+      createDraftRepository: (request) =>
+        Effect.sync(() => {
+          calls.push(`create-draft:${request.name}:${request.visibility}`);
+          return {
+            repository: `example/${request.name}`,
+            url: `https://github.com/example/${request.name}`,
+          };
         }),
       closePullRequest: () =>
         Effect.sync(() => {
@@ -216,7 +264,7 @@ it.layer(NodeServices.layer)("CloudRunPublication", (it) => {
       Effect.provideService(CloudGitCredentials.CloudGitCredentials, credentials),
     );
 
-    return { fs, git, path, workspace, request, publicationService, calls, state };
+    return { fs, git, path, runner, workspace, request, publicationService, calls, state };
   });
 
   it.effect("commits saved changes and publishes a draft PR from recorded intent", () =>
@@ -233,7 +281,12 @@ it.layer(NodeServices.layer)("CloudRunPublication", (it) => {
       });
       expect(record.savedDiffPath).toBe(request.result.diffDownloadPath);
       expect(record.verification).toEqual(request.verification);
-      expect(calls).toEqual(["read-branch", "find-pr", "push", "create-pr"]);
+      expect(calls).toEqual([
+        "read-branch",
+        "find-pr",
+        "push:Atheal9k/cloud-agents",
+        "create-pr:Atheal9k/cloud-agents",
+      ]);
       expect(yield* git(["log", "-1", "--pretty=%s"])).toBe("feat(cloud): publish retained work");
       expect(
         yield* publicationService.status(
@@ -325,11 +378,70 @@ it.layer(NodeServices.layer)("CloudRunPublication", (it) => {
       expect(fixtureValue.calls).toEqual([
         "read-branch",
         "find-pr",
-        "push",
-        "create-pr",
+        "push:Atheal9k/cloud-agents",
+        "create-pr:Atheal9k/cloud-agents",
         "read-branch",
         "find-pr",
       ]);
+    }),
+  );
+
+  it.effect("opens coordinated extra-repo PRs after committing sibling changes", () =>
+    Effect.gen(function* () {
+      const context = yield* fixture({ extraRepository: true });
+      yield* context.fs.writeFileString(
+        context.path.join(context.workspace, "tracked.txt"),
+        "published\n",
+      );
+
+      const record = yield* context.publicationService.finalize(context.request);
+      const extraLog = yield* context.runner
+        .run({
+          command: "git",
+          args: ["log", "-1", "--pretty=%s"],
+          cwd: context.path.join(context.path.dirname(context.workspace), "acme-api"),
+        })
+        .pipe(Effect.orDie);
+
+      expect(record.outcome.status).toBe("published");
+      expect(record.publications).toEqual([
+        {
+          repository: "acme/api",
+          outcome: expect.objectContaining({
+            status: "published",
+            pullRequestNumber: 7,
+            pullRequestUrl: "https://github.com/acme/api/pull/7",
+          }),
+        },
+      ]);
+      expect(context.calls).toEqual([
+        "push:acme/api",
+        "create-pr:acme/api",
+        "read-branch",
+        "find-pr",
+        "push:Atheal9k/cloud-agents",
+        "create-pr:Atheal9k/cloud-agents",
+      ]);
+      expect(extraLog.stdout.trim()).toBe("feat(cloud): publish retained work");
+    }),
+  );
+
+  it.effect("creates a scratch draft repository and keeps publication review-only", () =>
+    Effect.gen(function* () {
+      const context = yield* fixture({
+        workspaceKind: "scratch",
+        scratchDraft: { name: "demo-app", visibility: "private" },
+      });
+      yield* context.fs.writeFileString(
+        context.path.join(context.workspace, "tracked.txt"),
+        "from scratch\n",
+      );
+
+      const record = yield* context.publicationService.finalize(context.request);
+
+      expect(record.outcome.status).toBe("review-only");
+      expect(context.calls).toEqual(["create-draft:demo-app:private"]);
+      expect(record.publications).toBeUndefined();
     }),
   );
 });

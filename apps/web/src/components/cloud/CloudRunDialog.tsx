@@ -11,6 +11,7 @@ import {
   type CloudEnvironmentBuild,
   CloudEnvironmentBuildId,
   CloudAgentId,
+  CLOUD_SCRATCH_WORKSPACE_REPOSITORY,
   type CloudEnvironmentVersion,
   isAppleSiliconMacInstanceType,
   isAndroidAcceleratedInstanceType,
@@ -709,18 +710,42 @@ function CloudRunDialogForEnvironment(props: {
                       aria-label="Project"
                       className={selectClassName}
                       value={draft.repository}
-                      onChange={(event) =>
-                        setDraft((current) => ({ ...current, repository: event.target.value }))
-                      }
+                      onChange={(event) => {
+                        const repository = event.target.value;
+                        const environment = snapshot?.environments?.find((candidate) =>
+                          candidate.current.repositories.some(
+                            (entry) => entry.repository === repository,
+                          ),
+                        );
+                        const additionalRepositories = (environment?.current.repositories ?? [])
+                          .map((entry) => entry.repository)
+                          .filter((entry) => entry !== repository);
+                        setDraft((current) => ({
+                          ...current,
+                          repository,
+                          additionalRepositories,
+                          ...(repository === CLOUD_SCRATCH_WORKSPACE_REPOSITORY
+                            ? { publication: "review-only" as const }
+                            : {}),
+                        }));
+                      }}
                     >
                       <option value="">Select a linked GitHub project</option>
+                      <option value={CLOUD_SCRATCH_WORKSPACE_REPOSITORY}>Start from scratch</option>
                       {projectOptions.map((project) => (
                         <option key={project.repository} value={project.repository}>
                           {project.title} · {project.repository}
                         </option>
                       ))}
                     </select>
-                    {projectOptions.length === 0 ? (
+                    {draft.repository === CLOUD_SCRATCH_WORKSPACE_REPOSITORY ? (
+                      <span className="text-xs text-muted-foreground">
+                        Starts in an isolated workspace. Create a draft repository through GitHub,
+                        GitLab, Bitbucket, or Azure DevOps when the work is ready. Port forwarding
+                        and Design Mode use the same preview lease as other runs; deploy waits for
+                        that draft repository.
+                      </span>
+                    ) : projectOptions.length === 0 ? (
                       <span className="text-xs text-muted-foreground">
                         Add a project from a GitHub repository or Git URL first.
                       </span>

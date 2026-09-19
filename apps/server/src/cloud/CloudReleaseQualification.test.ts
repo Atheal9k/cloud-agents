@@ -161,6 +161,11 @@ it.layer(TestLayer)("cloud release qualification", (it) => {
               };
               return pullRequest;
             }),
+          createDraftRepository: () =>
+            Effect.succeed({
+              repository: "example/from-scratch",
+              url: "https://github.com/example/from-scratch",
+            }),
           closePullRequest: () =>
             Effect.sync(() => {
               pullRequest = null;

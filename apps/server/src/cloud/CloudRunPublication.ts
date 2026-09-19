@@ -5,9 +5,11 @@ import {
   CloudRunPublicationRecord,
   type CloudRunPublicationInput,
   type CloudRepositoryVerificationRecord,
+  type CloudRunPublicationOutcome,
   type RunAllocation,
   type RunAllocationAttempt,
   type RunAllocationId,
+  cloudWorkspaceRepositorySegment,
 } from "@t3tools/contracts";
 import * as Context from "effect/Context";
 import * as DateTime from "effect/DateTime";
@@ -213,10 +215,12 @@ export const make = Effect.fn("CloudRunPublication.make")(function* (
       result.attempt === allocation.attempt &&
       result.baseCommit === preparation.resolvedCommit &&
       result.outputBranch === preparation.outputBranch;
+    const scratch = allocation.target.workspaceKind === "scratch";
     const intentMatches =
-      allocation.target.repository === preparation.repository &&
-      allocation.target.baseCommit === preparation.resolvedCommit &&
-      allocation.target.branch === preparation.outputBranch;
+      scratch ||
+      (allocation.target.repository === preparation.repository &&
+        allocation.target.baseCommit === preparation.resolvedCommit &&
+        allocation.target.branch === preparation.outputBranch);
     if (!recordsMatch || !intentMatches) {
       return yield* publicationError({
         reason: "recorded-intent-mismatch",
@@ -228,11 +232,13 @@ export const make = Effect.fn("CloudRunPublication.make")(function* (
     return allocation;
   });
 
-  const prepareCommit = Effect.fn("CloudRunPublication.prepareCommit")(function* (
-    allocation: RunAllocation,
-    request: CloudRunPublicationInput,
-  ) {
-    const workspace = yield* fs.realPath(request.preparation.workspacePath).pipe(
+  const prepareCommit = Effect.fn("CloudRunPublication.prepareCommit")(function* (input: {
+    readonly workspacePath: string;
+    readonly branch: string;
+    readonly baseCommit: string;
+    readonly commitMessage: string;
+  }) {
+    const workspace = yield* fs.realPath(input.workspacePath).pipe(
       Effect.mapError(() =>
         publicationError({
           reason: "invalid-workspace",
@@ -267,7 +273,7 @@ export const make = Effect.fn("CloudRunPublication.make")(function* (
       ["branch", "--show-current"],
       "The prepared publication branch could not be read.",
     );
-    if (branch !== allocation.target.branch) {
+    if (branch !== input.branch) {
       return yield* publicationError({
         reason: "recorded-intent-mismatch",
         message: "The workspace branch does not match the recorded publication branch.",
@@ -276,10 +282,10 @@ export const make = Effect.fn("CloudRunPublication.make")(function* (
     }
     const resolvedBase = yield* gitOutput(
       workspace,
-      ["rev-parse", "--verify", `${allocation.target.baseCommit}^{commit}`],
+      ["rev-parse", "--verify", `${input.baseCommit}^{commit}`],
       "The recorded publication base commit is not present in the workspace.",
     );
-    if (resolvedBase !== allocation.target.baseCommit) {
+    if (resolvedBase !== input.baseCommit) {
       return yield* publicationError({
         reason: "recorded-intent-mismatch",
         message: "The workspace resolved a different publication base commit.",
@@ -288,7 +294,7 @@ export const make = Effect.fn("CloudRunPublication.make")(function* (
     }
     const ancestry = yield* git({
       cwd: workspace,
-      args: ["merge-base", "--is-ancestor", allocation.target.baseCommit, "HEAD"],
+      args: ["merge-base", "--is-ancestor", input.baseCommit, "HEAD"],
     });
     if (ancestry.code !== ChildProcessSpawner.ExitCode(0)) {
       return yield* publicationError({
@@ -300,7 +306,7 @@ export const make = Effect.fn("CloudRunPublication.make")(function* (
 
     const [status, diff] = yield* Effect.all([
       git({ cwd: workspace, args: ["status", "--porcelain=v1", "-z", "--untracked-files=all"] }),
-      git({ cwd: workspace, args: ["diff", "--quiet", allocation.target.baseCommit, "--", "."] }),
+      git({ cwd: workspace, args: ["diff", "--quiet", input.baseCommit, "--", "."] }),
     ]);
     if (status.code !== ChildProcessSpawner.ExitCode(0)) {
       return yield* publicationError({
@@ -346,10 +352,7 @@ export const make = Effect.fn("CloudRunPublication.make")(function* (
       const committed = yield* git({
         cwd: workspace,
         args: [...trustedConfig, "commit", "--no-verify", "--file", "-"],
-        stdin:
-          allocation.publication.mode === "automatic-draft-pr"
-            ? `${allocation.publication.title}\n`
-            : "Cloud run changes\n",
+        stdin: `${input.commitMessage}\n`,
       });
       if (committed.code !== ChildProcessSpawner.ExitCode(0)) {
         return yield* publicationError({
@@ -386,6 +389,21 @@ export const make = Effect.fn("CloudRunPublication.make")(function* (
       savedDiffPath: request.result.diffDownloadPath,
     };
     const completedAt = DateTime.formatIso(yield* DateTime.now);
+    if (allocation.target.workspaceKind === "scratch") {
+      if (allocation.target.scratchDraft !== undefined) {
+        yield* credentials
+          .createDraftRepository({
+            runId: `${allocation.id}:${allocation.attempt}`,
+            name: allocation.target.scratchDraft.name,
+            visibility: allocation.target.scratchDraft.visibility,
+          })
+          .pipe(Effect.ignore);
+      }
+      return yield* writeRecord({
+        ...common,
+        outcome: { status: "review-only", completedAt },
+      });
+    }
     if (allocation.publication.mode === "review-only") {
       return yield* writeRecord({
         ...common,
@@ -398,17 +416,104 @@ export const make = Effect.fn("CloudRunPublication.make")(function* (
         outcome: { status: "verification-failed", completedAt },
       });
     }
-    const commit = yield* prepareCommit(allocation, request);
+    const additionalPublications: Array<{
+      readonly repository: string;
+      readonly outcome: CloudRunPublicationOutcome;
+    }> = [];
+    if (
+      allocation.publication.mode === "automatic-draft-pr" &&
+      (allocation.target.additionalRepositories ?? []).length > 0
+    ) {
+      const runId = `${allocation.id}:${allocation.attempt}`;
+      for (const extra of allocation.target.additionalRepositories ?? []) {
+        const sibling = path.join(
+          path.dirname(request.preparation.workspacePath),
+          cloudWorkspaceRepositorySegment(extra.repository),
+        );
+        const exists = yield* fs.exists(sibling).pipe(Effect.orElseSucceed(() => false));
+        if (!exists) continue;
+        const extraCommit = yield* prepareCommit({
+          workspacePath: sibling,
+          branch: extra.branch,
+          baseCommit: extra.baseCommit,
+          commitMessage: allocation.publication.title,
+        });
+        if (extraCommit === null) continue;
+        const pushed = yield* credentials
+          .push({
+            runId,
+            repository: extra.repository,
+            branch: extra.branch,
+            cwd: sibling,
+          })
+          .pipe(Effect.result);
+        if (Result.isFailure(pushed)) {
+          additionalPublications.push({
+            repository: extra.repository,
+            outcome: {
+              status: pushed.failure.reason === "push-rejected" ? "push-rejected" : "push-failed",
+              commit: extraCommit,
+              message: pushed.failure.message,
+              failedAt: completedAt,
+            },
+          });
+          continue;
+        }
+        const created = yield* credentials
+          .createDraftPullRequest({
+            runId,
+            repository: extra.repository,
+            base: allocation.publication.baseBranch,
+            head: extra.branch,
+            title: allocation.publication.title,
+            body: allocation.publication.body,
+            ...(allocation.publication.skipReviewerRequest === true
+              ? { skipReviewerRequest: true }
+              : {}),
+          })
+          .pipe(Effect.result);
+        additionalPublications.push({
+          repository: extra.repository,
+          outcome: Result.isFailure(created)
+            ? {
+                status: "pr-creation-failed",
+                commit: extraCommit,
+                message: created.failure.message,
+                failedAt: completedAt,
+              }
+            : {
+                status: "published",
+                commit: extraCommit,
+                pullRequestNumber: created.success.number,
+                pullRequestUrl: created.success.url,
+                publishedAt: completedAt,
+              },
+        });
+      }
+    }
+    const recorded = {
+      ...common,
+      ...(additionalPublications.length === 0 ? {} : { publications: additionalPublications }),
+    };
+    const commit = yield* prepareCommit({
+      workspacePath: request.preparation.workspacePath,
+      branch: allocation.target.branch,
+      baseCommit: allocation.target.baseCommit,
+      commitMessage:
+        allocation.publication.mode === "automatic-draft-pr"
+          ? allocation.publication.title
+          : "Cloud run changes",
+    });
     if (commit === null) {
       return yield* writeRecord({
-        ...common,
+        ...recorded,
         outcome: { status: "empty-change", completedAt },
       });
     }
 
     const runId = `${allocation.id}:${allocation.attempt}`;
     yield* writeRecord({
-      ...common,
+      ...recorded,
       outcome: { status: "publishing", commit, startedAt: completedAt },
     });
 
@@ -421,7 +526,7 @@ export const make = Effect.fn("CloudRunPublication.make")(function* (
       .pipe(Effect.result);
     if (Result.isFailure(remoteResult)) {
       return yield* writeRecord({
-        ...common,
+        ...recorded,
         outcome: {
           status: "push-failed",
           commit,
@@ -440,7 +545,7 @@ export const make = Effect.fn("CloudRunPublication.make")(function* (
       .pipe(Effect.result);
     if (Result.isFailure(pullRequestResult)) {
       return yield* writeRecord({
-        ...common,
+        ...recorded,
         outcome: {
           status: "pr-creation-failed",
           commit,
@@ -453,7 +558,7 @@ export const make = Effect.fn("CloudRunPublication.make")(function* (
     const pullRequest = pullRequestResult.success;
     if (remoteCommit !== null && remoteCommit !== commit) {
       return yield* writeRecord({
-        ...common,
+        ...recorded,
         outcome: {
           status: "push-rejected",
           commit,
@@ -466,7 +571,7 @@ export const make = Effect.fn("CloudRunPublication.make")(function* (
     }
     if (pullRequest !== null && remoteCommit === commit) {
       return yield* writeRecord({
-        ...common,
+        ...recorded,
         outcome: {
           status: "published",
           commit,
@@ -488,7 +593,7 @@ export const make = Effect.fn("CloudRunPublication.make")(function* (
       if (Result.isFailure(pushed)) {
         const rejected = pushed.failure.reason === "push-rejected";
         return yield* writeRecord({
-          ...common,
+          ...recorded,
           outcome: {
             status: rejected ? "push-rejected" : "push-failed",
             commit,
@@ -499,7 +604,7 @@ export const make = Effect.fn("CloudRunPublication.make")(function* (
       }
       if (pullRequest !== null) {
         return yield* writeRecord({
-          ...common,
+          ...recorded,
           outcome: {
             status: "published",
             commit,
@@ -526,7 +631,7 @@ export const make = Effect.fn("CloudRunPublication.make")(function* (
       .pipe(Effect.result);
     if (Result.isFailure(created)) {
       return yield* writeRecord({
-        ...common,
+        ...recorded,
         outcome: {
           status: "pr-creation-failed",
           commit,
@@ -536,7 +641,7 @@ export const make = Effect.fn("CloudRunPublication.make")(function* (
       });
     }
     return yield* writeRecord({
-      ...common,
+      ...recorded,
       outcome: {
         status: "published",
         commit,

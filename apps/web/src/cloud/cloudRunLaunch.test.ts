@@ -30,6 +30,7 @@ const limits: CloudAllocationLimits = {
 
 const draft: CloudRunLaunchDraft = {
   repository: "Atheal9k/cloud-agents",
+  additionalRepositories: [],
   selectedRef: "main",
   task: "Fix the flaky test",
   providerInstanceId: "codex",
@@ -86,9 +87,45 @@ describe("cloud run launch", () => {
   it("starts new cloud threads with the requested defaults", () => {
     expect(createInitialCloudRunDraft(null, [], "pingdotgg/t3code")).toMatchObject({
       repository: "pingdotgg/t3code",
+      additionalRepositories: [],
       runtimeMode: "full-access",
       runMinutes: "4320",
       publication: "automatic-draft-pr",
+    });
+  });
+
+  it("launches start-from-scratch without a source-control checkout", () => {
+    const command = buildCloudRunLaunchCommand({
+      draft: {
+        ...draft,
+        repository: "scratch/workspace",
+        publication: "review-only",
+      },
+      limits,
+      now: new Date("2026-09-19T12:00:00.000Z"),
+      requestId: "scratch-1",
+    });
+    expect(command.status).toBe("valid");
+    if (command.status !== "valid") return;
+    expect(command.command).toMatchObject({
+      type: "allocation.launch",
+      target: { repository: "scratch/workspace", workspaceKind: "scratch" },
+      publication: { mode: "review-only" },
+    });
+  });
+
+  it("attaches additional repositories so one launch can open coordinated PRs", () => {
+    const command = buildCloudRunLaunchCommand({
+      draft: { ...draft, additionalRepositories: ["acme/api"] },
+      limits,
+      now: new Date("2026-09-19T12:00:00.000Z"),
+      requestId: "multi-1",
+    });
+    expect(command.status).toBe("valid");
+    if (command.status !== "valid") return;
+    expect(command.command.type === "allocation.launch" && command.command.target).toMatchObject({
+      repository: "Atheal9k/cloud-agents",
+      additionalRepositories: [{ repository: "acme/api" }],
     });
   });
 
@@ -194,7 +231,13 @@ describe("cloud run launch", () => {
 
     expect(setup.task).toContain("env-setup");
     expect(result.status).toBe("valid");
-    if (result.status !== "valid" || result.command.type !== "allocation.launch") return;
+    if (
+      result.status !== "valid" ||
+      result.command.type !== "allocation.launch" ||
+      result.command.execution === undefined
+    ) {
+      return;
+    }
     expect(result.command.execution.turn.prompt).toBe(setup.task);
   });
 

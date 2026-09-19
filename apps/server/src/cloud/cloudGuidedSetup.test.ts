@@ -65,6 +65,19 @@ describe("cloudGuidedSetupSaveInput", () => {
     expect(save.config).not.toHaveProperty("start");
   });
 
+  it("keeps additional repositories on the saved environment version", () => {
+    const save = cloudGuidedSetupSaveInput(
+      input({
+        additionalRepositories: [{ repository: "t3tools/api", defaultRef: "main" }],
+      }),
+    );
+
+    expect(save.repositories).toEqual([
+      { repository: "t3tools/t3code", defaultRef: "main" },
+      { repository: "t3tools/api", defaultRef: "main" },
+    ]);
+  });
+
   it("does not require an owner for the default scope", () => {
     const save = cloudGuidedSetupSaveInput(input({ scope: "default", owner: undefined }));
 

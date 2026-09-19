@@ -1,6 +1,7 @@
 import {
   CloudAgentId,
   CLOUD_ENV_SETUP_USER_REQUEST,
+  CLOUD_SCRATCH_WORKSPACE_REPOSITORY,
   CloudProviderUnansweredRequestSeconds,
   CloudRunId,
   CommandId,
@@ -25,6 +26,7 @@ import type { ProviderInstanceEntry } from "../providerInstances";
 
 export interface CloudRunLaunchDraft {
   readonly repository: string;
+  readonly additionalRepositories: ReadonlyArray<string>;
   readonly selectedRef: string;
   readonly task: string;
   readonly providerInstanceId: string;
@@ -98,6 +100,7 @@ export function createInitialCloudRunDraft(
   const ref = defaults?.ref ?? "main";
   return {
     repository: repository === "" ? (defaults?.repository ?? "") : repository,
+    additionalRepositories: [],
     selectedRef: ref,
     task: "",
     providerInstanceId: provider?.instanceId ?? "",
@@ -155,8 +158,14 @@ export function buildCloudRunLaunchCommand(input: {
   readonly requestId: string;
 }): CloudRunLaunchValidation {
   const task = input.draft.task.trim();
+  const scratch = input.draft.repository.trim() === CLOUD_SCRATCH_WORKSPACE_REPOSITORY;
   const repository = input.draft.repository.trim();
-  const selectedRef = input.draft.selectedRef.trim();
+  const additionalRepositories = input.draft.additionalRepositories
+    .map((entry) => entry.trim())
+    .filter((entry) => entry.length > 0 && entry !== repository);
+  const selectedRef = scratch
+    ? input.draft.selectedRef.trim() || "main"
+    : input.draft.selectedRef.trim();
   const providerInstanceId = input.draft.providerInstanceId.trim();
   const model = input.draft.model.trim();
   const baseBranch = input.draft.baseBranch.trim();
@@ -164,13 +173,25 @@ export function buildCloudRunLaunchCommand(input: {
   const inputWaitMinutes = minutes(input.draft.inputWaitMinutes);
 
   if (repository.length === 0) {
-    return { status: "invalid", message: "Choose a project linked to a source-control repository." };
+    return {
+      status: "invalid",
+      message: "Choose a project linked to a source-control repository.",
+    };
   }
-  if (repository.includes(" ") || repository.includes("..")) {
+  if (!scratch && (repository.includes(" ") || repository.includes(".."))) {
     return { status: "invalid", message: "Repository must be a source-control path." };
   }
-  if (selectedRef.length === 0) {
+  if (!scratch && selectedRef.length === 0) {
     return { status: "invalid", message: "Choose a branch, tag, or commit to start from." };
+  }
+  if (scratch && input.draft.publication === "automatic-draft-pr") {
+    return {
+      status: "invalid",
+      message: "Create a draft repository before opening pull requests from scratch.",
+    };
+  }
+  if (additionalRepositories.length > 0 && input.draft.publication === "automatic-draft-pr") {
+    // Coordinated PRs still use the same draft-PR intent; the controller publishes each changed repo.
   }
   if (task.length === 0) {
     return { status: "invalid", message: "Describe the task before launching." };
@@ -241,7 +262,17 @@ export function buildCloudRunLaunchCommand(input: {
       target: {
         repository,
         baseCommit: selectedRef,
-        branch,
+        branch: scratch ? "main" : branch,
+        ...(scratch ? { workspaceKind: "scratch" as const } : {}),
+        ...(additionalRepositories.length === 0
+          ? {}
+          : {
+              additionalRepositories: additionalRepositories.map((entry) => ({
+                repository: entry,
+                baseCommit: selectedRef,
+                branch,
+              })),
+            }),
       },
       publication,
       control: {

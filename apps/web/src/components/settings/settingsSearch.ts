@@ -717,7 +717,7 @@ export const SETTINGS_SEARCH_ITEMS = [
     title: "Cloud environments and Builds",
     to: "/settings/cloud-agents",
     searchTerms: [
-      "environment build snapshot stale threshold egress secrets env-setup agent setup activate",
+      "environment build snapshot stale threshold egress secrets env-setup agent setup activate multi-repo additional repositories start from scratch",
     ],
   },
   {

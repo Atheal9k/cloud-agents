@@ -524,37 +524,43 @@ export const make = Effect.fn("CloudAgentsApi.make")(function* () {
       const messageId = MessageId.make(`msg-${NodeCrypto.randomUUID()}`);
       const threadId = ThreadId.make(`thread-${agentId}`);
       const title = titleFromPrompt(input.body.prompt.text, input.body.name);
-      const repo = input.body.repos?.[0];
-      const parsedRepo = repo === undefined ? undefined : parseRepositoryUrl(repo.url);
-      if (repo !== undefined && parsedRepo === undefined) {
+      const repos = input.body.repos ?? [];
+      const parsedRepos = repos.flatMap((candidate) => {
+        const parsed = parseRepositoryUrl(candidate.url);
+        return parsed === undefined ? [] : [{ input: candidate, parsed }];
+      });
+      if (repos.length > 0 && parsedRepos.length !== repos.length) {
+        const bad = repos.find((candidate) => parseRepositoryUrl(candidate.url) === undefined);
         return yield* Effect.fail(
-          apiError("invalid_request", `Unsupported repository URL '${repo.url}'.`),
+          apiError("invalid_request", `Unsupported repository URL '${bad?.url ?? ""}'.`),
         );
       }
       if (collaboration !== undefined) {
-        const configured = (input.body.repos ?? []).flatMap((candidate) => {
-          const parsed = parseRepositoryUrl(candidate.url);
-          return parsed === undefined ? [] : [parsed.ownerName];
-        });
-        for (const candidate of input.body.repos ?? []) {
-          const parsed = parseRepositoryUrl(candidate.url);
-          if (parsed === undefined) continue;
+        const configured = parsedRepos.map((candidate) => candidate.parsed.ownerName);
+        for (const candidate of parsedRepos) {
           yield* collaboration
             .authorizeRepository({
-              repository: parsed.ownerName,
+              repository: candidate.parsed.ownerName,
               actorRepositories: [],
               configuredRepositories: configured,
             })
             .pipe(Effect.mapError(mapCollaborationFailure));
         }
       }
-      const repository = parsedRepo?.ownerName ?? defaults.repository ?? "local/none";
-      const selectedRef = repo?.startingRef ?? defaults.ref ?? "main";
+      const scratchRequested =
+        input.body.scratch !== undefined ||
+        (repos.length === 0 &&
+          (defaults.repository === undefined || defaults.repository.length === 0));
+      const primaryRepo = parsedRepos[0];
+      const repository = scratchRequested
+        ? "scratch/workspace"
+        : (primaryRepo?.parsed.ownerName ?? defaults.repository ?? "scratch/workspace");
+      const selectedRef = primaryRepo?.input.startingRef ?? defaults.ref ?? "main";
       const plan = resolveCloudBranchPlan({
         agentId,
         startingRef: selectedRef,
         currentBranch: selectedRef,
-        ...(repo?.prUrl === undefined ? {} : { prUrl: repo.prUrl }),
+        ...(primaryRepo?.input.prUrl === undefined ? {} : { prUrl: primaryRepo.input.prUrl }),
         ...(input.body.workOnCurrentBranch === undefined
           ? {}
           : { workOnCurrentBranch: input.body.workOnCurrentBranch }),
@@ -585,16 +591,42 @@ export const make = Effect.fn("CloudAgentsApi.make")(function* () {
           allocationId,
           attempt: RunAllocationAttempt.make(1),
           occurredAt,
-          target: { repository, baseCommit: selectedRef, branch },
-          publication: plan.autoCreatePR
-            ? {
-                mode: "automatic-draft-pr",
-                baseBranch: selectedRef,
-                title,
-                body: "Started from the Cloud Agents API.",
-                ...(plan.skipReviewerRequest ? { skipReviewerRequest: true } : {}),
-              }
-            : { mode: "review-only" },
+          target: {
+            repository,
+            baseCommit: selectedRef,
+            branch,
+            ...(scratchRequested ? { workspaceKind: "scratch" as const } : {}),
+            ...(input.body.scratch?.name === undefined
+              ? {}
+              : {
+                  scratchDraft: {
+                    name: input.body.scratch.name,
+                    visibility: input.body.scratch.visibility ?? "private",
+                  },
+                }),
+            ...(parsedRepos.length > 1
+              ? {
+                  additionalRepositories: parsedRepos.slice(1).map((candidate) => ({
+                    repository: candidate.parsed.ownerName,
+                    baseCommit: candidate.input.startingRef ?? selectedRef,
+                    branch:
+                      plan.branch === selectedRef
+                        ? (candidate.input.startingRef ?? selectedRef)
+                        : plan.branch,
+                  })),
+                }
+              : {}),
+          },
+          publication:
+            plan.autoCreatePR && !scratchRequested
+              ? {
+                  mode: "automatic-draft-pr",
+                  baseBranch: selectedRef,
+                  title,
+                  body: "Started from the Cloud Agents API.",
+                  ...(plan.skipReviewerRequest ? { skipReviewerRequest: true } : {}),
+                }
+              : { mode: "review-only" },
           control: { agentId, runId },
           execution: {
             threadId,
@@ -628,7 +660,12 @@ export const make = Effect.fn("CloudAgentsApi.make")(function* () {
           profile:
             env.type === "cloud"
               ? { id: "linux-web", os: "linux", arch: "x64", instanceType }
-              : { id: SELF_HOSTED_WORKER_PROFILE_ID, os: "linux", arch: "x64", instanceType: "self-hosted" },
+              : {
+                  id: SELF_HOSTED_WORKER_PROFILE_ID,
+                  os: "linux",
+                  arch: "x64",
+                  instanceType: "self-hosted",
+                },
           principal: principalFromApiKey(input.principal),
           deadlines: {
             launchBy: deadline(startedAt, Math.min(120, runSeconds)),
@@ -676,7 +713,7 @@ export const make = Effect.fn("CloudAgentsApi.make")(function* () {
       const nowMs = Date.parse(occurredAt);
       yield* seedStatus(run, Number.isFinite(nowMs) ? nowMs : epochNowMs());
       if (selfHosted !== undefined && env.type !== "cloud") {
-        const [repoOwner, repoName] = (parsedRepo?.ownerName ?? "").split("/");
+        const [repoOwner, repoName] = (primaryRepo?.parsed.ownerName ?? "").split("/");
         yield* selfHosted
           .enqueue({
             id: agentId,
@@ -685,7 +722,7 @@ export const make = Effect.fn("CloudAgentsApi.make")(function* () {
             ...(env.name === undefined ? {} : { poolName: env.name }),
             ...(repoOwner === undefined || repoOwner.length === 0 ? {} : { repoOwner }),
             ...(repoName === undefined || repoName.length === 0 ? {} : { repoName }),
-            ...(repo?.url === undefined ? {} : { repoUrl: repo.url }),
+            ...(primaryRepo?.input.url === undefined ? {} : { repoUrl: primaryRepo.input.url }),
           })
           .pipe(
             Effect.mapError((error) =>

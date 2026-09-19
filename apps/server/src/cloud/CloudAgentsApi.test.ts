@@ -177,3 +177,22 @@ it.effect("refuses a pool target while self-hosted machines are off", () =>
     expect(denied.code).toBe("self_hosted_disabled");
   }).pipe(Effect.provide(live)),
 );
+
+it.effect("starts a no-repository agent from scratch", () =>
+  Effect.gen(function* () {
+    const keys = yield* CloudAgentsApiKeys.CloudAgentsApiKeys;
+    const api = yield* CloudAgentsApi.CloudAgentsApi;
+    const user = yield* keys.create({ name: "Scratch key", kind: "user" });
+    const principal = (yield* keys.authenticate(user.token))!;
+    const created = yield* api.createAgent({
+      principal,
+      urlOrigin: "http://localhost",
+      body: {
+        prompt: { text: "Build a demo from scratch" },
+        scratch: { name: "demo-app", visibility: "private" },
+      },
+    });
+    expect(created.agent.repos).toBeUndefined();
+    expect(created.run.status).toBe("CREATING");
+  }).pipe(Effect.provide(live)),
+);

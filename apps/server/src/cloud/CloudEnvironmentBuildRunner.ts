@@ -439,7 +439,7 @@ export const make = Effect.fn("CloudEnvironmentBuildRunner.make")(function* (inp
     request.timings.clone = timing(cloneStartedAt, yield* now);
 
     const primary = request.gitSetup[0];
-    if (primary === undefined) {
+    if (primary === undefined && request.version.repositories.length > 0) {
       return yield* stageFailed("clone", "The environment has no repository to prepare.");
     }
 
@@ -448,7 +448,10 @@ export const make = Effect.fn("CloudEnvironmentBuildRunner.make")(function* (inp
       const installStartedAt = yield* now;
       yield* runInstall({
         buildId: request.buildId,
-        cwd: path.join(buildDirectory, workspaceSegment(primary.repository)),
+        cwd:
+          primary === undefined
+            ? buildDirectory
+            : path.join(buildDirectory, workspaceSegment(primary.repository)),
         install,
         secretEnv: request.secretEnv,
         redact: request.redact,
