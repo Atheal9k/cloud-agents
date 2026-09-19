@@ -31,6 +31,7 @@ import { CloudEnvironment, CloudEnvironmentVersionReference } from "./cloudEnvir
 import { CloudEnvironmentBuild, CloudEnvironmentBuildReference } from "./cloudEnvironmentBuild.ts";
 import { CloudMacHost } from "./cloudMacIos.ts";
 import { CloudScmScope } from "./cloudSecurity.ts";
+import { CloudSelfHostedPolicyMode } from "./cloudSelfHosted.ts";
 import {
   CloudRuntimePlacement,
   CloudWarmGuest,
@@ -885,6 +886,8 @@ export const CloudControllerDefaults = Schema.Struct({
   summaries: Schema.optionalKey(Schema.Boolean),
   artifactsToGit: Schema.optionalKey(Schema.Boolean),
   collaboration: Schema.optionalKey(CloudCollaborationDefault),
+  /** Off until an admin allows or requires customer machines. */
+  selfHostedMode: Schema.optionalKey(CloudSelfHostedPolicyMode),
 });
 export type CloudControllerDefaults = typeof CloudControllerDefaults.Type;
 

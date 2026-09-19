@@ -157,3 +157,23 @@ it.effect("creates, isolates, cancels, archives, and deletes cloud agents", () =
     expect(gone.code).toBe("agent_not_found");
   }).pipe(Effect.provide(live)),
 );
+
+it.effect("refuses a pool target while self-hosted machines are off", () =>
+  Effect.gen(function* () {
+    const keys = yield* CloudAgentsApiKeys.CloudAgentsApiKeys;
+    const api = yield* CloudAgentsApi.CloudAgentsApi;
+    const user = yield* keys.create({ name: "User key", kind: "user" });
+    const principal = (yield* keys.authenticate(user.token))!;
+    const denied = yield* api
+      .createAgent({
+        principal,
+        urlOrigin: "http://localhost",
+        body: {
+          prompt: { text: "Run on the gpu pool" },
+          env: { type: "pool", name: "gpu" },
+        },
+      })
+      .pipe(Effect.flip);
+    expect(denied.code).toBe("self_hosted_disabled");
+  }).pipe(Effect.provide(live)),
+);

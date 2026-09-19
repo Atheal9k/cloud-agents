@@ -42,6 +42,7 @@ export * from "./cloudRepository.ts";
 export * from "./cloudResults.ts";
 export * from "./cloudReadiness.ts";
 export * from "./cloudSecurity.ts";
+export * from "./cloudSelfHosted.ts";
 export * from "./cloudExtensibility.ts";
 export * from "./cloudPrivateNetwork.ts";
 export * from "./cloudReview.ts";

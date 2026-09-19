@@ -1074,6 +1074,7 @@ export const make = Effect.fn("CloudAllocationController.make")(function* (input
                   ? 1
                   : 0,
             defaultCollaboration: control.defaults.collaboration ?? null,
+            defaultSelfHostedMode: control.defaults.selfHostedMode ?? null,
           })
           .pipe(Effect.mapError(persistenceError));
         yield* accounting
