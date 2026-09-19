@@ -281,3 +281,15 @@ export function cloudRunDisplayState(allocation: CloudRunStateSource): CloudRunD
   if (allocation.allocationState.status === "registering") return "setup";
   return "provisioning";
 }
+
+/**
+ * What the dialog promises about outliving the client. A local controller
+ * outlives the browser but not its machine; a permanent one outlives both, so
+ * the copy has to follow the controller rather than be written once.
+ */
+export function controllerSummary(snapshot: CloudAllocationSnapshot | null): string {
+  if (snapshot === null) return "Connecting to the cloud controller...";
+  return snapshot.controller.requiresHostOnline
+    ? "The local T3 controller stays responsible for this worker after the browser or desktop app disconnects, as long as its machine stays online."
+    : "The permanent T3 controller stays responsible for this worker after the browser or desktop app disconnects, with this computer switched off.";
+}

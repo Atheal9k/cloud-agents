@@ -12,6 +12,8 @@ output "controller" {
     role_arn          = aws_iam_role.controller[0].arn
     data_volume       = aws_ebs_volume.controller_data[0].id
     security_group_id = aws_security_group.controller[0].id
+    url               = "https://${local.controller_hostname}"
+    image_ref         = var.controller_image_ref
     } : {
     mode              = var.controller_mode
     instance_id       = null
@@ -19,6 +21,8 @@ output "controller" {
     role_arn          = null
     data_volume       = null
     security_group_id = null
+    url               = null
+    image_ref         = null
   }
 }
 

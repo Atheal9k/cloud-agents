@@ -1,14 +1,24 @@
 #!/bin/bash
 set -euo pipefail
 
+# The permanent controller runs the same image CA-04C packages for local Docker
+# use. Nothing here builds or patches the application: the host mounts retained
+# state, joins the tailnet for a stable name and a renewed certificate, and runs
+# the container under systemd so a reboot brings the controller back by itself.
+
 install -d -m 0750 /etc/t3
 
+# Only settings the image's own defaults do not cover. Credentials arrive from
+# Secrets Manager through the instance role, never from this file.
 cat >/etc/t3/controller.env <<'ENV'
 AWS_REGION=${aws_region}
 T3CODE_CLOUD_AWS_REGION=${aws_region}
 T3CODE_CLOUD_PROJECT=${project_name}
+T3CODE_CLOUD_CONTROLLER=1
+T3CODE_CLOUD_CONTROLLER_MODE=permanent
+T3CODE_CLOUD_CONTROLLER_URL=https://${controller_hostname}
 T3_ARTIFACT_BUCKET=${artifact_bucket}
-T3_DATA_DIR=/var/lib/t3
+${extra_environment}
 ENV
 chmod 0640 /etc/t3/controller.env
 
@@ -51,8 +61,67 @@ if ! grep -q "UUID=$uuid " /etc/fstab; then
   printf 'UUID=%s /var/lib/t3 xfs defaults,nofail 0 2\n' "$uuid" >>/etc/fstab
 fi
 mountpoint -q /var/lib/t3 || mount /var/lib/t3
+# The image runs as uid/gid 10001 and a freshly formatted volume is root-owned.
+chown 10001:10001 /var/lib/t3
 SCRIPT
 chmod 0755 /usr/local/sbin/mount-t3-data
+
+dnf install --assumeyes docker
+systemctl enable --now docker.service
+
+tailscale_auth_key_secret_arn='${tailscale_auth_key_secret_arn}'
+if [[ -n "$${tailscale_auth_key_secret_arn}" ]]; then
+  dnf config-manager --add-repo https://pkgs.tailscale.com/stable/amazon-linux/2023/tailscale.repo
+  dnf install --assumeyes tailscale
+
+  install -d -o root -g root -m 0700 /run/t3-tailscale
+  tailscale_auth_key_file="$(mktemp /run/t3-tailscale/auth-key.XXXXXX)"
+  cleanup_tailscale_auth_key() {
+    rm -f "$${tailscale_auth_key_file}"
+    rmdir /run/t3-tailscale 2>/dev/null || true
+  }
+  trap cleanup_tailscale_auth_key EXIT
+  if ! aws secretsmanager get-secret-value \
+    --region '${aws_region}' \
+    --secret-id "$${tailscale_auth_key_secret_arn}" \
+    --query SecretString \
+    --output text >"$${tailscale_auth_key_file}"; then
+    echo "controller bootstrap failed: Tailscale auth key secret is unavailable" >&2
+    exit 1
+  fi
+  chmod 0600 "$${tailscale_auth_key_file}"
+  if ! grep --quiet --extended-regexp '^tskey-auth-[A-Za-z0-9_-]+(-[A-Za-z0-9_-]+)?$' "$${tailscale_auth_key_file}"; then
+    echo "controller bootstrap failed: Tailscale auth key secret is empty, binary, or malformed" >&2
+    exit 1
+  fi
+
+  systemctl enable --now tailscaled.service
+  # --ssh is deliberately absent: SSM stays the only interactive path in.
+  tailscale up \
+    --accept-dns=true \
+    --auth-key="file:$${tailscale_auth_key_file}" \
+    --hostname='${tailscale_hostname}' \
+    --timeout=60s
+  cleanup_tailscale_auth_key
+  trap - EXIT
+  # Tailscale terminates TLS on the stable MagicDNS name and renews that
+  # certificate itself, so no ACME port is exposed to the internet.
+  tailscale serve --bg --yes --https=${service_port} "http://127.0.0.1:${container_port}"
+fi
+
+cat >/usr/local/sbin/pull-t3-controller <<'SCRIPT'
+#!/bin/bash
+set -euo pipefail
+
+image="${controller_image_ref}"
+registry="$${image%%/*}"
+if [[ "$${registry}" == *.dkr.ecr.*.amazonaws.com ]]; then
+  aws ecr get-login-password --region '${aws_region}' |
+    docker login --username AWS --password-stdin "$${registry}"
+fi
+docker pull "$${image}"
+SCRIPT
+chmod 0755 /usr/local/sbin/pull-t3-controller
 
 cat >/etc/systemd/system/t3-data-volume.service <<'UNIT'
 [Unit]
@@ -69,25 +138,31 @@ RemainAfterExit=yes
 WantedBy=multi-user.target
 UNIT
 
-cat >/etc/systemd/system/t3-controller.service <<'UNIT'
+cat >/etc/systemd/system/t3-controller.service <<UNIT
 [Unit]
 Description=T3 cloud-agent controller
-After=network-online.target t3-data-volume.service
+After=network-online.target docker.service t3-data-volume.service
 Wants=network-online.target
-Requires=t3-data-volume.service
-ConditionPathIsExecutable=/opt/t3/bin/t3-controller
+Requires=docker.service t3-data-volume.service
 
 [Service]
-Type=simple
-User=root
-EnvironmentFile=/etc/t3/controller.env
-ExecStart=/opt/t3/bin/t3-controller
-Restart=on-failure
+Type=exec
+# Pulling on every start is what makes an image rollback a controller_image_ref
+# change plus a restart, with no separate deployment step.
+ExecStartPre=-/usr/bin/docker rm --force t3-controller
+ExecStartPre=/usr/local/sbin/pull-t3-controller
+ExecStart=/usr/bin/docker run --rm --name t3-controller \\
+  --env-file /etc/t3/controller.env \\
+  --publish 127.0.0.1:${container_port}:${container_port} \\
+  --volume /var/lib/t3:/var/lib/t3 \\
+  --read-only --tmpfs /tmp:rw,noexec,nosuid,size=256m \\
+  --cap-drop ALL --security-opt no-new-privileges:true \\
+  ${controller_image_ref}
+ExecStop=/usr/bin/docker stop --time 30 t3-controller
+Restart=always
 RestartSec=5s
-NoNewPrivileges=yes
-PrivateTmp=yes
-ProtectSystem=strict
-ReadWritePaths=/var/lib/t3
+# Longer than the container's own 30s stop window so SQLite closes cleanly.
+TimeoutStopSec=45s
 
 [Install]
 WantedBy=multi-user.target
@@ -96,5 +171,4 @@ UNIT
 systemctl daemon-reload
 systemctl enable --now amazon-ssm-agent.service
 systemctl enable --now t3-data-volume.service
-systemctl enable t3-controller.service
-systemctl start t3-controller.service || true
+systemctl enable --now t3-controller.service

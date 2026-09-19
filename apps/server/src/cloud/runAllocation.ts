@@ -1,5 +1,6 @@
 import {
   CloudAgentId,
+  type CloudEnvironmentVersionReference,
   RunAllocationAttempt,
   type RunAllocation,
   type RunAllocationCommand,
@@ -30,6 +31,11 @@ function eventBase(
 export function decideRunAllocationCommand(
   allocation: RunAllocation | undefined,
   command: RunAllocationCommand,
+  /**
+   * Environment version the controller resolved for a launch. Absent when no
+   * environment covers the repository. Callers never take this from the client.
+   */
+  environment?: CloudEnvironmentVersionReference,
 ): ReadonlyArray<RunAllocationEvent> {
   if (command.type === "allocation.launch") {
     if (allocation !== undefined) return [];
@@ -46,6 +52,7 @@ export function decideRunAllocationCommand(
         ...(command.execution === undefined ? {} : { execution: command.execution }),
         ...(command.control === undefined ? {} : { control: command.control }),
         profile: command.profile,
+        ...(environment === undefined ? {} : { environment }),
         deadlines: command.deadlines,
       },
     ];
@@ -282,6 +289,7 @@ export function projectRunAllocationEvent(
       ...(event.execution === undefined ? {} : { execution: event.execution }),
       ...(event.control === undefined ? {} : { control: event.control }),
       profile: event.profile,
+      ...(event.environment === undefined ? {} : { environment: event.environment }),
       deadlines: event.deadlines,
       allocationState: { status: "queued" },
       agentOutcome: { status: "not-started" },

@@ -234,6 +234,7 @@ it.layer(NodeServices.layer)("cli config resolution", (it) => {
         tailscaleServeEnabled: false,
         tailscaleServePort: 443,
         cloudControllerEnabled: true,
+        cloudControllerMode: "local",
       });
       assert.equal(resolved.stateDir, join(baseDir, "userdata"));
     }),
@@ -306,6 +307,7 @@ it.layer(NodeServices.layer)("cli config resolution", (it) => {
         tailscaleServeEnabled: true,
         tailscaleServePort: 8443,
         cloudControllerEnabled: true,
+        cloudControllerMode: "local",
       });
       assert.equal(resolved.dbPath, join(baseDir, "userdata", "state.sqlite"));
     }),
@@ -380,6 +382,7 @@ it.layer(NodeServices.layer)("cli config resolution", (it) => {
         tailscaleServeEnabled: false,
         tailscaleServePort: 443,
         cloudControllerEnabled: false,
+        cloudControllerMode: "local",
       });
     }),
   );
@@ -462,6 +465,7 @@ it.layer(NodeServices.layer)("cli config resolution", (it) => {
         tailscaleServeEnabled: false,
         tailscaleServePort: 443,
         cloudControllerEnabled: false,
+        cloudControllerMode: "local",
       });
       assert.equal(join(baseDir, "userdata"), resolved.stateDir);
       assert.equal(resolved.desktopTelemetryFd, 4);
@@ -593,6 +597,7 @@ it.layer(NodeServices.layer)("cli config resolution", (it) => {
         tailscaleServeEnabled: false,
         tailscaleServePort: 443,
         cloudControllerEnabled: false,
+        cloudControllerMode: "local",
       });
     }),
   );
@@ -663,6 +668,7 @@ it.layer(NodeServices.layer)("cli config resolution", (it) => {
         tailscaleServeEnabled: false,
         tailscaleServePort: 443,
         cloudControllerEnabled: false,
+        cloudControllerMode: "local",
       });
     }),
   );
@@ -727,6 +733,7 @@ it.layer(NodeServices.layer)("cli config resolution", (it) => {
         tailscaleServeEnabled: false,
         tailscaleServePort: 443,
         cloudControllerEnabled: false,
+        cloudControllerMode: "local",
       });
     }),
   );
@@ -852,6 +859,64 @@ it.layer(NodeServices.layer)("cli config resolution", (it) => {
       );
 
       expect(resolved.otlpProtocol).toBe("http/protobuf");
+    }),
+  );
+  it.effect("resolves the cloud controller mode from env, and lets the flag win", () =>
+    Effect.gen(function* () {
+      const { join } = yield* Path.Path;
+      const baseDir = join(NodeOS.tmpdir(), "t3-cli-config-controller-mode-base");
+      const baseFlags = {
+        mode: Option.some("web" as const),
+        port: Option.some(3773),
+        host: Option.none(),
+        baseDir: Option.some(baseDir),
+        cwd: Option.none(),
+        devUrl: Option.none(),
+        noBrowser: Option.none(),
+        bootstrapFd: Option.none(),
+        autoBootstrapProjectFromCwd: Option.none(),
+        logWebSocketEvents: Option.none(),
+        tailscaleServeEnabled: Option.none(),
+        tailscaleServePort: Option.none(),
+        cloudControllerEnabled: Option.some(true),
+      };
+      const withPermanentEnv = <A, E, R>(effect: Effect.Effect<A, E, R>) =>
+        effect.pipe(
+          Effect.provide(
+            Layer.mergeAll(
+              ConfigProvider.layer(
+                ConfigProvider.fromEnv({ env: { T3CODE_CLOUD_CONTROLLER_MODE: "permanent" } }),
+              ),
+              NetService.layer,
+            ),
+          ),
+        );
+
+      const fromEnv = yield* withPermanentEnv(
+        resolveServerConfig({ ...baseFlags, cloudControllerMode: Option.none() }, Option.none()),
+      );
+      expect(fromEnv.cloudControllerMode).toBe("permanent");
+
+      const fromFlag = yield* withPermanentEnv(
+        resolveServerConfig(
+          { ...baseFlags, cloudControllerMode: Option.some("local" as const) },
+          Option.none(),
+        ),
+      );
+      expect(fromFlag.cloudControllerMode).toBe("local");
+
+      const byDefault = yield* resolveServerConfig(
+        { ...baseFlags, cloudControllerMode: Option.none() },
+        Option.none(),
+      ).pipe(
+        Effect.provide(
+          Layer.mergeAll(
+            ConfigProvider.layer(ConfigProvider.fromEnv({ env: {} })),
+            NetService.layer,
+          ),
+        ),
+      );
+      expect(byDefault.cloudControllerMode).toBe("local");
     }),
   );
 });

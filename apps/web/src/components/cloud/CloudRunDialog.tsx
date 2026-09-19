@@ -4,6 +4,10 @@ import { squashAtomCommandFailure } from "@t3tools/client-runtime/state/runtime"
 import {
   CommandId,
   type CloudAllocationSnapshot,
+  cloudEnvironmentBase,
+  type CloudEnvironment,
+  type CloudEnvironmentBase,
+  type CloudEnvironmentVersion,
   ProviderDriverKind,
   type RunAllocation,
 } from "@t3tools/contracts";
@@ -18,6 +22,7 @@ import {
   buildCloudRunLaunchCommand,
   cloudRunDisplayState,
   cloudRunProjectOptions,
+  controllerSummary,
   createInitialCloudRunDraft,
   reconcileCloudRunLaunchInstanceType,
   type CloudRunLaunchDraft,
@@ -180,6 +185,106 @@ function CloudRunRow(props: {
   );
 }
 
+function cloudEnvironmentSourceLabel(source: CloudEnvironmentVersion["source"]): string {
+  if (source.type === "repository") {
+    return `${source.path} at ${source.commit.slice(0, 8)}`;
+  }
+  if (source.scope === "default") return "Default";
+  return `${source.scope === "personal" ? "Personal" : "Team"} · ${source.owner}`;
+}
+
+function cloudEnvironmentBaseLabel(base: CloudEnvironmentBase): string {
+  switch (base.kind) {
+    case "image":
+      return `Image ${base.image}`;
+    case "snapshot":
+      return `Snapshot ${base.snapshot}`;
+    case "dockerfile":
+      return "Dockerfile";
+  }
+}
+
+function CloudEnvironmentCard(props: {
+  readonly environment: CloudEnvironment;
+  readonly busy: boolean;
+  readonly onRestore: (environment: CloudEnvironment, version: number) => void;
+}) {
+  const [historyOpen, setHistoryOpen] = useState(false);
+  const current = props.environment.current;
+  const history = props.environment.history;
+
+  return (
+    <div className="rounded-xl border bg-muted/24 p-3">
+      <div className="flex flex-wrap items-start justify-between gap-2">
+        <div>
+          <div className="text-sm font-medium">{current.name}</div>
+          <div className="mt-1 text-xs text-muted-foreground">
+            {cloudEnvironmentSourceLabel(current.source)}
+          </div>
+        </div>
+        <Button
+          size="sm"
+          variant="ghost"
+          aria-expanded={historyOpen}
+          onClick={() => setHistoryOpen((open) => !open)}
+        >
+          v{current.version} · {history.length} version{history.length === 1 ? "" : "s"}
+        </Button>
+      </div>
+      <dl className="mt-3 grid gap-x-4 gap-y-1 text-xs sm:grid-cols-2">
+        <div className="flex gap-1">
+          <dt className="text-muted-foreground">Repositories</dt>
+          <dd className="truncate">
+            {current.repositories.map((entry) => entry.repository).join(", ")}
+          </dd>
+        </div>
+        <div className="flex gap-1">
+          <dt className="text-muted-foreground">Active Build</dt>
+          <dd>{props.environment.activeBuildId ?? "None"}</dd>
+        </div>
+        <div className="flex gap-1">
+          <dt className="text-muted-foreground">Base</dt>
+          <dd className="truncate">
+            {cloudEnvironmentBaseLabel(cloudEnvironmentBase(current.config))}
+          </dd>
+        </div>
+        <div className="flex gap-1">
+          <dt className="text-muted-foreground">Runtime policy</dt>
+          <dd>
+            {current.effectivePolicy.runtimeUser} · {current.effectivePolicy.egressMode}
+          </dd>
+        </div>
+      </dl>
+      {historyOpen ? (
+        <ul className="mt-3 space-y-1 border-t pt-2">
+          {history.map((version) => (
+            <li key={version.id} className="flex items-center justify-between gap-2 text-xs">
+              <span className="truncate">
+                v{version.version} · {cloudEnvironmentBaseLabel(version.base)}
+                {version.restoredFromVersion === undefined
+                  ? ""
+                  : ` · restored from v${version.restoredFromVersion}`}
+              </span>
+              {version.version === current.version ? (
+                <span className="shrink-0 text-muted-foreground">Current</span>
+              ) : (
+                <Button
+                  size="sm"
+                  variant="outline"
+                  disabled={props.busy}
+                  onClick={() => props.onRestore(props.environment, version.version)}
+                >
+                  Restore
+                </Button>
+              )}
+            </li>
+          ))}
+        </ul>
+      ) : null}
+    </div>
+  );
+}
+
 export function CloudRunDialog() {
   const primaryEnvironmentId = usePrimaryEnvironmentId();
   const serverConfigs = useServerConfigs();
@@ -212,9 +317,14 @@ function CloudRunDialogForEnvironment(props: {
     cloudAllocations.snapshot({ environmentId: props.environmentId, input: {} }),
   );
   const snapshot = Option.getOrNull(AsyncResult.value(snapshotResult));
+  const writability = snapshot?.controller.writability;
+  const fence = writability?.status === "fenced" ? writability : null;
   const projectOptions = useMemo(() => cloudRunProjectOptions(projects), [projects]);
   const dispatch = useAtomCommand(cloudAllocations.dispatch, { reportFailure: false });
   const registerEnvironment = useAtomCommand(environmentCatalog.register, { reportFailure: false });
+  const restoreEnvironment = useAtomCommand(cloudAllocations.restoreEnvironment, {
+    reportFailure: false,
+  });
   const [open, setOpen] = useState(false);
   const [draft, setDraft] = useState(() =>
     createInitialCloudRunDraft(snapshot, providers, projectOptions[0]?.repository),
@@ -222,6 +332,7 @@ function CloudRunDialogForEnvironment(props: {
   const [requestId, setRequestId] = useState(randomUUID);
   const [launchedId, setLaunchedId] = useState<string | null>(null);
   const [busyAllocationId, setBusyAllocationId] = useState<string | null>(null);
+  const [busyEnvironmentId, setBusyEnvironmentId] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
 
   useEffect(() => {
@@ -284,6 +395,28 @@ function CloudRunDialogForEnvironment(props: {
     setLaunchedId(requestId);
   };
 
+  const restore = async (environment: CloudEnvironment, restoreVersion: number) => {
+    setBusyEnvironmentId(environment.id);
+    const result = await restoreEnvironment({
+      environmentId: props.environmentId,
+      input: {
+        environmentId: environment.id,
+        expectedVersion: environment.current.version,
+        restoreVersion,
+        occurredAt: new Date().toISOString(),
+      },
+    });
+    setBusyEnvironmentId(null);
+    if (result._tag === "Failure") {
+      const cause = squashAtomCommandFailure(result);
+      setError(
+        cause instanceof Error ? cause.message : "The controller could not restore that version.",
+      );
+      return;
+    }
+    setError(null);
+  };
+
   const cancel = async (allocation: RunAllocation) => {
     setBusyAllocationId(allocation.id);
     const result = await dispatch({
@@ -338,12 +471,19 @@ function CloudRunDialogForEnvironment(props: {
               <CloudIcon className="size-5" />
               <DialogTitle>New cloud thread</DialogTitle>
             </div>
-            <DialogDescription>
-              The local T3 controller stays responsible for this worker after the browser or desktop
-              app disconnects.
-            </DialogDescription>
+            <DialogDescription>{controllerSummary(snapshot)}</DialogDescription>
           </DialogHeader>
           <DialogPanel className="space-y-5" scrollAreaClassName="flex-1">
+            {fence === null ? null : (
+              <p
+                role="alert"
+                className="rounded-lg border bg-muted/24 p-3 text-sm text-destructive"
+              >
+                This controller is fenced and accepts no new work: {fence.reason} Saved results stay
+                readable here.
+              </p>
+            )}
+
             {snapshot === null ? (
               <div className="rounded-lg border bg-muted/24 p-3 text-sm text-muted-foreground">
                 Connecting to the cloud controller...
@@ -529,6 +669,20 @@ function CloudRunDialogForEnvironment(props: {
               </p>
             )}
 
+            {snapshot?.environments !== undefined && snapshot.environments.length > 0 ? (
+              <section className="space-y-2">
+                <h3 className="text-sm font-medium">Cloud environments</h3>
+                {snapshot.environments.map((environment) => (
+                  <CloudEnvironmentCard
+                    key={environment.id}
+                    environment={environment}
+                    busy={busyEnvironmentId === environment.id}
+                    onRestore={(target, version) => void restore(target, version)}
+                  />
+                ))}
+              </section>
+            ) : null}
+
             {snapshot !== null && recentAllocations.length > 0 ? (
               <section className="space-y-2">
                 <h3 className="text-sm font-medium">Recent cloud runs</h3>
@@ -553,6 +707,7 @@ function CloudRunDialogForEnvironment(props: {
               type="submit"
               disabled={
                 snapshot === null ||
+                fence !== null ||
                 draft.repository.length === 0 ||
                 providers.length === 0 ||
                 busyAllocationId !== null ||

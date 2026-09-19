@@ -610,6 +610,9 @@ Acceptance criteria:
 
 Dependencies: CA-03, CA-04A, CA-04C, CA-23, CA-24, CA-40, CA-41.
 
+Status: Done on 19 September 2026 in
+[PR #30](https://github.com/Atheal9k/cloud-agents/pull/30).
+
 Description: Move the proven controller, durable agent/run catalog, and
 environment/Build catalog to one always-on host using CA-04C's image. Keep
 local and permanent controller modes on one code path; runtimes remain in the
@@ -792,6 +795,8 @@ Acceptance criteria:
   and stale runtime fencing.
 
 ### CA-41: Add versioned environments and config resolution
+
+Status: Done on 19 September 2026 in [PR #28](https://github.com/Atheal9k/cloud-agents/pull/28).
 
 Dependencies: CA-10, CA-40.
 

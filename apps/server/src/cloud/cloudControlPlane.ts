@@ -295,6 +295,7 @@ export function projectCloudControlPlane(
       repository: requested.target.repository,
       baseCommit: requested.target.baseCommit,
       environmentProfileId: requested.profile.id,
+      ...(requested.environment === undefined ? {} : { environment: requested.environment }),
       branches: [...new Set(projectedRuns.map((run) => run.branch))],
       createdAt: requested.occurredAt,
       updatedAt,

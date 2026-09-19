@@ -75,8 +75,17 @@ resource "aws_iam_role_policy" "controller_artifacts" {
   policy = data.aws_iam_policy_document.controller_artifacts.json
 }
 
+locals {
+  # Bootstrap needs the tailnet key before anything else can reach the host, so
+  # it is granted with the operator's own credential list rather than alongside.
+  controller_secret_arns = distinct(concat(
+    tolist(var.controller_credential_secret_arns),
+    var.controller_tailscale_auth_key_secret_arn == null ? [] : [var.controller_tailscale_auth_key_secret_arn],
+  ))
+}
+
 data "aws_iam_policy_document" "controller_credentials" {
-  count = var.controller_mode == "ec2" && length(var.controller_credential_secret_arns) > 0 ? 1 : 0
+  count = var.controller_mode == "ec2" && length(local.controller_secret_arns) > 0 ? 1 : 0
 
   statement {
     sid = "ReadConfiguredControllerCredentials"
@@ -84,15 +93,42 @@ data "aws_iam_policy_document" "controller_credentials" {
       "secretsmanager:DescribeSecret",
       "secretsmanager:GetSecretValue",
     ]
-    resources = var.controller_credential_secret_arns
+    resources = local.controller_secret_arns
   }
 }
 
 resource "aws_iam_role_policy" "controller_credentials" {
-  count  = var.controller_mode == "ec2" && length(var.controller_credential_secret_arns) > 0 ? 1 : 0
+  count  = var.controller_mode == "ec2" && length(local.controller_secret_arns) > 0 ? 1 : 0
   name   = "controller-credentials"
   role   = aws_iam_role.controller[0].id
   policy = data.aws_iam_policy_document.controller_credentials[0].json
+}
+
+data "aws_iam_policy_document" "controller_image_pull" {
+  count = var.controller_mode == "ec2" ? 1 : 0
+
+  statement {
+    sid       = "AuthenticateToRegistry"
+    actions   = ["ecr:GetAuthorizationToken"]
+    resources = ["*"]
+  }
+
+  statement {
+    sid = "PullControllerImage"
+    actions = [
+      "ecr:BatchCheckLayerAvailability",
+      "ecr:BatchGetImage",
+      "ecr:GetDownloadUrlForLayer",
+    ]
+    resources = ["*"]
+  }
+}
+
+resource "aws_iam_role_policy" "controller_image_pull" {
+  count  = var.controller_mode == "ec2" ? 1 : 0
+  name   = "controller-image-pull"
+  role   = aws_iam_role.controller[0].id
+  policy = data.aws_iam_policy_document.controller_image_pull[0].json
 }
 
 data "aws_iam_policy_document" "controller_worker_allocation" {

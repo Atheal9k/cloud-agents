@@ -19,6 +19,7 @@ import {
 } from "./baseSchemas.ts";
 import { ExecutionEnvironmentPlatformArch, ExecutionEnvironmentPlatformOs } from "./environment.ts";
 import { CloudProviderTurnInput, CloudProviderUnansweredRequestSeconds } from "./cloudExecution.ts";
+import { CloudEnvironment, CloudEnvironmentVersionReference } from "./cloudEnvironment.ts";
 
 export const RunWorkerDevice = Schema.Literals(["android", "ios"]);
 export type RunWorkerDevice = typeof RunWorkerDevice.Type;
@@ -143,6 +144,8 @@ const CloudAgentBase = {
   repository: TrimmedNonEmptyString,
   baseCommit: TrimmedNonEmptyString,
   environmentProfileId: TrimmedNonEmptyString,
+  /** Missing on agents created before versioned cloud environments. */
+  environment: Schema.optionalKey(CloudEnvironmentVersionReference),
   branches: Schema.Array(TrimmedNonEmptyString),
   createdAt: IsoDateTime,
   updatedAt: IsoDateTime,
@@ -380,6 +383,8 @@ export const RunAllocation = Schema.Struct({
   /** Missing on allocations created before durable cloud agents and runs. */
   control: Schema.optionalKey(RunControlPlaneLink),
   profile: RunWorkerProfile,
+  /** Missing on allocations created before versioned cloud environments. */
+  environment: Schema.optionalKey(CloudEnvironmentVersionReference),
   deadlines: RunDeadlines,
   allocationState: RunAllocationState,
   agentOutcome: RunAgentOutcome,
@@ -517,6 +522,8 @@ export const RunAllocationEvent = Schema.Union([
     /** Missing on allocation events written before CA-40. */
     control: Schema.optionalKey(RunControlPlaneLink),
     profile: RunWorkerProfile,
+    /** Missing on allocation events written before CA-41. */
+    environment: Schema.optionalKey(CloudEnvironmentVersionReference),
     deadlines: RunDeadlines,
   }),
   Schema.Struct({
@@ -599,17 +606,34 @@ export const RunAllocationEvent = Schema.Union([
 ]);
 export type RunAllocationEvent = typeof RunAllocationEvent.Type;
 
-export const CloudAllocationControllerMode = Schema.Literal("local");
+/** `local` runs the controller in the operator's own T3 environment; `permanent`
+    runs the same code on an always-on host that survives that computer. */
+export const CloudAllocationControllerMode = Schema.Literals(["local", "permanent"]);
 export type CloudAllocationControllerMode = typeof CloudAllocationControllerMode.Type;
+
+/** A fenced controller still serves reads so retained results stay reviewable,
+    but it refuses every write so a cutover cannot leave two writers behind. */
+export const CloudAllocationControllerWritability = Schema.Union([
+  Schema.Struct({ status: Schema.Literal("writable") }),
+  Schema.Struct({
+    status: Schema.Literal("fenced"),
+    fencedAt: IsoDateTime,
+    reason: TrimmedNonEmptyString,
+  }),
+]);
+export type CloudAllocationControllerWritability = typeof CloudAllocationControllerWritability.Type;
 
 export const CloudAllocationControllerStatus = Schema.Struct({
   mode: CloudAllocationControllerMode,
-  /** A local controller can outlive clients, but not the machine hosting T3. */
-  requiresHostOnline: Schema.Literal(true),
+  /** A local controller can outlive clients, but not the machine hosting T3.
+      A permanent controller keeps working with that computer switched off. */
+  requiresHostOnline: Schema.Boolean,
   admission: Schema.Union([
     Schema.Struct({ status: Schema.Literal("open") }),
     Schema.Struct({ status: Schema.Literal("stopped"), stoppedAt: IsoDateTime }),
   ]),
+  /** Absent when decoding snapshots from controllers older than CA-04B. */
+  writability: Schema.optionalKey(CloudAllocationControllerWritability),
 });
 export type CloudAllocationControllerStatus = typeof CloudAllocationControllerStatus.Type;
 
@@ -685,6 +709,8 @@ export const CloudAllocationSnapshot = Schema.Struct({
   runs: Schema.optionalKey(Schema.Array(CloudRun)),
   /** Absent when decoding snapshots from controllers older than CA-40. */
   runtimeAttempts: Schema.optionalKey(Schema.Array(CloudRuntimeAttempt)),
+  /** Absent when decoding snapshots from controllers older than CA-41. */
+  environments: Schema.optionalKey(Schema.Array(CloudEnvironment)),
   usage: Schema.Array(CloudRunUsage),
 });
 export type CloudAllocationSnapshot = typeof CloudAllocationSnapshot.Type;
@@ -694,6 +720,7 @@ export class CloudAllocationControllerError extends Schema.TaggedError<CloudAllo
   {
     reason: Schema.Literals([
       "controller-disabled",
+      "controller-fenced",
       "admission-stopped",
       "allocation-not-found",
       "agent_busy",
