@@ -101,6 +101,7 @@ function fencedAllocation(baseCommit: string): RunAllocation {
       baseCommit,
       branch: "cloud/run/result",
     },
+    publication: { mode: "review-only" },
     profile: { id: "linux-web", os: "linux", arch: "x64", instanceType: "t3.medium" },
     deadlines: {
       launchBy: DEADLINE,
@@ -264,6 +265,9 @@ it.layer(TestLayer)("CloudRunResults", (it) => {
         expect(yield* results.readText(manifest.resultId, "transcript")).toContain(
           SOURCE_THREAD_ID,
         );
+        const prefix = yield* results.readTextPrefix(manifest.resultId, "transcript", 24);
+        expect(prefix.truncated).toBe(true);
+        expect(prefix.text.length).toBe(24);
         const artifact = yield* results.resolveDownload(
           manifest.resultId,
           manifest.artifacts[0]!.id,

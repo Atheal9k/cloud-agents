@@ -36,9 +36,11 @@ client ran at `2026-09-17T02:35:07Z`. Snapshot sequence 54 showed a ready
 
 Only the worker runs the thread's decider, projector, provider adapter, and
 checkpoint reactor. The controller may cache summaries or archive a completed
-thread, but those copies cannot accept thread commands. A reconnect fetches the
-worker's snapshot and resumes its subscriptions instead of replaying commands
-through a second controller-side runtime.
+thread, but those copies cannot accept thread commands. A live reconnect uses
+the worker's T3 snapshot and `afterSequence` / windowed `turnLimit` cursors.
+A hibernated agent is read from the retained transcript and result summary
+without waking a guest. The Cloud Agents API SSE log is a bounded derived
+projection of those sources, not a second live decider.
 
 ## Why the worker uses T3
 

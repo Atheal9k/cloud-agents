@@ -158,3 +158,53 @@ it.effect("tells an iOS worker to reserve a simulator and keep host billing afte
     );
   }),
 );
+
+it.effect("reads live worker status through a bounded T3 thread cursor", () =>
+  Effect.gen(function* () {
+    const urls: Array<string> = [];
+    const client = HttpClient.make((request) => {
+      urls.push(request.url);
+      return Effect.succeed(
+        HttpClientResponse.fromWeb(
+          request,
+          Response.json({
+            snapshotSequence: 9,
+            thread: {
+              id: "thread-allocation-1-1",
+              projectId: "cloud:allocation-1:1",
+              title: "Fix the failing test",
+              modelSelection: { instanceId: "codex", model: "gpt-5.6-sol" },
+              runtimeMode: "approval-required",
+              interactionMode: "default",
+              branch: "cloud/allocation-1",
+              worktreePath: null,
+              latestTurn: {
+                turnId: "turn-1",
+                state: "completed",
+                requestedAt: "2026-09-17T03:00:00.000Z",
+                startedAt: "2026-09-17T03:00:00.000Z",
+                completedAt: "2026-09-17T03:01:00.000Z",
+                assistantMessageId: null,
+              },
+              createdAt: "2026-09-17T03:00:00.000Z",
+              updatedAt: "2026-09-17T03:01:00.000Z",
+              archivedAt: null,
+              settledOverride: null,
+              settledAt: null,
+              deletedAt: null,
+              pullRequests: [],
+              messages: [],
+              proposedPlans: [],
+              activities: [],
+              checkpoints: [],
+              session: null,
+            },
+          }),
+        ),
+      );
+    });
+    const runClient = yield* make().pipe(Effect.provideService(HttpClient.HttpClient, client));
+    expect(yield* runClient.status(allocation)).toBe("succeeded");
+    expect(urls[0]).toContain("/api/orchestration/threads/thread-allocation-1-1?turnLimit=1");
+  }),
+);
