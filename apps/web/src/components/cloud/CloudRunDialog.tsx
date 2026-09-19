@@ -12,6 +12,7 @@ import {
   CloudAgentId,
   type CloudEnvironmentVersion,
   isAppleSiliconMacInstanceType,
+  isAndroidAcceleratedInstanceType,
   ProviderDriverKind,
   type RunAllocation,
 } from "@t3tools/contracts";
@@ -787,9 +788,36 @@ function CloudRunDialogForEnvironment(props: {
                         <option key={instanceType} value={instanceType}>
                           {isAppleSiliconMacInstanceType(instanceType)
                             ? `${instanceType} (iOS Simulator)`
-                            : instanceType}
+                            : isAndroidAcceleratedInstanceType(instanceType)
+                              ? `${instanceType} (Android emulator)`
+                              : instanceType}
                         </option>
                       ))}
+                    </select>
+                  </label>
+                  <label className={fieldClassName}>
+                    <span className={labelClassName}>App surface</span>
+                    <select
+                      className={selectClassName}
+                      value={
+                        isAppleSiliconMacInstanceType(draft.instanceType)
+                          ? "macos-ios"
+                          : draft.workerProfile
+                      }
+                      disabled={isAppleSiliconMacInstanceType(draft.instanceType)}
+                      onChange={(event) =>
+                        setDraft((current) => ({
+                          ...current,
+                          workerProfile:
+                            event.target.value === "linux-android" ? "linux-android" : "linux-web",
+                        }))
+                      }
+                    >
+                      <option value="linux-web">Web</option>
+                      <option value="linux-android">Android emulator</option>
+                      {isAppleSiliconMacInstanceType(draft.instanceType) ? (
+                        <option value="macos-ios">iOS Simulator</option>
+                      ) : null}
                     </select>
                   </label>
                   <label className={fieldClassName}>
@@ -825,6 +853,14 @@ function CloudRunDialogForEnvironment(props: {
                     iOS Simulator jobs use an Apple Silicon Dedicated Host with a 24-hour minimum.
                     Cancelling the job stops the Simulator work; it does not end the host charge.
                     The local T3 controller must stay online.
+                  </p>
+                ) : null}
+                {draft.workerProfile === "linux-android" &&
+                !isAppleSiliconMacInstanceType(draft.instanceType) ? (
+                  <p className="text-xs text-muted-foreground">
+                    Android jobs boot a nested-virtualization Linux worker with KVM. t3.medium is
+                    rejected. ADB stays on the worker loopback; live display is a later thread
+                    preview.
                   </p>
                 ) : null}
                 <div className="grid gap-3 sm:grid-cols-2">

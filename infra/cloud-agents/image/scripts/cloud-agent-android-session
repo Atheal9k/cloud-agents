@@ -1,0 +1,98 @@
+#!/bin/bash
+set -euo pipefail
+
+# Copy the template AVD, boot the owned serial, build/install/launch a debug
+# app, and write artifacts. ADB listens on loopback only.
+
+avd_name=""
+serial=""
+console_port=""
+data_dir=""
+checkout=""
+artifact_dir=""
+abi="x86_64"
+package=""
+activity=""
+rebuild_native="false"
+
+while [[ $# -gt 0 ]]; do
+  case "$1" in
+    --avd-name) avd_name="$2"; shift 2 ;;
+    --serial) serial="$2"; shift 2 ;;
+    --console-port) console_port="$2"; shift 2 ;;
+    --data-dir) data_dir="$2"; shift 2 ;;
+    --checkout) checkout="$2"; shift 2 ;;
+    --artifact-dir) artifact_dir="$2"; shift 2 ;;
+    --abi) abi="$2"; shift 2 ;;
+    --package) package="$2"; shift 2 ;;
+    --activity) activity="$2"; shift 2 ;;
+    --rebuild-native) rebuild_native="$2"; shift 2 ;;
+    *) echo "unknown argument: $1" >&2; exit 2 ;;
+  esac
+done
+
+: "${avd_name:?--avd-name is required}"
+: "${console_port:?--console-port is required}"
+: "${data_dir:?--data-dir is required}"
+: "${checkout:?--checkout is required}"
+: "${artifact_dir:?--artifact-dir is required}"
+
+/opt/t3/bin/prove-android-acceleration
+
+mkdir -p "${artifact_dir}" "${data_dir}"
+if [[ ! -d "${data_dir}/t3-android-template" ]]; then
+  cp -a /opt/android-sdk/avd-template/t3-android-template "${data_dir}/${avd_name}"
+fi
+
+export ANDROID_AVD_HOME="${data_dir}"
+export ANDROID_SERIAL="${serial:-emulator-${console_port}}"
+adb start-server
+adb kill-server
+adb -a nodaemon server start >/dev/null 2>&1 & echo $! > "${data_dir}/adb.pid"
+# Bind the emulator console to the owned port; gRPC stays disabled so it is not public.
+emulator \
+  -avd "${avd_name}" \
+  -port "${console_port}" \
+  -no-window \
+  -no-audio \
+  -no-boot-anim \
+  -accel on \
+  -gpu swiftshader_indirect \
+  -datadir "${data_dir}" \
+  >/dev/null 2>&1 & echo $! > "${data_dir}/emulator.pid"
+
+adb -s "${ANDROID_SERIAL}" wait-for-device
+adb -s "${ANDROID_SERIAL}" shell getprop sys.boot_completed | grep -q 1 || sleep 5
+printf '%s\n' "${ANDROID_SERIAL}" > "${artifact_dir}/serial.txt"
+
+if [[ -f "${checkout}/android/gradlew" || -f "${checkout}/gradlew" ]]; then
+  (
+    cd "${checkout}"
+    if [[ -f android/gradlew ]]; then cd android; fi
+    ./gradlew :app:assembleDebug \
+      "-PreactNativeArchitectures=${abi}" \
+      --console=plain | tee "${artifact_dir}/build.log"
+  )
+  apk="$(find "${checkout}" -path '*/outputs/apk/*/app-debug.apk' | head -n 1)"
+  if [[ -z "${apk}" ]]; then
+    echo "debug APK was not produced" | tee "${artifact_dir}/diagnostics.txt"
+    exit 1
+  fi
+  if [[ "${rebuild_native}" == "true" && "${package}" == "host.exp.exponent" ]]; then
+    echo "Expo Go is not proof of a native Android worker. Rebuild the development client." \
+      | tee "${artifact_dir}/diagnostics.txt"
+    exit 1
+  fi
+  adb -s "${ANDROID_SERIAL}" install -r "${apk}"
+  if [[ -n "${package}" ]]; then
+    adb -s "${ANDROID_SERIAL}" reverse tcp:8081 tcp:8081 || true
+    if [[ -n "${activity}" ]]; then
+      adb -s "${ANDROID_SERIAL}" shell am start -n "${package}/${activity}"
+    else
+      adb -s "${ANDROID_SERIAL}" shell monkey -p "${package}" -c android.intent.category.LAUNCHER 1
+    fi
+  fi
+fi
+
+adb -s "${ANDROID_SERIAL}" logcat -d > "${artifact_dir}/logcat.txt" || true
+adb -s "${ANDROID_SERIAL}" exec-out screencap -p > "${artifact_dir}/screenshot.png" || true

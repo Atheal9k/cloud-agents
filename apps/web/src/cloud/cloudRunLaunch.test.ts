@@ -1,5 +1,9 @@
+import {
+  type CloudAllocationLimits,
+  LINUX_ANDROID_WORKER_PROFILE_ID,
+  type RepositoryIdentity,
+} from "@t3tools/contracts";
 import { describe, expect, it } from "vite-plus/test";
-import { type CloudAllocationLimits, type RepositoryIdentity } from "@t3tools/contracts";
 import {
   buildCloudRunLaunchCommand,
   cloudRunDisplayState,
@@ -31,6 +35,7 @@ const draft: CloudRunLaunchDraft = {
   runMinutes: "60",
   inputWaitMinutes: "15",
   instanceType: "t3.medium",
+  workerProfile: "linux-web",
   publication: "automatic-draft-pr",
   baseBranch: "main",
 };
@@ -191,6 +196,37 @@ describe("cloud run launch", () => {
       device: "ios",
       instanceType: "mac2-m2.metal",
     });
+  });
+
+  it("selects linux-android only when the launch asks for the Android profile", () => {
+    const result = buildCloudRunLaunchCommand({
+      draft: {
+        ...draft,
+        instanceType: "m7i.xlarge",
+        workerProfile: "linux-android",
+      },
+      limits: { ...limits, allowedInstanceTypes: ["m7i.xlarge"] },
+      now: new Date("2026-09-17T10:00:00.000Z"),
+      requestId: "request-android",
+    });
+
+    expect(result.status).toBe("valid");
+    if (result.status !== "valid" || result.command.type !== "allocation.launch") return;
+    expect(result.command.profile).toEqual({
+      id: LINUX_ANDROID_WORKER_PROFILE_ID,
+      os: "linux",
+      arch: "x64",
+      device: "android",
+      instanceType: "m7i.xlarge",
+    });
+    expect(
+      buildCloudRunLaunchCommand({
+        draft: { ...draft, workerProfile: "linux-android" },
+        limits,
+        now: new Date("2026-09-17T10:00:00.000Z"),
+        requestId: "request-android-t3",
+      }).status,
+    ).toBe("invalid");
   });
 
   it("rejects limits before dispatch", () => {

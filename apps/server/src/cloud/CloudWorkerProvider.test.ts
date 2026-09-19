@@ -445,3 +445,47 @@ it.effect("places Firecracker guests without calling RunInstances", () =>
     expect(restored.runtimeKind).toBe("firecracker");
   }),
 );
+
+it.effect("enables nested virtualization when launching an Android emulator worker", () =>
+  Effect.gen(function* () {
+    const invocations: ProcessRunner.ProcessRunInput[] = [];
+    const runner = ProcessRunner.ProcessRunner.of({
+      run: (input) => {
+        invocations.push(input);
+        return Effect.succeed(
+          output({
+            stdout: JSON.stringify({
+              Instances: [{ InstanceId: "i-android", State: { Name: "pending" } }],
+            }),
+          }),
+        );
+      },
+    });
+    const provider = yield* make({
+      region: "us-west-1",
+      project: "t3-cloud-agents",
+      controllerUrl: "https://controller.example.test/",
+      workerRouteUrl: "https://worker.example.test/",
+    }).pipe(Effect.provideService(ProcessRunner.ProcessRunner, runner));
+
+    yield* provider.launch({
+      allocationId,
+      attempt,
+      repository: "acme/android",
+      selectedRef: "main",
+      outputBranch: "cloud/allocation-1",
+      expiresAt: "2026-09-17T05:00:00.000Z",
+      instanceType: "m7i.xlarge",
+      maxInputWaitSeconds: 900,
+      launchTemplate: { id: "lt-android", version: 1 },
+      registrationCredential: "registration-credential",
+      nestedVirtualization: true,
+    });
+
+    const launch = invocations.find((invocation) => invocation.args[1] === "run-instances");
+    expect(launch?.args).toContain("--cpu-options");
+    expect(launch?.args).toContain("NestedVirtualization=enabled");
+    expect(launch?.args.join(" ")).toContain("CloudAgentNestedVirtualization");
+    expect(launch?.args).toContain("m7i.xlarge");
+  }),
+);

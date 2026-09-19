@@ -124,6 +124,8 @@ export const RunRuntimeFlush = Schema.Struct({
   /** Present on macos-ios workers. Absent on Linux flush records. */
   simulator: Schema.optionalKey(RunRuntimeFlushComponent),
   xcodeCache: Schema.optionalKey(RunRuntimeFlushComponent),
+  /** Present on linux-android workers. Snapshotted separately from the environment Build. */
+  emulator: Schema.optionalKey(RunRuntimeFlushComponent),
   flushedAt: IsoDateTime,
 });
 export type RunRuntimeFlush = typeof RunRuntimeFlush.Type;
@@ -165,6 +167,8 @@ export const RunRuntimeRestore = Schema.Struct({
   providerSession: RunRuntimeResumption,
   /** Present on macos-ios wakes. A missing Simulator process is not a silent resume. */
   simulator: Schema.optionalKey(RunRuntimeResumption),
+  /** Present on linux-android wakes. Missing AVD data is reported, not claimed as app resume. */
+  emulator: Schema.optionalKey(RunRuntimeResumption),
   restoredAt: IsoDateTime,
 });
 export type RunRuntimeRestore = typeof RunRuntimeRestore.Type;

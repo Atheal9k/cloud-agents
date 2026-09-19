@@ -131,6 +131,79 @@ it.effect("rejects macOS iOS admission in us-west-1 instead of placing elsewhere
   }).pipe(Effect.provide(SqlitePersistenceMemory)),
 );
 
+it.effect("rejects Android emulator admission on t3.medium before a costly build", () =>
+  Effect.gen(function* () {
+    const controller = yield* make({
+      enabled: true,
+      region: "us-west-1",
+      limits: {
+        maxConcurrentWorkers: 1,
+        maxQueueDepth: 8,
+        maxRunSeconds: 7_200,
+        maxInputWaitSeconds: 900,
+        previewGraceSeconds: 900,
+        idleReleaseSeconds: 3_600,
+        conversationRetentionDays: 30,
+        allowedInstanceTypes: ["t3.medium", "m7i.xlarge"],
+      },
+    });
+    const error = yield* controller
+      .dispatch(
+        decodeCommand({
+          ...launchInput,
+          profile: {
+            id: "linux-android",
+            os: "linux",
+            arch: "x64",
+            device: "android",
+            instanceType: "t3.medium",
+          },
+        }),
+      )
+      .pipe(Effect.flip);
+
+    expect(error.reason).toBe("invalid-request");
+    expect(error.message).toContain("t3.medium");
+  }).pipe(Effect.provide(SqlitePersistenceMemory)),
+);
+
+it.effect("admits a nested-virtualization Android worker in the configured region", () =>
+  Effect.gen(function* () {
+    const controller = yield* make({
+      enabled: true,
+      region: "us-west-1",
+      limits: {
+        maxConcurrentWorkers: 1,
+        maxQueueDepth: 8,
+        maxRunSeconds: 7_200,
+        maxInputWaitSeconds: 900,
+        previewGraceSeconds: 900,
+        idleReleaseSeconds: 3_600,
+        conversationRetentionDays: 30,
+        allowedInstanceTypes: ["m7i.xlarge"],
+      },
+    });
+    const allocation = yield* controller.dispatch(
+      decodeCommand({
+        ...launchInput,
+        profile: {
+          id: "linux-android",
+          os: "linux",
+          arch: "x64",
+          device: "android",
+          instanceType: "m7i.xlarge",
+        },
+      }),
+    );
+
+    expect(allocation.profile).toMatchObject({
+      id: "linux-android",
+      device: "android",
+      instanceType: "m7i.xlarge",
+    });
+  }).pipe(Effect.provide(SqlitePersistenceMemory)),
+);
+
 it.effect("admits an Apple Silicon iOS worker in a supported Mac region", () =>
   Effect.gen(function* () {
     const controller = yield* make({

@@ -55,3 +55,7 @@ if curl --noproxy '*' --silent --show-error --fail --max-time 2 \
   "${metadata_url}" >/dev/null 2>&1; then
   fail "EC2 instance metadata is reachable from the worker service"
 fi
+
+if jq --exit-status '.capabilities.androidEmulator == true' /opt/t3/worker-image-manifest.json >/dev/null 2>&1; then
+  /opt/t3/bin/prove-android-acceleration || fail "Android emulator acceleration is unavailable"
+fi

@@ -13,6 +13,7 @@ set -euo pipefail
 : "${IMAGE_VERSION:?IMAGE_VERSION is required}"
 : "${INSTALL_DESKTOP_DEPENDENCIES:?INSTALL_DESKTOP_DEPENDENCIES is required}"
 : "${INSTALL_SHARED_BROWSER:?INSTALL_SHARED_BROWSER is required}"
+: "${INSTALL_ANDROID_SDK:?INSTALL_ANDROID_SDK is required}"
 : "${NODE_LINUX_X64_SHA256:?NODE_LINUX_X64_SHA256 is required}"
 : "${NODE_VERSION:?NODE_VERSION is required}"
 : "${PROFILE_NAME:?PROFILE_NAME is required}"
@@ -155,6 +156,21 @@ if ! id cloudagent >/dev/null 2>&1; then
   useradd --system --gid cloudagent --create-home --home-dir /home/cloudagent --shell /bin/bash cloudagent
 fi
 usermod --append --groups docker cloudagent
+if [[ "${INSTALL_ANDROID_SDK}" == "true" ]]; then
+  getent group kvm >/dev/null && usermod --append --groups kvm cloudagent
+  [[ "${ANDROID_CMDLINE_TOOLS_SHA256:-}" =~ ^[0-9a-f]{64}$ ]] \
+    || { echo "android cmdline-tools sha256 is required" >&2; exit 1; }
+  chmod +x /tmp/install-android-sdk.sh
+  /tmp/install-android-sdk.sh
+  install -m 0755 /tmp/prove-android-acceleration /opt/t3/bin/prove-android-acceleration
+  install -m 0755 /tmp/cloud-agent-android-session /opt/t3/bin/cloud-agent-android-session
+  install -m 0755 /tmp/cloud-agent-android-job-cleanup /opt/t3/bin/cloud-agent-android-job-cleanup
+fi
+rm -f \
+  /tmp/install-android-sdk.sh \
+  /tmp/prove-android-acceleration \
+  /tmp/cloud-agent-android-session \
+  /tmp/cloud-agent-android-job-cleanup
 systemctl enable docker.service
 
 install -d -o cloudagent -g cloudagent -m 0700 /var/lib/t3-worker/t3
@@ -189,6 +205,7 @@ jq --null-input \
   --arg doppler "$(doppler --version)" \
   --argjson desktop_dependencies "${INSTALL_DESKTOP_DEPENDENCIES}" \
   --argjson shared_browser "${INSTALL_SHARED_BROWSER}" \
+  --argjson android_sdk "${INSTALL_ANDROID_SDK}" \
   --arg dcv "${DCV_VERSION}" \
   '{
     imageVersion: $image_version,
@@ -208,9 +225,10 @@ jq --null-input \
     },
     capabilities: {
       coding: true,
-      webPreview: true,
+      webPreview: (if $android_sdk then false else true end),
       desktopDependencies: $desktop_dependencies,
-      mobileSdk: false,
+      mobileSdk: $android_sdk,
+      androidEmulator: $android_sdk,
       desktopStreamService: $shared_browser,
       browserAutomation: $shared_browser,
       desktopStreamTransport: (if $shared_browser then "dcv" else null end)

@@ -178,6 +178,15 @@ The offline test uses mocked providers. It plans the protected configuration, ap
 tofu test
 ```
 
+## Linux Android workers
+
+`linux-android` is a Linux `worker_profiles` entry, not a Firecracker guest and
+not a Mac Dedicated Host. Bake it with `install_android_sdk=true` and launch
+`m7i.xlarge` (or another nested-virtualization type) with
+`--cpu-options NestedVirtualization=enabled`. See
+[Android emulator worker image](../../docs/operations/android-emulator-worker-image.md).
+ADB, emulator gRPC, and control ports stay on worker loopback.
+
 ## macOS iOS workers
 
 `mac_worker_profiles` is a separate map from Linux `worker_profiles`. Each entry is an Apple Silicon AMI launched with host tenancy. Dedicated Hosts are allocated on demand by the controller, not by OpenTofu, and stay billed for 24 hours. See [macOS iOS worker image](../../docs/operations/macos-ios-worker-image.md). The Linux TTL Lambda does not terminate those instances.

@@ -15,6 +15,9 @@ import {
   type CloudAllocationLimits,
   ThreadId,
   workerProfileForInstanceType,
+  isAppleSiliconMacInstanceType,
+  isAndroidAcceleratedInstanceType,
+  linuxAndroidWorkerProfile,
 } from "@t3tools/contracts";
 import { sourceControlRepositorySelector } from "@t3tools/shared/sourceControl";
 import type { ProviderInstanceEntry } from "../providerInstances";
@@ -29,6 +32,7 @@ export interface CloudRunLaunchDraft {
   readonly runMinutes: string;
   readonly inputWaitMinutes: string;
   readonly instanceType: string;
+  readonly workerProfile: "linux-web" | "linux-android";
   readonly publication: "review-only" | "automatic-draft-pr";
   readonly baseBranch: string;
 }
@@ -87,6 +91,7 @@ export function createInitialCloudRunDraft(
     runMinutes: String(Math.min(DEFAULT_CLOUD_RUN_MINUTES, maxRunMinutes)),
     inputWaitMinutes: String(Math.min(15, maxInputWaitMinutes)),
     instanceType: snapshot?.limits.allowedInstanceTypes[0] ?? "",
+    workerProfile: "linux-web",
     publication: "automatic-draft-pr",
     baseBranch: "main",
   };
@@ -165,6 +170,16 @@ export function buildCloudRunLaunchCommand(input: {
   if (!input.limits.allowedInstanceTypes.includes(input.draft.instanceType)) {
     return { status: "invalid", message: "Choose an instance type allowed by this controller." };
   }
+  if (
+    input.draft.workerProfile === "linux-android" &&
+    !isAndroidAcceleratedInstanceType(input.draft.instanceType)
+  ) {
+    return {
+      status: "invalid",
+      message:
+        "Android emulator jobs need a nested-virtualization instance type such as m7i.xlarge, not the web worker t3.medium.",
+    };
+  }
   if (input.draft.publication === "automatic-draft-pr" && baseBranch.length === 0) {
     return { status: "invalid", message: "Choose the pull request base branch." };
   }
@@ -223,7 +238,11 @@ export function buildCloudRunLaunchCommand(input: {
           createdAt: occurredAt,
         },
       },
-      profile: workerProfileForInstanceType(input.draft.instanceType),
+      profile: isAppleSiliconMacInstanceType(input.draft.instanceType)
+        ? workerProfileForInstanceType(input.draft.instanceType)
+        : input.draft.workerProfile === "linux-android"
+          ? linuxAndroidWorkerProfile(input.draft.instanceType)
+          : workerProfileForInstanceType(input.draft.instanceType),
       deadlines: {
         launchBy: deadline(startedAt, Math.min(2 * 60, runMinutes * 60)),
         bootBy: deadline(startedAt, Math.min(5 * 60, runMinutes * 60)),

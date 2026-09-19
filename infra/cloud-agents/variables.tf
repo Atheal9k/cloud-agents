@@ -161,6 +161,8 @@ variable "worker_profiles" {
     capabilities         = optional(set(string), ["coding", "web-preview"])
     desktop_dependencies = optional(bool, false)
     shared_browser       = optional(bool, false)
+    nested_virtualization = optional(bool, false)
+    android_sdk          = optional(bool, false)
   }))
   default = {}
 
@@ -193,7 +195,7 @@ variable "worker_profiles" {
     condition = alltrue([
       for profile in values(var.worker_profiles) : profile.architecture == "x86_64"
     ])
-    error_message = "CA-03 supports x86_64 Linux web workers only. Android profiles belong to CA-37. macOS iOS profiles use mac_worker_profiles."
+    error_message = "CA-03 Linux workers are x86_64. Android uses the linux-android profile in this map; macOS iOS profiles use mac_worker_profiles."
   }
 
   validation {
@@ -204,6 +206,20 @@ variable "worker_profiles" {
       )
     ])
     error_message = "A shared-browser worker profile must enable desktop_dependencies and declare the shared-browser capability."
+  }
+
+  validation {
+    condition = alltrue([
+      for profile in values(var.worker_profiles) :
+      !contains(profile.capabilities, "android-emulator") || (
+        profile.nested_virtualization &&
+        profile.android_sdk &&
+        profile.root_volume_size_gib >= 80 &&
+        !startswith(profile.instance_type, "t3.") &&
+        !startswith(profile.instance_type, "t2.")
+      )
+    ])
+    error_message = "An android-emulator worker profile must enable nested virtualization and the Android SDK, use at least 80 GiB, and must not use t3/t2 web-worker types."
   }
 }
 

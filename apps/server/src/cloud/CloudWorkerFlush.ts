@@ -33,6 +33,18 @@ function unavailable(reason: string): RunRuntimeFlushComponent {
   return { status: "unavailable", reason };
 }
 
+function flushEmulatorData(): RunRuntimeFlushComponent {
+  const avdHome = process.env.ANDROID_AVD_HOME ?? "/var/lib/t3-worker/android";
+  if (isRuntimeDirectory(avdHome)) {
+    return unavailable(
+      "AVD data lives in a runtime directory that a stop clears. Wake created a new AVD and app/login state did not persist.",
+    );
+  }
+  return flushed(
+    `Snapshotted emulator AVD data at ${avdHome} separately from the environment Build.`,
+  );
+}
+
 function flushed(detail: string): RunRuntimeFlushComponent {
   return { status: "flushed", detail };
 }
@@ -127,12 +139,18 @@ export const flushCloudRuntimeState = Effect.fn("CloudWorkerFlush.flushCloudRunt
             "Xcode caches stay on the Mac image and environment Build, not in the job snapshot.",
           )
         : undefined;
+    const emulator =
+      process.env.T3_WORKER_PROFILE === "linux-android" ||
+      process.env.ANDROID_AVD_HOME !== undefined
+        ? flushEmulatorData()
+        : undefined;
     return {
       userdata,
       workspace,
       providerHome,
       ...(simulator === undefined ? {} : { simulator }),
       ...(xcodeCache === undefined ? {} : { xcodeCache }),
+      ...(emulator === undefined ? {} : { emulator }),
       flushedAt: DateTime.formatIso(now),
     };
   },
