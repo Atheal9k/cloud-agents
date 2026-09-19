@@ -1,0 +1,5 @@
+[project]
+name = "t3-sdk"
+version = "0.0.42"
+description = "Workflow-oriented T3 Cloud Agents SDK"
+requires-python = ">=3.11"

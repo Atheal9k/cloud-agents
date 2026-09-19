@@ -1,5 +1,6 @@
 import {
   CLOUD_AGENTS_API_BUILTIN_SUBAGENTS,
+  CLOUD_AGENTS_API_CONTRACT_VERSION,
   CLOUD_AGENTS_API_DEFAULT_PAGE_LIMIT,
   CLOUD_AGENTS_API_IMAGE_MIME_TYPES,
   CLOUD_AGENTS_API_MAX_ENV_VARS,
@@ -35,6 +36,7 @@ import {
   type CloudAgentsApiPrompt,
   type CloudAgentsApiRepoInput,
   type CloudAgentsApiRun,
+  type CloudAgentsApiStability,
   type CloudAgentsApiStreamEvent,
   type CloudAgentsApiTokenUsage,
 } from "@t3tools/contracts";
@@ -80,7 +82,10 @@ export function statusForCode(code: CloudAgentsApiErrorCode): number {
     case "assistant_not_found":
     case "subscription_not_found":
     case "automation_not_found":
+    case "webhook_not_found":
       return 404;
+    case "unsupported_api_version":
+      return 400;
     case "stream_expired":
       return 410;
     case "rate_limited":
@@ -121,6 +126,50 @@ export function parseCloudAgentsApiAuthorization(
   } catch {
     return apiError("unauthorized", "The Basic credential could not be decoded.");
   }
+}
+
+export function parseCloudAgentsApiStability(
+  pathname: string,
+): CloudAgentsApiStability | CloudAgentsApiFailure {
+  const first = pathname.split("/").filter((part) => part.length > 0)[0];
+  if (first === "v1" || first === "beta" || first === "preview") return first;
+  return apiError("unsupported_api_version", "Use /v1, /beta, or /preview.");
+}
+
+export function rewriteCloudAgentsApiPath(pathname: string): string {
+  return pathname.replace(/^\/(beta|preview)(?=\/|$)/u, "/v1");
+}
+
+export function cloudAgentsApiVersionHeaders(
+  stability: CloudAgentsApiStability,
+): Record<string, string> {
+  return {
+    "t3-api-version": CLOUD_AGENTS_API_CONTRACT_VERSION,
+    "t3-api-stability": stability,
+  };
+}
+
+export function cloudAgentsApiFeatures(stability: CloudAgentsApiStability): {
+  readonly version: string;
+  readonly stability: CloudAgentsApiStability;
+  readonly features: ReadonlyArray<string>;
+} {
+  const features = ["agents", "runs", "webhooks", "idempotency"];
+  if (stability === "beta") {
+    return {
+      version: CLOUD_AGENTS_API_CONTRACT_VERSION,
+      stability,
+      features: [...features, "beta"],
+    };
+  }
+  if (stability === "preview") {
+    return {
+      version: CLOUD_AGENTS_API_CONTRACT_VERSION,
+      stability,
+      features: [...features, "preview", "webhooks.preview-events"],
+    };
+  }
+  return { version: CLOUD_AGENTS_API_CONTRACT_VERSION, stability, features };
 }
 
 export function principalMe(principal: CloudAgentsApiPrincipal): CloudAgentsApiMe {

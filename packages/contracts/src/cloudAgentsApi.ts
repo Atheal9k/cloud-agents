@@ -5,6 +5,10 @@ import { CloudAgentStatus, CloudRunStatus } from "./cloudAllocation.ts";
 import { CloudCommitProvenance } from "./cloudCommitProvenance.ts";
 
 export const CLOUD_AGENTS_API_PREFIX = "/v1";
+/** Calendar contract version advertised on every Cloud Agents API response. */
+export const CLOUD_AGENTS_API_CONTRACT_VERSION = "2026-09-19";
+export const CLOUD_AGENTS_API_STABILITIES = ["v1", "beta", "preview"] as const;
+export type CloudAgentsApiStability = (typeof CLOUD_AGENTS_API_STABILITIES)[number];
 export const CLOUD_AGENTS_API_STREAM_RETENTION_SECONDS = 24 * 60 * 60;
 /** Ring-buffer cap for the controller's derived run stream. Not a second event store. */
 export const CLOUD_AGENTS_API_STREAM_RETENTION_EVENTS = 10_000;
@@ -64,6 +68,8 @@ export const CloudAgentsApiErrorCode = Schema.Literals([
   "assistant_not_found",
   "subscription_not_found",
   "automation_not_found",
+  "webhook_not_found",
+  "unsupported_api_version",
   "internal_error",
 ]);
 export type CloudAgentsApiErrorCode = typeof CloudAgentsApiErrorCode.Type;

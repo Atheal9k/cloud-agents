@@ -15,6 +15,7 @@ import {
   CloudAssistantMemoryWrite,
   CloudAssistantPersistenceKind,
   CloudAssistantSubscription,
+  CloudWebhookCreateRequest,
   type CloudAgentsApiPrincipal,
 } from "@t3tools/contracts";
 import * as Context from "effect/Context";
@@ -31,15 +32,20 @@ import * as CloudAgentSchedules from "./CloudAgentSchedules.ts";
 import * as CloudAgentAutomations from "./CloudAgentAutomations.ts";
 import * as CloudAssistants from "./CloudAssistants.ts";
 import * as CloudAgentSubscriptions from "./CloudAgentSubscriptions.ts";
+import * as CloudWebhooks from "./CloudWebhooks.ts";
 import {
   CloudAgentsApiFailure,
+  cloudAgentsApiFeatures,
+  cloudAgentsApiVersionHeaders,
   defaultMinuteLimit,
   encodeSse,
   parseBooleanParam,
   parseCloudAgentsApiAuthorization,
+  parseCloudAgentsApiStability,
   parseLimitParam,
   repositoryHourLimit,
   repositoryMinuteLimit,
+  rewriteCloudAgentsApiPath,
   type RateLimitWindow,
 } from "./cloudAgentsApiModel.ts";
 
@@ -62,6 +68,7 @@ const decodeSubscription = Schema.decodeUnknownEffect(CloudAgentSubscriptionCrea
 const decodeSubscriptionDelivery = Schema.decodeUnknownEffect(
   CloudAgentSubscriptionDeliveryRequest,
 );
+const decodeWebhook = Schema.decodeUnknownEffect(CloudWebhookCreateRequest);
 
 type LimitState = {
   minute: Map<string, RateLimitWindow>;
@@ -139,6 +146,7 @@ const handleV1 = (deps: {
   readonly automations: CloudAgentAutomations.CloudAgentAutomations["Service"];
   readonly assistants: CloudAssistants.CloudAssistants["Service"];
   readonly subscriptions: CloudAgentSubscriptions.CloudAgentSubscriptions["Service"];
+  readonly webhooks: CloudWebhooks.CloudWebhooks["Service"];
   readonly limits: Ref.Ref<LimitState>;
 }) =>
   Effect.gen(function* () {
@@ -146,7 +154,13 @@ const handleV1 = (deps: {
     const requestId = requestIdOf(request.headers["x-request-id"]);
     const nowMs = DateTime.toEpochMillis(DateTime.nowUnsafe());
     const url = new URL(request.url, "http://localhost");
-    const path = url.pathname.replace(/\/$/u, "") || "/";
+    const stability = parseCloudAgentsApiStability(url.pathname);
+    if (stability instanceof CloudAgentsApiFailure) {
+      return errorResponse(stability, {
+        ...limitHeaders(requestId, { remaining: 0, limit: 60, resetAtMs: nowMs }),
+      });
+    }
+    const path = rewriteCloudAgentsApiPath(url.pathname.replace(/\/$/u, "") || "/");
     if (request.method.toUpperCase() === "POST" && path.startsWith("/v1/automation-hooks/")) {
       const hookMeta = limitHeaders(requestId, { remaining: 59, limit: 60, resetAtMs: nowMs });
       const token = parseCloudAgentsApiAuthorization(request.headers.authorization);
@@ -191,14 +205,18 @@ const handleV1 = (deps: {
       deps.limits,
       principal,
       nowMs,
-      url.pathname.startsWith("/v1/repositories"),
+      rewriteCloudAgentsApiPath(url.pathname).startsWith("/v1/repositories"),
     );
-    const meta = limitHeaders(requestId, decision);
+    const meta = {
+      ...limitHeaders(requestId, decision),
+      ...cloudAgentsApiVersionHeaders(stability),
+    };
     if (!decision.allowed) {
-      return errorResponse(
-        new CloudAgentsApiFailure("rate_limited", "Rate limit exceeded.", 429),
-        meta,
-      );
+      const retryAfter = Math.max(1, Math.ceil((decision.resetAtMs - nowMs) / 1000));
+      return errorResponse(new CloudAgentsApiFailure("rate_limited", "Rate limit exceeded.", 429), {
+        ...meta,
+        "retry-after": String(retryAfter),
+      });
     }
     return yield* dispatchV1({
       api: deps.api,
@@ -206,12 +224,14 @@ const handleV1 = (deps: {
       automations: deps.automations,
       assistants: deps.assistants,
       subscriptions: deps.subscriptions,
+      webhooks: deps.webhooks,
       principal,
       request,
       url,
       origin: originOf(request),
       nowMs,
       meta,
+      stability,
     });
   }).pipe(
     Effect.catchIf(
@@ -242,12 +262,14 @@ const dispatchV1 = (input: {
   readonly automations: CloudAgentAutomations.CloudAgentAutomations["Service"];
   readonly assistants: CloudAssistants.CloudAssistants["Service"];
   readonly subscriptions: CloudAgentSubscriptions.CloudAgentSubscriptions["Service"];
+  readonly webhooks: CloudWebhooks.CloudWebhooks["Service"];
   readonly principal: CloudAgentsApiPrincipal;
   readonly request: HttpServerRequest.HttpServerRequest;
   readonly url: URL;
   readonly origin: string;
   readonly nowMs: number;
   readonly meta: Record<string, string>;
+  readonly stability: "v1" | "beta" | "preview";
 }) =>
   Effect.gen(function* () {
     const {
@@ -256,21 +278,28 @@ const dispatchV1 = (input: {
       automations,
       assistants,
       subscriptions,
+      webhooks,
       principal,
       request,
       url,
       origin,
       nowMs,
       meta,
+      stability,
     } = input;
     const method = request.method.toUpperCase();
-    const path = url.pathname.replace(/\/$/u, "") || "/";
+    const path = rewriteCloudAgentsApiPath(url.pathname.replace(/\/$/u, "") || "/");
     const parts = path.split("/").filter((part) => part.length > 0);
+    const idempotencyKey = request.headers["idempotency-key"]?.trim();
     const jsonBody = request.json.pipe(
       Effect.mapError(
         () => new CloudAgentsApiFailure("invalid_request", "JSON body required.", 400),
       ),
     );
+
+    if (method === "GET" && path === "/v1/features") {
+      return jsonResponse(200, cloudAgentsApiFeatures(stability), meta);
+    }
 
     if (method === "GET" && path === "/v1/me") {
       return jsonResponse(200, yield* api.me(principal), meta);
@@ -425,7 +454,12 @@ const dispatchV1 = (input: {
           meta,
         );
       }
-      if (method === "DELETE" && parts.length === 5 && parts[3] === "memory" && parts[4] !== undefined) {
+      if (
+        method === "DELETE" &&
+        parts.length === 5 &&
+        parts[3] === "memory" &&
+        parts[4] !== undefined
+      ) {
         return jsonResponse(
           200,
           yield* automations.deleteMemory({ principal, automationId, factId: parts[4] }),
@@ -583,6 +617,61 @@ const dispatchV1 = (input: {
         );
       }
     }
+    if (method === "POST" && path === "/v1/webhooks") {
+      const body = yield* decodeWebhook(yield* jsonBody).pipe(
+        Effect.mapError(
+          () => new CloudAgentsApiFailure("invalid_request", "Invalid webhook request.", 400),
+        ),
+      );
+      return jsonResponse(
+        200,
+        yield* webhooks.create({
+          principal,
+          url: body.url,
+          ...(body.events === undefined ? {} : { events: body.events }),
+          ...(body.description === undefined ? {} : { description: body.description }),
+        }),
+        meta,
+      );
+    }
+    if (method === "GET" && path === "/v1/webhooks") {
+      return jsonResponse(200, yield* webhooks.list({ principal }), meta);
+    }
+    if (method === "GET" && path === "/v1/webhooks/dead-letters") {
+      const limit = parseLimitParam(url.searchParams.get("limit"));
+      if (limit instanceof CloudAgentsApiFailure) return errorResponse(limit, meta);
+      return jsonResponse(200, yield* webhooks.listDeadLetters({ principal, limit }), meta);
+    }
+    if (parts[0] === "v1" && parts[1] === "webhooks" && parts[2] !== undefined) {
+      if (
+        method === "POST" &&
+        parts.length === 4 &&
+        parts[2] === "deliveries" &&
+        parts[3] !== undefined
+      ) {
+        return jsonResponse(
+          200,
+          yield* webhooks.redeliver({ principal, deliveryId: parts[3] }),
+          meta,
+        );
+      }
+      const endpointId = parts[2];
+      if (method === "GET" && parts.length === 3) {
+        return jsonResponse(200, yield* webhooks.get({ principal, endpointId }), meta);
+      }
+      if (method === "DELETE" && parts.length === 3) {
+        return jsonResponse(200, yield* webhooks.remove({ principal, endpointId }), meta);
+      }
+      if (method === "GET" && parts.length === 4 && parts[3] === "deliveries") {
+        const limit = parseLimitParam(url.searchParams.get("limit"));
+        if (limit instanceof CloudAgentsApiFailure) return errorResponse(limit, meta);
+        return jsonResponse(
+          200,
+          yield* webhooks.listDeliveries({ principal, endpointId, limit }),
+          meta,
+        );
+      }
+    }
     if (method === "POST" && path === "/v1/agents") {
       const body = yield* decodeCreateAgent(yield* jsonBody).pipe(
         Effect.mapError(
@@ -591,7 +680,14 @@ const dispatchV1 = (input: {
       );
       return jsonResponse(
         200,
-        yield* api.createAgent({ principal, body, urlOrigin: origin }),
+        yield* api.createAgent({
+          principal,
+          body,
+          urlOrigin: origin,
+          ...(idempotencyKey === undefined || idempotencyKey.length === 0
+            ? {}
+            : { idempotencyKey }),
+        }),
         meta,
       );
     }
@@ -711,7 +807,18 @@ const dispatchV1 = (input: {
           () => new CloudAgentsApiFailure("invalid_request", "Invalid create run request.", 400),
         ),
       );
-      return jsonResponse(200, yield* api.createRun({ principal, agentId, body }), meta);
+      return jsonResponse(
+        200,
+        yield* api.createRun({
+          principal,
+          agentId,
+          body,
+          ...(idempotencyKey === undefined || idempotencyKey.length === 0
+            ? {}
+            : { idempotencyKey }),
+        }),
+        meta,
+      );
     }
     if (method === "GET" && parts.length === 4 && parts[3] === "runs") {
       const limit = parseLimitParam(url.searchParams.get("limit"));
@@ -804,11 +911,22 @@ export const cloudAgentsApiRouteLayer = Layer.unwrap(
     const automations = yield* CloudAgentAutomations.CloudAgentAutomations;
     const assistants = yield* CloudAssistants.CloudAssistants;
     const subscriptions = yield* CloudAgentSubscriptions.CloudAgentSubscriptions;
+    const webhooks = yield* CloudWebhooks.CloudWebhooks;
     const limits = yield* CloudAgentsApiRateLimits;
-    return HttpRouter.add(
-      "*",
-      "/v1*",
-      handleV1({ api, keys, schedules, automations, assistants, subscriptions, limits }),
+    const handler = handleV1({
+      api,
+      keys,
+      schedules,
+      automations,
+      assistants,
+      subscriptions,
+      webhooks,
+      limits,
+    });
+    return Layer.mergeAll(
+      HttpRouter.add("*", "/v1*", handler),
+      HttpRouter.add("*", "/beta*", handler),
+      HttpRouter.add("*", "/preview*", handler),
     );
   }),
 );

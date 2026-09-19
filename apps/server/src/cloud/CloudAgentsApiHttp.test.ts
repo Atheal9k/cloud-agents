@@ -3,6 +3,7 @@ import {
   CloudAgentSubscription,
   CloudAgentsApiPrincipal,
   CloudAssistant,
+  CloudWebhookCreated,
 } from "@t3tools/contracts";
 import { expect, it } from "vite-plus/test";
 import * as Effect from "effect/Effect";
@@ -19,11 +20,13 @@ import * as CloudAgentSchedules from "./CloudAgentSchedules.ts";
 import * as CloudAgentAutomations from "./CloudAgentAutomations.ts";
 import * as CloudAssistants from "./CloudAssistants.ts";
 import * as CloudAgentSubscriptions from "./CloudAgentSubscriptions.ts";
+import * as CloudWebhooks from "./CloudWebhooks.ts";
 
 const unused = () => Effect.die("unused");
 const decodeCloudAgentSchedule = Schema.decodeUnknownSync(CloudAgentSchedule);
 const decodeCloudAssistant = Schema.decodeUnknownSync(CloudAssistant);
 const decodeCloudAgentSubscription = Schema.decodeUnknownSync(CloudAgentSubscription);
+const decodeCloudWebhookCreated = Schema.decodeUnknownSync(CloudWebhookCreated);
 
 const unusedAssistants = Layer.succeed(CloudAssistants.CloudAssistants, {
   create: unused,
@@ -110,6 +113,19 @@ const routesLayer = cloudAgentsApiRouteLayer.pipe(
     } as unknown as CloudAgentSubscriptions.CloudAgentSubscriptions["Service"]),
   ),
   Layer.provideMerge(
+    Layer.succeed(CloudWebhooks.CloudWebhooks, {
+      create: unused,
+      list: unused,
+      get: unused,
+      remove: unused,
+      listDeliveries: unused,
+      listDeadLetters: unused,
+      redeliver: unused,
+      publish: unused,
+      reconcile: unused,
+    } as unknown as CloudWebhooks.CloudWebhooks["Service"]),
+  ),
+  Layer.provideMerge(
     Layer.succeed(CloudAgentsApiKeys.CloudAgentsApiKeys, {
       create: unused,
       authenticate: () => Effect.succeed(null),
@@ -124,11 +140,19 @@ const schedulePrincipal = Schema.decodeSync(CloudAgentsApiPrincipal)({
   createdAt: "2026-09-19T00:00:00.000Z",
 });
 
+const succeedingWebhookTransport = Layer.succeed(CloudWebhooks.CloudWebhookTransport, {
+  post: () => Effect.succeed({ status: 200 }),
+});
+
 const catalogServices = CloudAgentAutomations.layer.pipe(
   Layer.provideMerge(CloudAssistants.layer),
   Layer.provideMerge(CloudAgentSubscriptions.layer),
   Layer.provideMerge(CloudAgentSchedules.layer),
-  Layer.provideMerge(CloudAgentsApi.layer),
+  Layer.provideMerge(
+    CloudAgentsApi.layer.pipe(
+      Layer.provideMerge(CloudWebhooks.layer.pipe(Layer.provide(succeedingWebhookTransport))),
+    ),
+  ),
   Layer.provideMerge(
     Layer.effect(
       CloudAllocationController.CloudAllocationController,
@@ -444,6 +468,76 @@ it("creates an automation and admits a private webhook without the owner API key
       kind: "triggered",
       automationId: created.id,
       deliveryId: "pd-9",
+    });
+  } finally {
+    await dispose();
+  }
+});
+
+it("registers outbound webhooks and versions preview/beta aliases", async () => {
+  const { handler, dispose } = HttpRouter.toWebHandler(scheduleRoutesLayer, {
+    disableLogger: true,
+  });
+  const headers = {
+    authorization: "Bearer t3ca_schedule",
+    "content-type": "application/json",
+  };
+  try {
+    const features = await handler(new Request("http://127.0.0.1/preview/features", { headers }));
+    expect(features.status, await features.clone().text()).toBe(200);
+    expect(features.headers.get("t3-api-stability")).toBe("preview");
+    expect(await features.json()).toMatchObject({
+      stability: "preview",
+      features: expect.arrayContaining(["webhooks", "webhooks.preview-events"]),
+    });
+
+    const createdResponse = await handler(
+      new Request("http://127.0.0.1/v1/webhooks", {
+        method: "POST",
+        headers,
+        body: JSON.stringify({ url: "http://127.0.0.1:9999/hook", events: ["status", "terminal"] }),
+      }),
+    );
+    expect(createdResponse.status, await createdResponse.clone().text()).toBe(200);
+    const created = decodeCloudWebhookCreated(await createdResponse.json());
+    expect(created.secret.startsWith("whsec_")).toBe(true);
+
+    const listed = await handler(new Request("http://127.0.0.1/beta/webhooks", { headers }));
+    expect(listed.status, await listed.clone().text()).toBe(200);
+    expect(listed.headers.get("t3-api-stability")).toBe("beta");
+    expect(await listed.json()).toMatchObject({ items: [{ id: created.endpoint.id }] });
+
+    const first = await handler(
+      new Request("http://127.0.0.1/v1/agents", {
+        method: "POST",
+        headers: { ...headers, "idempotency-key": "create-1" },
+        body: JSON.stringify({
+          prompt: { text: "Add a README" },
+          repos: [{ url: "https://github.com/acme/app" }],
+        }),
+      }),
+    );
+    expect(first.status, await first.clone().text()).toBe(200);
+    const createdAgent = (await first.json()) as { agent: { id: string }; run: { id: string } };
+    const replay = await handler(
+      new Request("http://127.0.0.1/v1/agents", {
+        method: "POST",
+        headers: { ...headers, "idempotency-key": "create-1" },
+        body: JSON.stringify({
+          prompt: { text: "Different prompt" },
+          repos: [{ url: "https://github.com/acme/app" }],
+        }),
+      }),
+    );
+    expect(replay.status, await replay.clone().text()).toBe(200);
+    expect(await replay.json()).toMatchObject({ agent: { id: createdAgent.agent.id } });
+
+    const deliveries = await handler(
+      new Request(`http://127.0.0.1/v1/webhooks/${created.endpoint.id}/deliveries`, { headers }),
+    );
+    expect(deliveries.status, await deliveries.clone().text()).toBe(200);
+    expect(await deliveries.json()).toMatchObject({
+      items: [{ type: "status", payload: { agentId: createdAgent.agent.id } }],
     });
   } finally {
     await dispose();

@@ -82,6 +82,7 @@ import Migration0067 from "./Migrations/067_CloudGithubTriggers.ts";
 import Migration0068 from "./Migrations/068_CloudAgentSubscriptions.ts";
 import Migration0069 from "./Migrations/069_CloudAssistants.ts";
 import Migration0070 from "./Migrations/070_CloudAgentAutomations.ts";
+import Migration0071 from "./Migrations/071_CloudWebhooks.ts";
 
 /**
  * Migration loader with all migrations defined inline.
@@ -164,6 +165,7 @@ const migrationEntries = [
   [68, "CloudAgentSubscriptions", Migration0068],
   [69, "CloudAssistants", Migration0069],
   [70, "CloudAgentAutomations", Migration0070],
+  [71, "CloudWebhooks", Migration0071],
 ] as const;
 
 export const migrationManifest = migrationEntries.map(([id, name]) => [id, name] as const);
