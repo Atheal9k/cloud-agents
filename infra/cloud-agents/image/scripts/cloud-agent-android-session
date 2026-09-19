@@ -66,9 +66,9 @@ adb -s "${ANDROID_SERIAL}" shell getprop sys.boot_completed | grep -q 1 || sleep
 printf '%s\n' "${ANDROID_SERIAL}" > "${artifact_dir}/serial.txt"
 install -d -m 0700 /run/t3-worker
 cat >/run/t3-worker/device-display.env <<ENV
-T3CODE_DEVICE_DISPLAY_SERIAL=${ANDROID_SERIAL}
-T3CODE_DEVICE_DISPLAY_DEVICE_NAME=${avd_name}
-T3CODE_DEVICE_DISPLAY_RUNTIME=Android ${ANDROID_API_LEVEL:-36}
+T3CODE_DEVICE_DISPLAY_SERIAL='${ANDROID_SERIAL}'
+T3CODE_DEVICE_DISPLAY_DEVICE_NAME='${avd_name}'
+T3CODE_DEVICE_DISPLAY_RUNTIME='Android ${ANDROID_API_LEVEL:-36}'
 T3CODE_DEVICE_DISPLAY_BUILD_REVISION=debug
 T3CODE_DEVICE_DISPLAY_CONNECTION_STATE=booted
 ENV
@@ -101,9 +101,9 @@ if [[ -f "${checkout}/android/gradlew" || -f "${checkout}/gradlew" ]]; then
       adb -s "${ANDROID_SERIAL}" shell monkey -p "${package}" -c android.intent.category.LAUNCHER 1
     fi
     cat >/run/t3-worker/device-display.env <<ENV
-T3CODE_DEVICE_DISPLAY_SERIAL=${ANDROID_SERIAL}
-T3CODE_DEVICE_DISPLAY_DEVICE_NAME=${avd_name}
-T3CODE_DEVICE_DISPLAY_RUNTIME=Android ${ANDROID_API_LEVEL:-36}
+T3CODE_DEVICE_DISPLAY_SERIAL='${ANDROID_SERIAL}'
+T3CODE_DEVICE_DISPLAY_DEVICE_NAME='${avd_name}'
+T3CODE_DEVICE_DISPLAY_RUNTIME='Android ${ANDROID_API_LEVEL:-36}'
 T3CODE_DEVICE_DISPLAY_BUILD_REVISION=debug
 T3CODE_DEVICE_DISPLAY_CONNECTION_STATE=app-running
 ENV

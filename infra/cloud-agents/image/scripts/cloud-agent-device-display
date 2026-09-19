@@ -101,13 +101,16 @@ jq --null-input --compact-output \
     upstreamUrl: $upstream_url,
     attemptKey: $attempt_key,
     threadId: $thread_id,
-    session: {
-      platform: $platform,
-      transport: $transport,
-      deviceName: $device_name,
-      runtime: $runtime,
-      buildRevision: $build_revision,
-      connectionState: $connection_state
-    } + (if $serial != null then {serial: $serial} else {} end)
+    session: (
+      {
+        platform: $platform,
+        transport: $transport,
+        deviceName: $device_name,
+        runtime: $runtime,
+        buildRevision: $build_revision,
+        connectionState: $connection_state
+      }
+      + (if $serial != null then {serial: $serial} else {} end)
       + (if $udid != null then {udid: $udid} else {} end)
+    )
   }'

@@ -39,9 +39,9 @@ xcrun simctl bootstatus "${udid}" -b
 printf '%s\n' "${udid}" > "${artifact_dir}/udid.txt"
 install -d -m 0700 /run/t3-worker
 cat >/run/t3-worker/device-display.env <<ENV
-T3CODE_DEVICE_DISPLAY_UDID=${udid}
-T3CODE_DEVICE_DISPLAY_DEVICE_NAME=${device_name}
-T3CODE_DEVICE_DISPLAY_RUNTIME=${runtime}
+T3CODE_DEVICE_DISPLAY_UDID='${udid}'
+T3CODE_DEVICE_DISPLAY_DEVICE_NAME='${device_name}'
+T3CODE_DEVICE_DISPLAY_RUNTIME='${runtime}'
 T3CODE_DEVICE_DISPLAY_BUILD_REVISION=debug
 T3CODE_DEVICE_DISPLAY_CONNECTION_STATE=booted
 ENV
@@ -68,9 +68,9 @@ if [[ -n "${workspace}" && -n "${scheme}" ]]; then
     xcrun simctl launch "${udid}" "${bundle_id}"
     install -d -m 0700 /run/t3-worker
     cat >/run/t3-worker/device-display.env <<ENV
-T3CODE_DEVICE_DISPLAY_UDID=${udid}
-T3CODE_DEVICE_DISPLAY_DEVICE_NAME=${device_name}
-T3CODE_DEVICE_DISPLAY_RUNTIME=${runtime}
+T3CODE_DEVICE_DISPLAY_UDID='${udid}'
+T3CODE_DEVICE_DISPLAY_DEVICE_NAME='${device_name}'
+T3CODE_DEVICE_DISPLAY_RUNTIME='${runtime}'
 T3CODE_DEVICE_DISPLAY_BUILD_REVISION=debug
 T3CODE_DEVICE_DISPLAY_CONNECTION_STATE=app-running
 ENV
