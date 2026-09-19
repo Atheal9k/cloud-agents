@@ -3,6 +3,8 @@ import {
   CloudWarmGuestId,
   RunAllocationCommand,
   type CloudAllocationSnapshot,
+  type CloudEnvironment,
+  type CloudEnvironmentVersion,
   type RunAllocation,
   type RunRuntimeFlush,
   type RunRuntimeSnapshot,
@@ -31,6 +33,7 @@ import {
   retainedRuntimeSnapshot,
   runDeadlineApplies,
 } from "./cloudHibernationPolicy.ts";
+import { expiredLeases, holdsRuntime, settleIdleSeconds } from "./cloudPreviewLeasePolicy.ts";
 import * as CloudMacHostCatalog from "./CloudMacHostCatalog.ts";
 import * as CloudWarmPoolCatalog from "./CloudWarmPoolCatalog.ts";
 import {
@@ -59,6 +62,25 @@ function commandId(
 
 function hasPassed(now: DateTime.Utc, deadline: string): boolean {
   return DateTime.toEpochMillis(now) >= Date.parse(deadline);
+}
+
+/** A reopen attempt that has not yet run the environment's per-boot services. */
+function awaitingReopen(allocation: RunAllocation): boolean {
+  return allocation.attemptPurpose === "reopen" && allocation.reopen === undefined;
+}
+
+/**
+ * The environment a reopened guest starts. The disk is the one the run left
+ * behind; the services are the ones the environment declares now, because an
+ * operator who fixed a broken `start` expects the fix when they reopen.
+ */
+function environmentVersionFor(
+  allocation: RunAllocation,
+  environments: ReadonlyArray<CloudEnvironment>,
+): CloudEnvironmentVersion | undefined {
+  const reference = allocation.environment;
+  if (reference === undefined) return undefined;
+  return environments.find((candidate) => candidate.id === reference.environmentId)?.current;
 }
 
 function recordedInstanceId(allocation: RunAllocation): string | undefined {
@@ -126,24 +148,7 @@ function unflushed(
   };
 }
 
-function reviewDeadline(allocation: RunAllocation, reviewGraceMillis: number): number | undefined {
-  switch (allocation.agentOutcome.status) {
-    case "succeeded":
-    case "failed":
-      return Math.min(
-        Date.parse(allocation.agentOutcome.completedAt) + reviewGraceMillis,
-        Date.parse(allocation.deadlines.expiresAt),
-      );
-    case "not-started":
-    case "running":
-    case "cancelled":
-    case "expired":
-      return undefined;
-  }
-}
-
 export const make = Effect.fn("CloudAllocationReconciler.make")(function* (input?: {
-  readonly reviewGraceMillis?: number;
   readonly idleReleaseSeconds?: number;
   readonly runClient?: CloudWorkerRunClient.CloudWorkerRunClient["Service"];
 }) {
@@ -332,7 +337,10 @@ export const make = Effect.fn("CloudAllocationReconciler.make")(function* (input
     yield* dispatch(allocation, occurredAt, {
       type: "allocation.idle",
       commandId: commandId(allocation, "idle"),
-      releaseAt: idleReleaseAt({ settledAt: occurredAt, idleReleaseSeconds }),
+      releaseAt: idleReleaseAt({
+        settledAt: occurredAt,
+        idleReleaseSeconds: settleIdleSeconds({ allocation, idleReleaseSeconds }),
+      }),
       flush,
     });
     yield* Effect.logInfo("Cloud agent settled and started its idle-release timer.", {
@@ -341,6 +349,30 @@ export const make = Effect.fn("CloudAllocationReconciler.make")(function* (input
       idleReleaseSeconds,
       workspaceFlush: flush.workspace.status,
     });
+  });
+
+  /**
+   * What a person changed by hand on a reopened guest, captured before the disk
+   * is stopped. It writes a checkpoint and a diff on the guest and nothing
+   * else: the pull request the run already published is not touched.
+   */
+  const captureSessionEdits = Effect.fn("CloudAllocationReconciler.captureSessionEdits")(function* (
+    allocation: RunAllocation,
+    occurredAt: string,
+  ) {
+    if (allocation.attemptPurpose !== "reopen" || allocation.sessionEdits !== undefined) {
+      return false;
+    }
+    if (runClient === undefined) return false;
+    const edits = yield* runClient.sessionEdits(allocation).pipe(Effect.result);
+    yield* dispatch(allocation, occurredAt, {
+      type: "allocation.session-edits-captured",
+      commandId: commandId(allocation, "session-edits"),
+      edits: Result.isSuccess(edits)
+        ? edits.success
+        : { status: "unavailable", reason: edits.failure.message },
+    });
+    return true;
   });
 
   /**
@@ -388,6 +420,13 @@ export const make = Effect.fn("CloudAllocationReconciler.make")(function* (input
       flush: allocation.idleState.flush,
       capturedAt: occurredAt,
     };
+    // The route and its bearer token are bound to this attempt, and the guest
+    // that served them is stopped. Revoking the registration credential here is
+    // what stops a stale token from being replayed against the woken runtime,
+    // which comes back on a new, fenced attempt.
+    if (guest.registrationCredentialPresent) {
+      yield* workers.revokeRegistrationCredential(instanceId).pipe(Effect.ignore);
+    }
     yield* dispatch(allocation, occurredAt, {
       type: "allocation.hibernate",
       commandId: commandId(allocation, "hibernate"),
@@ -402,9 +441,9 @@ export const make = Effect.fn("CloudAllocationReconciler.make")(function* (input
 
   const reconcileAllocation = Effect.fn("CloudAllocationReconciler.reconcileAllocation")(function* (
     allocation: RunAllocation,
-    reviewGraceMillis: number,
     maxInputWaitSeconds: number,
     idleReleaseSeconds: number,
+    environments: ReadonlyArray<CloudEnvironment>,
   ) {
     const now = yield* DateTime.now;
     const occurredAt = DateTime.formatIso(now);
@@ -425,19 +464,18 @@ export const make = Effect.fn("CloudAllocationReconciler.make")(function* (input
       });
       return;
     }
-    // The review grace ends the preview, not the conversation. It runs on its
-    // own clock, so a settled agent still loses its preview on time whether or
-    // not its guest has already been released.
-    const completedReviewDeadline = reviewDeadline(allocation, reviewGraceMillis);
-    if (
-      completedReviewDeadline !== undefined &&
-      allocation.previewState.status === "available" &&
-      DateTime.toEpochMillis(now) >= completedReviewDeadline
-    ) {
-      yield* dispatch(allocation, occurredAt, {
-        type: "allocation.preview-withdrawn",
-        commandId: commandId(allocation, "review-complete"),
-      });
+    // A lease ends on its own clock, so a session someone walked away from
+    // stops holding the guest whether or not anything else has moved.
+    const expired = expiredLeases({ allocation, now: occurredAt });
+    if (expired.length > 0) {
+      for (const lease of expired) {
+        yield* dispatch(allocation, occurredAt, {
+          type: "allocation.session-lease-release",
+          commandId: commandId(allocation, "lease-expired", lease.kind),
+          kind: lease.kind,
+          reason: lease.reason,
+        });
+      }
       return;
     }
     // A hibernated guest is stopped and costs no compute. Nothing moves it
@@ -445,14 +483,22 @@ export const make = Effect.fn("CloudAllocationReconciler.make")(function* (input
     // the worker lifetime, decide how long a thread stays open.
     if (allocation.idleState.status === "hibernated") return;
     if (allocation.idleState.status === "idle") {
+      // Somebody is still looking at it. The idle timer is about people who
+      // walked away, so it defers rather than pulling the app out from under.
+      if (holdsRuntime({ allocation, now: occurredAt })) return;
       if (!isIdleReleaseDue({ allocation, now: occurredAt })) return;
+      if (yield* captureSessionEdits(allocation, occurredAt)) return;
       yield* release(allocation, occurredAt);
       return;
     }
     if (
       allocation.idleState.status === "busy" &&
       allocation.allocationState.status === "ready" &&
-      hasAgentSettled(allocation)
+      hasAgentSettled(allocation) &&
+      // A reopened guest is settled the moment it comes back, so settling it
+      // here would start the idle timer before the app it was reopened for is
+      // even running. The environment start goes first.
+      !awaitingReopen(allocation)
     ) {
       yield* settle(allocation, occurredAt, idleReleaseSeconds);
       return;
@@ -923,6 +969,38 @@ export const make = Effect.fn("CloudAllocationReconciler.make")(function* (input
           return;
         }
         if (allocation.execution === undefined || runClient === undefined) return;
+        /**
+         * A reopen attempt exists so a person can look at the app. It runs the
+         * environment's per-boot `start` and stops there: no turn is submitted,
+         * so the run state machine never moves and the published branch is left
+         * exactly as the run left it.
+         */
+        if (allocation.attemptPurpose === "reopen") {
+          if (allocation.reopen !== undefined) return;
+          const version = environmentVersionFor(allocation, environments);
+          if (version === undefined) {
+            yield* Effect.logWarning("A reopened agent has no environment version to start.", {
+              allocationId: allocation.id,
+              attempt: allocation.attempt,
+            });
+            return;
+          }
+          const reopened = yield* runClient.reopen(allocation, version).pipe(Effect.result);
+          if (Result.isFailure(reopened)) {
+            yield* Effect.logWarning("Could not start the environment on a reopened guest.", {
+              allocationId: allocation.id,
+              attempt: allocation.attempt,
+              error: reopened.failure.message,
+            });
+            return;
+          }
+          yield* dispatch(allocation, occurredAt, {
+            type: "allocation.reopened",
+            commandId: commandId(allocation, "reopened"),
+            reopen: reopened.success,
+          });
+          return;
+        }
         if (allocation.agentOutcome.status === "not-started") {
           const started = yield* runClient.start(allocation).pipe(Effect.result);
           if (Result.isFailure(started)) {
@@ -1097,24 +1175,23 @@ export const make = Effect.fn("CloudAllocationReconciler.make")(function* (input
         allocation.allocationState.status === "queued" &&
         allocation.cleanupState.status === "not-requested",
     );
-    const reviewGraceMillis =
-      input?.reviewGraceMillis ?? snapshot.limits.previewGraceSeconds * 1_000;
     const idleReleaseSeconds = input?.idleReleaseSeconds ?? snapshot.limits.idleReleaseSeconds;
+    const environments = snapshot.environments ?? [];
     for (const next of occupying) {
       yield* reconcileAllocation(
         next,
-        reviewGraceMillis,
         snapshot.limits.maxInputWaitSeconds,
         idleReleaseSeconds,
+        environments,
       );
     }
     const remainingSlots = snapshot.limits.maxConcurrentWorkers - occupying.length;
     for (const next of queued.slice(0, Math.max(0, remainingSlots))) {
       yield* reconcileAllocation(
         next,
-        reviewGraceMillis,
         snapshot.limits.maxInputWaitSeconds,
         idleReleaseSeconds,
+        environments,
       );
     }
     yield* reconcileMacHosts(DateTime.formatIso(yield* DateTime.now));

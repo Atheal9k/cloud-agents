@@ -30,6 +30,7 @@ import {
   browserApiCorsLayer,
   cloudResultRouteLayer,
   cloudAgentReviewRouteLayer,
+  cloudWorkerSessionRouteLayer,
   httpCompressionLayer,
 } from "./http.ts";
 import { guardHttpResponseWriteErrors } from "./httpResponseErrorGuard.ts";
@@ -150,6 +151,8 @@ import * as CloudAllocationReconciler from "./cloud/CloudAllocationReconciler.ts
 import * as CloudWorkerRegistration from "./cloud/CloudWorkerRegistration.ts";
 import * as CloudWorkerRunClient from "./cloud/CloudWorkerRunClient.ts";
 import { cloudWorkerRegistrationHttpApiLayer } from "./cloud/CloudWorkerRegistrationHttp.ts";
+import * as CloudEnvironmentRuntimeBoot from "./cloud/CloudEnvironmentRuntimeBoot.ts";
+import * as CloudWorkerReopen from "./cloud/CloudWorkerReopen.ts";
 import * as CloudWorkerProvider from "./cloud/CloudWorkerProvider.ts";
 import * as CloudEnvironmentBuildCatalog from "./cloud/CloudEnvironmentBuildCatalog.ts";
 import * as CloudEnvironmentCatalog from "./cloud/CloudEnvironmentCatalog.ts";
@@ -325,6 +328,10 @@ const CloudWorkerProviderLayerLive = CloudWorkerProvider.layer.pipe(
 const CloudWorkerRegistrationLayerLive = CloudWorkerRegistration.layer.pipe(
   Layer.provide(ServerSecretStore.layer),
   Layer.provideMerge(CloudAllocationControllerLayerLive),
+);
+
+const CloudWorkerSessionLayerLive = CloudWorkerReopen.layer.pipe(
+  Layer.provide(CloudEnvironmentRuntimeBoot.layer),
 );
 
 const CloudAllocationRuntimeLayerLive = CloudAllocationReconciler.layer.pipe(
@@ -639,6 +646,7 @@ const RuntimeCoreDependenciesLive = Layer.mergeAll(
   CloudRunControl.layer,
   CloudAgentReview.layer,
   CloudHandoffLayerLive,
+  CloudWorkerSessionLayerLive,
   CloudAgentsApi.layer,
   CloudAgentsApiKeys.layer,
   CloudCollaboration.layer,
@@ -701,6 +709,7 @@ export const makeRoutesLayer = Layer.mergeAll(
     attachmentUploadRouteLayer,
     cloudResultRouteLayer,
     cloudAgentReviewRouteLayer,
+    cloudWorkerSessionRouteLayer,
     cloudAgentsApiRouteLayer,
     cloudCollaborationRouteLayer,
     deviceHubProxyRouteLayer,

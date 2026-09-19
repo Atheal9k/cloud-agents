@@ -2,6 +2,7 @@ import {
   type CloudAdmissionControlInput,
   type CloudArtifactAccessInput,
   type CloudAgentReviewActInput,
+  type CloudAgentReviewLeaseInput,
   type CloudAgentReviewInspectInput,
   type CloudAgentReviewShareInput,
   type CloudHandoffExecuteInput,
@@ -222,6 +223,17 @@ export function createCloudAllocationAtoms<R, E>(
     },
     execute: (input: CloudAgentReviewActInput) => request(WS_METHODS.cloudAgentReviewAct, input),
   });
+  const leaseAgentReview = createEnvironmentRpcCommand(runtime, {
+    label: "environment-data:cloud-agents:lease",
+    tag: WS_METHODS.cloudAgentReviewLease,
+    scheduler,
+    concurrency: {
+      mode: "singleFlight",
+      key: ({ environmentId, input }) => `${environmentId}:${input.agentId}:${input.kind}`,
+    },
+    execute: (input: CloudAgentReviewLeaseInput) =>
+      request(WS_METHODS.cloudAgentReviewLease, input),
+  });
   const shareAgentReview = createEnvironmentRpcCommand(runtime, {
     label: "environment-data:cloud-agents:share",
     tag: WS_METHODS.cloudAgentReviewShare,
@@ -302,6 +314,7 @@ export function createCloudAllocationAtoms<R, E>(
     grantArtifactAccess,
     inspectAgentReview,
     actAgentReview,
+    leaseAgentReview,
     shareAgentReview,
     previewHandoff,
     executeHandoff,

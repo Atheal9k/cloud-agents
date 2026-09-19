@@ -181,12 +181,21 @@ export function reviewActions(input: {
     input.allocation.agentOutcome.status === "running" ||
     input.allocation.idleState.status === "waking";
   const archived = input.agent.status === "ARCHIVED";
-  const canWake =
+  // Reopening needs a disk to restore or a released runtime to replace. An
+  // idle guest is already up, so the answer there is a lease, not a reopen.
+  const canReopen =
     !archived &&
     !busy &&
     (input.allocation.idleState.status === "hibernated" ||
-      input.allocation.idleState.status === "idle" ||
       input.allocation.cleanupState.status === "succeeded");
+  const canStop =
+    !deleting &&
+    input.allocation.stopRequestedAt === undefined &&
+    input.allocation.cleanupState.status === "not-requested" &&
+    (input.allocation.idleState.status === "idle" ||
+      (input.allocation.idleState.status === "busy" &&
+        (input.allocation.agentOutcome.status === "succeeded" ||
+          input.allocation.agentOutcome.status === "failed")));
   const hasPr =
     input.publication.status === "present" && input.publication.outcome.status === "published";
   return [
@@ -210,15 +219,22 @@ export function reviewActions(input: {
       "There is no in-flight run to cancel.",
     ),
     action(
-      "wake",
-      canWake && input.allocation.idleState.status === "hibernated",
+      "reopen",
+      canReopen,
       input.allocation.idleState.status === "idle"
-        ? "The guest is still idle and does not need a snapshot restore."
+        ? "The guest is still running. Open a preview session instead."
         : archived
-          ? "Unarchive the agent before waking it."
+          ? "Unarchive the agent before reopening it."
           : busy
             ? "The agent already has an active run."
-            : "No hibernated snapshot is available to restore.",
+            : "No hibernated snapshot is available to reopen.",
+    ),
+    action(
+      "stop",
+      canStop,
+      input.allocation.stopRequestedAt !== undefined
+        ? "This session is already stopping."
+        : "There is no running guest to stop.",
     ),
     action(
       "delete",
@@ -268,6 +284,11 @@ export function assembleCloudAgentReview(input: {
     previewAvailability: session.preview,
     terminalAvailability: session.terminal,
     previewState: input.allocation.previewState,
+    leases: input.allocation.leases,
+    ...(input.allocation.reopen === undefined ? {} : { reopen: input.allocation.reopen }),
+    ...(input.allocation.sessionEdits === undefined
+      ? {}
+      : { sessionEdits: input.allocation.sessionEdits }),
     idleState: input.allocation.idleState,
     ...(usage === undefined ? {} : { usage }),
     ...(environment === undefined ? {} : { environment }),

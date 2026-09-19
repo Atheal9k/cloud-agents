@@ -47,7 +47,11 @@ const allocation = {
     cleanupBy: "2026-09-19T03:05:00.000Z",
   },
   allocationState: { status: "queued" },
-  agentOutcome: { status: "succeeded", resultLocation: { uri: "/cloud/results/a" }, completedAt: "2026-09-19T02:00:00.000Z" },
+  agentOutcome: {
+    status: "succeeded",
+    resultLocation: { uri: "/cloud/results/a" },
+    completedAt: "2026-09-19T02:00:00.000Z",
+  },
   previewState: { status: "unavailable" },
   idleState: {
     status: "hibernated",
@@ -108,7 +112,8 @@ const snapshot = {
     maxQueueDepth: 8,
     maxRunSeconds: 1000,
     maxInputWaitSeconds: 900,
-    previewGraceSeconds: 900,
+    previewLeaseSeconds: 900,
+    previewLeaseMaxSeconds: 3600,
     idleReleaseSeconds: 3600,
     allowedInstanceTypes: ["t3.medium"],
   },
@@ -159,7 +164,7 @@ describe("cloud agent review model", () => {
     expect(review.terminalAvailability).toBe("unavailable");
     expect(review.reviewWakesRuntime).toBe(false);
     expect(review.snapshot.status).toBe("present");
-    expect(review.actions.find((action) => action.action === "wake")?.available).toBe(true);
+    expect(review.actions.find((action) => action.action === "reopen")?.available).toBe(true);
     expect(review.actions.find((action) => action.action === "archive")?.available).toBe(true);
   });
 
@@ -168,7 +173,9 @@ describe("cloud agent review model", () => {
     expect(
       inspectRetainedText({ value: "x".repeat(64 * 1024 + 1), missingReason: "gone" }).status,
     ).toBe("oversized");
-    expect(inspectRetainedText({ value: undefined, missingReason: "The retained diff has expired." })).toEqual({
+    expect(
+      inspectRetainedText({ value: undefined, missingReason: "The retained diff has expired." }),
+    ).toEqual({
       status: "missing",
       reason: "The retained diff has expired.",
     });

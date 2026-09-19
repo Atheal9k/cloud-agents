@@ -9,6 +9,8 @@ import {
   type CloudAllocationSnapshot,
   type CloudAuditListInput,
   DEFAULT_IDLE_RELEASE_SECONDS,
+  DEFAULT_PREVIEW_LEASE_MAX_SECONDS,
+  DEFAULT_PREVIEW_LEASE_SECONDS,
   type CloudEnvironment,
   type CloudEnvironmentBuild,
   cloudEnvironmentBuildReference,
@@ -96,7 +98,8 @@ const DEFAULT_LIMITS = {
   maxQueueDepth: 8,
   maxRunSeconds: 3 * 24 * 60 * 60,
   maxInputWaitSeconds: 15 * 60,
-  previewGraceSeconds: 15 * 60,
+  previewLeaseSeconds: DEFAULT_PREVIEW_LEASE_SECONDS,
+  previewLeaseMaxSeconds: DEFAULT_PREVIEW_LEASE_MAX_SECONDS,
   idleReleaseSeconds: DEFAULT_IDLE_RELEASE_SECONDS,
   conversationRetentionDays: DEFAULT_CONVERSATION_RETENTION_DAYS,
   allowedInstanceTypes: ["t3.medium"],
@@ -465,8 +468,7 @@ export const make = Effect.fn("CloudAllocationController.make")(function* (input
         events,
         nowMs: DateTime.toEpochMillis(now),
         hourlyUsd: price?.hourlyUsd,
-        rateAssumption:
-          workerCompute.status === "estimated" ? workerCompute.assumption : undefined,
+        rateAssumption: workerCompute.status === "estimated" ? workerCompute.assumption : undefined,
         hasSnapshot: allocation.idleState.status === "hibernated",
       }),
     };
@@ -538,7 +540,9 @@ export const make = Effect.fn("CloudAllocationController.make")(function* (input
         ) {
           return total;
         }
-        const allocation = allocations.find((candidate) => candidate.id === attribution.allocationId);
+        const allocation = allocations.find(
+          (candidate) => candidate.id === attribution.allocationId,
+        );
         if (allocation === undefined) return total;
         const created = Date.parse(allocation.createdAt);
         if (!Number.isFinite(created) || created < start || created >= end) return total;
@@ -1062,9 +1066,17 @@ export const make = Effect.fn("CloudAllocationController.make")(function* (input
             defaultRef: control.defaults.ref ?? null,
             defaultContext: control.defaults.context ?? null,
             defaultLongRunning:
-              control.defaults.longRunning === undefined ? null : control.defaults.longRunning ? 1 : 0,
+              control.defaults.longRunning === undefined
+                ? null
+                : control.defaults.longRunning
+                  ? 1
+                  : 0,
             defaultComputerUse:
-              control.defaults.computerUse === undefined ? null : control.defaults.computerUse ? 1 : 0,
+              control.defaults.computerUse === undefined
+                ? null
+                : control.defaults.computerUse
+                  ? 1
+                  : 0,
             defaultSummaries:
               control.defaults.summaries === undefined ? null : control.defaults.summaries ? 1 : 0,
             defaultArtifactsToGit:
@@ -1293,8 +1305,11 @@ const CloudAllocationPolicyConfig = Config.all({
   maxInputWaitSeconds: Config.int("T3CODE_CLOUD_MAX_INPUT_WAIT_SECONDS").pipe(
     Config.withDefault(15 * 60),
   ),
-  previewGraceSeconds: Config.int("T3CODE_CLOUD_PREVIEW_GRACE_SECONDS").pipe(
-    Config.withDefault(15 * 60),
+  previewLeaseSeconds: Config.int("T3CODE_CLOUD_PREVIEW_LEASE_SECONDS").pipe(
+    Config.withDefault(DEFAULT_PREVIEW_LEASE_SECONDS),
+  ),
+  previewLeaseMaxSeconds: Config.int("T3CODE_CLOUD_PREVIEW_LEASE_MAX_SECONDS").pipe(
+    Config.withDefault(DEFAULT_PREVIEW_LEASE_MAX_SECONDS),
   ),
   idleReleaseSeconds: Config.int("T3CODE_CLOUD_IDLE_RELEASE_SECONDS").pipe(
     Config.withDefault(DEFAULT_IDLE_RELEASE_SECONDS),
@@ -1329,7 +1344,8 @@ export const layer = Layer.effect(
       maxQueueDepth: policy.maxQueueDepth,
       maxRunSeconds: policy.maxRunSeconds,
       maxInputWaitSeconds: policy.maxInputWaitSeconds,
-      previewGraceSeconds: policy.previewGraceSeconds,
+      previewLeaseSeconds: policy.previewLeaseSeconds,
+      previewLeaseMaxSeconds: policy.previewLeaseMaxSeconds,
       idleReleaseSeconds: policy.idleReleaseSeconds,
       conversationRetentionDays: policy.conversationRetentionDays,
       allowedInstanceTypes: workerPriceAssumptions.map((assumption) => assumption.instanceType),

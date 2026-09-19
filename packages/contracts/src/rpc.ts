@@ -308,6 +308,7 @@ import {
 import {
   CloudAgentReview,
   CloudAgentReviewActInput,
+  CloudAgentReviewLeaseInput,
   CloudAgentReviewError,
   CloudAgentReviewInspectInput,
   CloudAgentReviewShareGrant,
@@ -484,6 +485,7 @@ export const WS_METHODS = {
   cloudArtifactsGrant: "cloud.artifacts.grant",
   cloudAgentReviewInspect: "cloud.agents.inspect",
   cloudAgentReviewAct: "cloud.agents.act",
+  cloudAgentReviewLease: "cloud.agents.lease",
   cloudAgentReviewShare: "cloud.agents.share",
   cloudHandoffPreview: "cloud.handoff.preview",
   cloudHandoffExecute: "cloud.handoff.execute",
@@ -943,6 +945,17 @@ const WsCloudAgentReviewActRpc = Rpc.make(WS_METHODS.cloudAgentReviewAct, {
     CloudAgentReviewError,
     CloudAllocationControllerError,
     CloudRunPublicationError,
+    EnvironmentAuthorizationError,
+  ]),
+});
+
+/** Opening, renewing, and releasing one viewing session on a running guest. */
+const WsCloudAgentReviewLeaseRpc = Rpc.make(WS_METHODS.cloudAgentReviewLease, {
+  payload: CloudAgentReviewLeaseInput,
+  success: CloudAgentReview,
+  error: Schema.Union([
+    CloudAgentReviewError,
+    CloudAllocationControllerError,
     EnvironmentAuthorizationError,
   ]),
 });
@@ -1772,6 +1785,7 @@ export const WsRpcGroup = RpcGroup.make(
   WsCloudArtifactsGrantRpc,
   WsCloudAgentReviewInspectRpc,
   WsCloudAgentReviewActRpc,
+  WsCloudAgentReviewLeaseRpc,
   WsCloudAgentReviewShareRpc,
   WsCloudHandoffPreviewRpc,
   WsCloudHandoffExecuteRpc,

@@ -109,6 +109,15 @@ export function projectCloudControlPlane(
         case "allocation.worker-booted":
         case "allocation.preview-published":
         case "allocation.preview-withdrawn":
+        // Leases, stops, reopen receipts, and hand edits are viewing state.
+        // They move no run and retire no runtime, which is the whole point of
+        // giving them their own lifetimes.
+        case "allocation.session-lease-opened":
+        case "allocation.session-lease-renewed":
+        case "allocation.session-lease-released":
+        case "allocation.session-stopped":
+        case "allocation.reopened":
+        case "allocation.session-edits-captured":
         case "allocation.cleanup-started":
         case "allocation.cleanup-failed":
         case "allocation.went-idle":
@@ -283,6 +292,33 @@ export function projectCloudControlPlane(
               updatedAt: event.occurredAt,
             });
           }
+          break;
+        }
+        /**
+         * A reopen fences the runtime the snapshot came from and creates a new
+         * one, exactly as a wake does. It creates no run: the agent is being
+         * looked at, not asked for more work.
+         */
+        case "allocation.reopen-requested": {
+          const previousRuntime = [...runtimes.values()].findLast((candidate) =>
+            candidate.runIds.includes(currentRunId),
+          );
+          if (previousRuntime !== undefined && previousRuntime.attempt !== event.attempt) {
+            runtimes.set(previousRuntime.attempt, {
+              ...runtimeBase(previousRuntime, event.occurredAt),
+              status: "FENCED",
+            });
+          }
+          runtimes.set(event.attempt, {
+            id: runtimeId(event.allocationId, event.attempt),
+            agentId,
+            allocationId: event.allocationId,
+            attempt: event.attempt,
+            runIds: [currentRunId],
+            status: "CREATING",
+            createdAt: event.occurredAt,
+            updatedAt: event.occurredAt,
+          });
           break;
         }
         case "allocation.agent-archived":

@@ -30,6 +30,12 @@ import { CloudProviderTurnInput, CloudProviderUnansweredRequestSeconds } from ".
 import { CloudEnvironment, CloudEnvironmentVersionReference } from "./cloudEnvironment.ts";
 import { CloudEnvironmentBuild, CloudEnvironmentBuildReference } from "./cloudEnvironmentBuild.ts";
 import { CloudMacHost } from "./cloudMacIos.ts";
+import {
+  CloudRuntimeReopen,
+  CloudSessionEdits,
+  CloudSessionLeaseKind,
+  CloudSessionLeases,
+} from "./cloudPreview.ts";
 import { CloudScmScope } from "./cloudSecurity.ts";
 import {
   CloudRuntimePlacement,
@@ -556,6 +562,19 @@ export const RunCleanupState = Schema.Union([
 ]);
 export type RunCleanupState = typeof RunCleanupState.Type;
 
+/**
+ * Why this runtime attempt exists. A `reopen` attempt restores a snapshot and
+ * runs the environment's `start` so a person can look at the app again; it
+ * never submits a turn, so nothing in the run state machine moves.
+ */
+export const RunAttemptPurpose = Schema.Literals(["run", "reopen"]);
+export type RunAttemptPurpose = typeof RunAttemptPurpose.Type;
+
+const defaultAttemptPurpose = RunAttemptPurpose.make("run");
+const RunAttemptPurposeWithDefault = RunAttemptPurpose.pipe(
+  Schema.withDecodingDefault(Effect.succeed(defaultAttemptPurpose)),
+);
+
 export const RunAllocation = Schema.Struct({
   id: RunAllocationId,
   attempt: RunAllocationAttempt,
@@ -576,7 +595,21 @@ export const RunAllocation = Schema.Struct({
   allocationState: RunAllocationState,
   agentOutcome: RunAgentOutcome,
   previewState: RunPreviewState,
+  /** What a person currently holds open. Separate deadlines, separate lifetimes. */
+  leases: CloudSessionLeases,
   idleState: RunIdleState,
+  /** Why the current attempt was placed. Missing on attempts placed before CA-36. */
+  attemptPurpose: RunAttemptPurposeWithDefault,
+  /** Present once a reopen attempt has finished restoring and starting. */
+  reopen: Schema.optionalKey(CloudRuntimeReopen),
+  /** The edits a person made by hand during the last reopened session. */
+  sessionEdits: Schema.optionalKey(CloudSessionEdits),
+  /**
+   * An explicit stop is waiting for the guest to settle. Stopping is a person
+   * saying they are done, so the idle window that exists for people who walked
+   * away no longer applies.
+   */
+  stopRequestedAt: Schema.optionalKey(IsoDateTime),
   cleanupState: RunCleanupState,
   /** Absent until the agent has started or resumed at least once. */
   snapshotRetention: Schema.optionalKey(RunSnapshotRetention),
@@ -673,6 +706,44 @@ export const RunAllocationCommand = Schema.Union([
     url: TrimmedNonEmptyString,
   }),
   Schema.Struct({ ...AttemptCommandBase, type: Schema.Literal("allocation.preview-withdrawn") }),
+  Schema.Struct({
+    ...AttemptCommandBase,
+    type: Schema.Literal("allocation.session-lease-open"),
+    kind: CloudSessionLeaseKind,
+    expiresAt: IsoDateTime,
+    hardExpiresAt: IsoDateTime,
+  }),
+  /** A heartbeat. The controller clamps the new term to the lease's hard cap. */
+  Schema.Struct({
+    ...AttemptCommandBase,
+    type: Schema.Literal("allocation.session-lease-renew"),
+    kind: CloudSessionLeaseKind,
+    expiresAt: IsoDateTime,
+  }),
+  Schema.Struct({
+    ...AttemptCommandBase,
+    type: Schema.Literal("allocation.session-lease-release"),
+    kind: CloudSessionLeaseKind,
+    reason: TrimmedNonEmptyString,
+  }),
+  /** The person closed the session. Everything is released once the guest settles. */
+  Schema.Struct({ ...AttemptCommandBase, type: Schema.Literal("allocation.session-stop") }),
+  Schema.Struct({
+    ...AttemptCommandBase,
+    type: Schema.Literal("allocation.reopen"),
+    nextAttempt: RunAllocationAttempt,
+    deadlines: RunDeadlines,
+  }),
+  Schema.Struct({
+    ...AttemptCommandBase,
+    type: Schema.Literal("allocation.reopened"),
+    reopen: CloudRuntimeReopen,
+  }),
+  Schema.Struct({
+    ...AttemptCommandBase,
+    type: Schema.Literal("allocation.session-edits-captured"),
+    edits: CloudSessionEdits,
+  }),
   Schema.Struct({
     ...AttemptCommandBase,
     type: Schema.Literal("allocation.idle"),
@@ -806,6 +877,42 @@ export const RunAllocationEvent = Schema.Union([
     url: TrimmedNonEmptyString,
   }),
   Schema.Struct({ ...EventBase, type: Schema.Literal("allocation.preview-withdrawn") }),
+  Schema.Struct({
+    ...EventBase,
+    type: Schema.Literal("allocation.session-lease-opened"),
+    kind: CloudSessionLeaseKind,
+    expiresAt: IsoDateTime,
+    hardExpiresAt: IsoDateTime,
+  }),
+  Schema.Struct({
+    ...EventBase,
+    type: Schema.Literal("allocation.session-lease-renewed"),
+    kind: CloudSessionLeaseKind,
+    expiresAt: IsoDateTime,
+  }),
+  Schema.Struct({
+    ...EventBase,
+    type: Schema.Literal("allocation.session-lease-released"),
+    kind: CloudSessionLeaseKind,
+    reason: TrimmedNonEmptyString,
+  }),
+  Schema.Struct({ ...EventBase, type: Schema.Literal("allocation.session-stopped") }),
+  Schema.Struct({
+    ...EventBase,
+    type: Schema.Literal("allocation.reopen-requested"),
+    deadlines: RunDeadlines,
+    restoreFrom: Schema.optionalKey(RunRuntimeSnapshot),
+  }),
+  Schema.Struct({
+    ...EventBase,
+    type: Schema.Literal("allocation.reopened"),
+    reopen: CloudRuntimeReopen,
+  }),
+  Schema.Struct({
+    ...EventBase,
+    type: Schema.Literal("allocation.session-edits-captured"),
+    edits: CloudSessionEdits,
+  }),
   Schema.Struct({ ...EventBase, type: Schema.Literal("allocation.cancellation-requested") }),
   Schema.Struct({ ...EventBase, type: Schema.Literal("allocation.expired") }),
   Schema.Struct({
@@ -916,7 +1023,13 @@ export const CloudAllocationLimits = Schema.Struct({
   maxQueueDepth: NonNegativeInt,
   maxRunSeconds: PositiveInt,
   maxInputWaitSeconds: PositiveInt,
-  previewGraceSeconds: NonNegativeInt,
+  /** One preview lease term. A heartbeat buys another term, never an extension. */
+  previewLeaseSeconds: PositiveInt,
+  /**
+   * The ceiling every renewal is clamped to, measured from when the lease was
+   * opened. A forgotten tab cannot hold a guest past it.
+   */
+  previewLeaseMaxSeconds: PositiveInt,
   /** How long a settled agent keeps its guest before hibernating it. */
   idleReleaseSeconds: NonNegativeInt,
   /**

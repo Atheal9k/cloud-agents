@@ -339,6 +339,41 @@ The built-in diagnostics MCP is always admitted. T3 names are canonical; the
 `cursor-cloud-` prefixes are aliases with the same arguments so the env-setup
 skill can call either.
 
+## Preview leases and reopen
+
+The idle timer is right about people who walked away and wrong about people who
+are still looking. Watching is therefore leased explicitly rather than inferred
+from a heartbeat. A visible app preview or desktop viewer takes a lease with two
+deadlines: a term, and a cap fixed when the lease opened. A heartbeat buys
+another term up to the cap and nothing past it, so a forgotten tab cannot hold a
+guest indefinitely. A held lease defers the idle release; an explicit stop skips
+the rest of the idle window entirely, because stopping is a person saying they
+are done and the snapshot keeps everything a follow-up would need. See
+[`cloudPreviewLeasePolicy`](../../apps/server/src/cloud/cloudPreviewLeasePolicy.ts).
+
+Leases are bound to the runtime attempt they were opened against, so hibernating
+or replacing a guest voids every session on it rather than carrying a stale claim
+onto the new one. Hibernation also revokes the attempt's registration
+credential: the route and its bearer token belong to the guest that is now
+stopped, and a wake comes back on a new, fenced attempt with its own.
+
+Reopening is deliberately not a wake. A wake is a follow-up: it creates a run and
+submits a turn. A reopen restores the same snapshot, runs the environment's
+per-boot `start` again, and stops there, so looking at the app costs no provider
+run and no run the person never asked for appears in their history. The attempt
+records why it exists, and the one gate a reopen cannot pass is the one that
+starts a turn: a reopened attempt keeps the terminal outcome its run ended with,
+so `allocation.agent-started` refuses by construction.
+
+Two things a reopened guest has to be honest about. The disk comes back, but the
+browser profile only comes back logged in when it is on durable storage; a
+profile in a runtime directory is reported as a fresh browser rather than left to
+look like a broken app, and either way the profile stays on the guest because it
+holds live session cookies. And the edits a person makes by hand are captured as
+a checkpoint pair and a diff under `refs/t3/cloud-session/<allocation>/<attempt>`
+before the guest is stopped. Nothing in that path talks to a remote, so a
+reopened preview cannot rewrite the pull request the run already published.
+
 ## Retention, archive, and deletion
 
 Live compute, the disk an idle agent left behind, the conversation, and the

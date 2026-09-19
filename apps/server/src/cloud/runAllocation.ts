@@ -3,12 +3,20 @@ import {
   type CloudEnvironmentBuildReference,
   type CloudEnvironmentVersionReference,
   RunAllocationAttempt,
+  cloudSessionLease,
+  emptyCloudSessionLeases,
   type RunAllocation,
   type RunAllocationCommand,
   type RunAllocationEvent,
 } from "@t3tools/contracts";
 
 import { hasAgentSettled } from "./cloudHibernationPolicy.ts";
+import {
+  isLeaseCurrent,
+  releaseAllLeases,
+  renewedLeaseExpiry,
+  withLease,
+} from "./cloudPreviewLeasePolicy.ts";
 import { snapshotRetentionFrom } from "./cloudRetentionPolicy.ts";
 
 function assertNever(value: never): never {
@@ -37,7 +45,20 @@ const BLOCKED_WHILE_DELETING = new Set<RunAllocationCommand["type"]>([
   "allocation.retry",
   "allocation.agent-archive",
   "allocation.agent-unarchive",
+  "allocation.session-lease-open",
+  "allocation.session-lease-renew",
+  "allocation.reopen",
+  "allocation.reopened",
 ]);
+
+/**
+ * Whether this attempt is still waiting for a runtime. A reopen keeps the
+ * terminal outcome the run ended with, so "no turn has started" is not the
+ * same question as "nothing is running yet".
+ */
+function awaitingRuntime(allocation: RunAllocation): boolean {
+  return allocation.agentOutcome.status === "not-started" || allocation.attemptPurpose === "reopen";
+}
 
 function eventBase(
   allocation: RunAllocation,
@@ -106,14 +127,14 @@ export function decideRunAllocationCommand(
   switch (command.type) {
     case "allocation.launch-started":
       return allocation.allocationState.status === "queued" &&
-        allocation.agentOutcome.status === "not-started" &&
+        awaitingRuntime(allocation) &&
         allocation.cleanupState.status === "not-requested"
         ? [{ ...base, type: command.type, launchTemplate: command.launchTemplate }]
         : [];
     case "allocation.launch-retry-scheduled":
       return allocation.allocationState.status === "launching" &&
         command.failures === allocation.allocationState.retry.failures + 1 &&
-        allocation.agentOutcome.status === "not-started" &&
+        awaitingRuntime(allocation) &&
         allocation.cleanupState.status === "not-requested"
         ? [
             {
@@ -127,7 +148,7 @@ export function decideRunAllocationCommand(
         : [];
     case "allocation.instance-launched":
       return allocation.allocationState.status === "launching" &&
-        allocation.agentOutcome.status === "not-started" &&
+        awaitingRuntime(allocation) &&
         allocation.cleanupState.status === "not-requested"
         ? [
             {
@@ -140,7 +161,7 @@ export function decideRunAllocationCommand(
         : [];
     case "allocation.worker-booted":
       return allocation.allocationState.status === "booting" &&
-        allocation.agentOutcome.status === "not-started" &&
+        awaitingRuntime(allocation) &&
         allocation.cleanupState.status === "not-requested"
         ? [
             {
@@ -152,13 +173,13 @@ export function decideRunAllocationCommand(
         : [];
     case "allocation.worker-assigned":
       return allocation.allocationState.status === "registering" &&
-        allocation.agentOutcome.status === "not-started" &&
+        awaitingRuntime(allocation) &&
         allocation.cleanupState.status === "not-requested"
         ? [{ ...base, type: command.type, references: command.references }]
         : [];
     case "allocation.worker-registered":
       return allocation.allocationState.status === "registering" &&
-        allocation.agentOutcome.status === "not-started" &&
+        awaitingRuntime(allocation) &&
         allocation.cleanupState.status === "not-requested"
         ? [
             {
@@ -174,10 +195,15 @@ export function decideRunAllocationCommand(
         allocation.allocationState.status === "launching" ||
         allocation.allocationState.status === "booting" ||
         allocation.allocationState.status === "registering") &&
-        allocation.agentOutcome.status === "not-started" &&
+        awaitingRuntime(allocation) &&
         allocation.cleanupState.status === "not-requested"
         ? [{ ...base, type: command.type, reason: command.reason }]
         : [];
+    /**
+     * The one gate a reopen must not pass. A reopened attempt keeps the
+     * terminal outcome its run ended with, so this refuses by construction and
+     * the guest comes back without a turn being submitted on it.
+     */
     case "allocation.agent-started":
       return allocation.allocationState.status === "ready" &&
         allocation.agentOutcome.status === "not-started" &&
@@ -208,6 +234,115 @@ export function decideRunAllocationCommand(
     case "allocation.preview-withdrawn":
       return allocation.previewState.status === "available"
         ? [{ ...base, type: command.type }]
+        : [];
+    /**
+     * A lease can only be opened against a runtime that is actually up. It is
+     * refused while a stop is pending, because reopening a session the person
+     * just closed would defeat the release they asked for.
+     */
+    case "allocation.session-lease-open":
+      return allocation.allocationState.status === "ready" &&
+        allocation.allocationState.route !== undefined &&
+        allocation.idleState.status !== "hibernated" &&
+        allocation.cleanupState.status === "not-requested" &&
+        allocation.stopRequestedAt === undefined &&
+        cloudSessionLease(allocation.leases, command.kind).status !== "held"
+        ? [
+            {
+              ...base,
+              type: "allocation.session-lease-opened",
+              kind: command.kind,
+              expiresAt:
+                Date.parse(command.expiresAt) > Date.parse(command.hardExpiresAt)
+                  ? command.hardExpiresAt
+                  : command.expiresAt,
+              hardExpiresAt: command.hardExpiresAt,
+            },
+          ]
+        : [];
+    case "allocation.session-lease-renew": {
+      const lease = cloudSessionLease(allocation.leases, command.kind);
+      if (
+        !isLeaseCurrent({ lease, attempt: allocation.attempt }) ||
+        allocation.stopRequestedAt !== undefined
+      ) {
+        return [];
+      }
+      // A heartbeat past the cap buys nothing. Recording no event is what lets
+      // the sweep release the lease on its own terms instead of racing it.
+      const expiresAt = renewedLeaseExpiry({
+        lease,
+        renewedAt: command.occurredAt,
+        leaseSeconds: Math.max(
+          1,
+          Math.round((Date.parse(command.expiresAt) - Date.parse(command.occurredAt)) / 1_000),
+        ),
+      });
+      return expiresAt === undefined
+        ? []
+        : [{ ...base, type: "allocation.session-lease-renewed", kind: command.kind, expiresAt }];
+    }
+    case "allocation.session-lease-release":
+      return cloudSessionLease(allocation.leases, command.kind).status === "held"
+        ? [
+            {
+              ...base,
+              type: "allocation.session-lease-released",
+              kind: command.kind,
+              reason: command.reason,
+            },
+          ]
+        : [];
+    /**
+     * Stopping is only about the guest, never about the turn: an in-flight run
+     * has to be cancelled, not closed out from under.
+     */
+    case "allocation.session-stop":
+      return allocation.stopRequestedAt === undefined &&
+        allocation.cleanupState.status === "not-requested" &&
+        allocation.agentOutcome.status !== "running" &&
+        allocation.agentOutcome.status !== "not-started" &&
+        (allocation.idleState.status === "idle" || allocation.idleState.status === "busy")
+        ? [{ ...base, type: "allocation.session-stopped" }]
+        : [];
+    /**
+     * Reopening takes a fresh attempt for exactly the same reasons a wake does:
+     * the stopped guest's route is gone. It differs in what it does not do —
+     * no run is created, so the run state machine never moves.
+     */
+    case "allocation.reopen": {
+      const restoreFrom =
+        allocation.idleState.status === "hibernated" ? allocation.idleState.snapshot : undefined;
+      const replaceRuntime =
+        restoreFrom === undefined && allocation.cleanupState.status === "succeeded";
+      if (
+        allocation.archivedAt !== undefined ||
+        command.nextAttempt !== allocation.attempt + 1 ||
+        allocation.agentOutcome.status === "running" ||
+        allocation.agentOutcome.status === "not-started" ||
+        (restoreFrom === undefined && !replaceRuntime)
+      ) {
+        return [];
+      }
+      return [
+        {
+          ...base,
+          type: "allocation.reopen-requested",
+          attempt: command.nextAttempt,
+          deadlines: command.deadlines,
+          ...(restoreFrom === undefined ? {} : { restoreFrom }),
+        },
+      ];
+    }
+    case "allocation.reopened":
+      return allocation.attemptPurpose === "reopen" &&
+        allocation.allocationState.status === "ready" &&
+        allocation.reopen === undefined
+        ? [{ ...base, type: command.type, reopen: command.reopen }]
+        : [];
+    case "allocation.session-edits-captured":
+      return allocation.attemptPurpose === "reopen"
+        ? [{ ...base, type: command.type, edits: command.edits }]
         : [];
     case "allocation.idle":
       return allocation.allocationState.status === "ready" &&
@@ -342,12 +477,26 @@ function requireCurrentEvent(allocation: RunAllocation, event: RunAllocationEven
   }
   if (
     event.type === "allocation.retry-requested" ||
+    event.type === "allocation.reopen-requested" ||
     (event.type === "allocation.follow-up-requested" && event.attempt !== allocation.attempt)
       ? event.attempt !== allocation.attempt + 1
       : event.attempt !== allocation.attempt
   ) {
     throw new Error(`Allocation event ${event.sequence} targets the wrong attempt`);
   }
+}
+
+/**
+ * Everything one viewing session left behind. A new runtime starts without it,
+ * so a stop the person asked for on the old guest cannot follow them onto the
+ * new one.
+ */
+function withoutSessionState(allocation: RunAllocation): RunAllocation {
+  const { stopRequestedAt, reopen, sessionEdits, ...rest } = allocation;
+  void stopRequestedAt;
+  void reopen;
+  void sessionEdits;
+  return rest;
 }
 
 function projectUpdate(
@@ -390,7 +539,9 @@ export function projectRunAllocationEvent(
       allocationState: { status: "queued" },
       agentOutcome: { status: "not-started" },
       previewState: { status: "unavailable" },
+      leases: emptyCloudSessionLeases(),
       idleState: { status: "busy" },
+      attemptPurpose: "run",
       cleanupState: { status: "not-requested" },
       handledCommandIds: [event.commandId],
       sequence: event.sequence,
@@ -523,6 +674,78 @@ export function projectRunAllocationEvent(
       });
     case "allocation.preview-withdrawn":
       return projectUpdate(allocation, event, { previewState: { status: "unavailable" } });
+    case "allocation.session-lease-opened":
+      return projectUpdate(allocation, event, {
+        leases: withLease(allocation.leases, event.kind, {
+          status: "held",
+          attempt: allocation.attempt,
+          openedAt: event.occurredAt,
+          heartbeatAt: event.occurredAt,
+          expiresAt: event.expiresAt,
+          hardExpiresAt: event.hardExpiresAt,
+        }),
+      });
+    case "allocation.session-lease-renewed": {
+      const lease = cloudSessionLease(allocation.leases, event.kind);
+      if (lease.status !== "held") return projectUpdate(allocation, event, {});
+      return projectUpdate(allocation, event, {
+        leases: withLease(allocation.leases, event.kind, {
+          ...lease,
+          heartbeatAt: event.occurredAt,
+          expiresAt: event.expiresAt,
+        }),
+      });
+    }
+    case "allocation.session-lease-released":
+      return projectUpdate(allocation, event, {
+        leases: withLease(allocation.leases, event.kind, {
+          status: "released",
+          releasedAt: event.occurredAt,
+          reason: event.reason,
+        }),
+        ...(event.kind === "app-preview" ? { previewState: { status: "unavailable" } } : {}),
+      });
+    /**
+     * An explicit stop drops the rest of the idle window. The guest is still
+     * snapshotted first, so nothing the person did is lost; they just do not
+     * keep paying for a runtime they said they were finished with.
+     */
+    case "allocation.session-stopped":
+      return projectUpdate(allocation, event, {
+        stopRequestedAt: event.occurredAt,
+        leases: releaseAllLeases({
+          leases: allocation.leases,
+          releasedAt: event.occurredAt,
+          reason: "The person stopped this session.",
+        }),
+        previewState: { status: "unavailable" },
+        ...(allocation.idleState.status === "idle"
+          ? { idleState: { ...allocation.idleState, releaseAt: event.occurredAt } }
+          : {}),
+      });
+    /**
+     * A reopen replaces the runtime without touching the run state machine:
+     * `agentOutcome` keeps the terminal outcome it already had, which is what
+     * stops the reconciler from starting a provider turn on the new guest.
+     */
+    case "allocation.reopen-requested":
+      return projectUpdate(withoutSessionState(allocation), event, {
+        attempt: event.attempt,
+        attemptPurpose: "reopen",
+        deadlines: event.deadlines,
+        allocationState: { status: "queued" },
+        previewState: { status: "unavailable" },
+        leases: emptyCloudSessionLeases(),
+        cleanupState: { status: "not-requested" },
+        idleState:
+          event.restoreFrom === undefined
+            ? { status: "busy" }
+            : { status: "waking", requestedAt: event.occurredAt, snapshot: event.restoreFrom },
+      });
+    case "allocation.reopened":
+      return projectUpdate(allocation, event, { reopen: event.reopen });
+    case "allocation.session-edits-captured":
+      return projectUpdate(allocation, event, { sessionEdits: event.edits });
     case "allocation.went-idle":
       return projectUpdate(allocation, event, {
         idleState: {
@@ -541,9 +764,14 @@ export function projectRunAllocationEvent(
       // machine that is not running.
       const { route, ...stopped } = allocation.allocationState;
       void route;
-      return projectUpdate(allocation, event, {
+      return projectUpdate(withoutSessionState(allocation), event, {
         allocationState: stopped,
         previewState: { status: "unavailable" },
+        leases: releaseAllLeases({
+          leases: allocation.leases,
+          releasedAt: event.occurredAt,
+          reason: "The guest was hibernated, so its route and every session on it are gone.",
+        }),
         idleState: {
           status: "hibernated",
           hibernatedAt: event.occurredAt,
@@ -593,11 +821,16 @@ export function projectRunAllocationEvent(
         ? ({
             allocationState: { status: "queued" },
             previewState: { status: "unavailable" },
+            leases: emptyCloudSessionLeases(),
             cleanupState: { status: "not-requested" },
-          } satisfies Pick<RunAllocation, "allocationState" | "previewState" | "cleanupState">)
+          } satisfies Pick<
+            RunAllocation,
+            "allocationState" | "previewState" | "leases" | "cleanupState"
+          >)
         : {};
-      return projectUpdate(allocation, event, {
+      return projectUpdate(withoutSessionState(allocation), event, {
         attempt: event.attempt,
+        attemptPurpose: "run",
         idleState:
           event.restoreFrom === undefined
             ? { status: "busy" }
@@ -649,6 +882,11 @@ export function projectRunAllocationEvent(
     case "allocation.cleanup-succeeded":
       return projectUpdate(allocation, event, {
         previewState: { status: "unavailable" },
+        leases: releaseAllLeases({
+          leases: allocation.leases,
+          releasedAt: event.occurredAt,
+          reason: "The runtime this session was opened against was released.",
+        }),
         cleanupState: { status: "succeeded", completedAt: event.occurredAt },
       });
     case "allocation.cleanup-failed":
@@ -660,8 +898,9 @@ export function projectRunAllocationEvent(
         },
       });
     case "allocation.retry-requested":
-      return projectUpdate(allocation, event, {
+      return projectUpdate(withoutSessionState(allocation), event, {
         attempt: event.attempt,
+        attemptPurpose: "run",
         deadlines: event.deadlines,
         retry: {
           previousAttempt: allocation.attempt,
@@ -674,6 +913,7 @@ export function projectRunAllocationEvent(
         allocationState: { status: "queued" },
         agentOutcome: { status: "not-started" },
         previewState: { status: "unavailable" },
+        leases: emptyCloudSessionLeases(),
         idleState: { status: "busy" },
         cleanupState: { status: "not-requested" },
       });
