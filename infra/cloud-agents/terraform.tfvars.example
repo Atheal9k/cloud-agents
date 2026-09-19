@@ -59,6 +59,10 @@ worker_profiles = {
   }
 }
 
+# Apple Silicon iOS Simulator workers. Leave empty until a Mac AMI exists.
+# Hosts are allocated on demand; this map only declares the launch template.
+mac_worker_profiles = {}
+
 # Pack Firecracker guests in a dedicated execution account. Leave empty to keep
 # the per-thread EC2 worker templates as a migration fallback (not Cursor parity).
 # Apply this map from the execution account.

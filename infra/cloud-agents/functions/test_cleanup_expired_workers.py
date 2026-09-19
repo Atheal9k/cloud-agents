@@ -81,6 +81,17 @@ class CleanupExpiredWorkersTest(unittest.TestCase):
                                 },
                             ),
                             instance(
+                                "i-mac-host",
+                                now - 86_400,
+                                {
+                                    "CloudAgentProject": "test-project",
+                                    "CloudAgentRole": "worker",
+                                    "Ephemeral": "false",
+                                    "CloudAgentLifecycle": "dedicated-host",
+                                    "CloudAgentExpiresAtEpoch": str(now - 1),
+                                },
+                            ),
+                            instance(
                                 "i-controller",
                                 now - 3_601,
                                 {
@@ -119,6 +130,9 @@ class CleanupExpiredWorkersTest(unittest.TestCase):
         # A stopped snapshot holds an idle agent's disk. Its run deadline has
         # long passed, so the backstop must read the tag rather than the clock.
         self.assertNotIn("i-hibernated", fake_ec2.terminated[0])
+        # Mac Dedicated Hosts are not Linux TTL workers. The backstop must not
+        # terminate them even if they appear in the describe pages.
+        self.assertNotIn("i-mac-host", fake_ec2.terminated[0])
 
 
 if __name__ == "__main__":

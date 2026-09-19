@@ -14,6 +14,7 @@ import {
   type CloudAllocationSnapshot,
   type CloudAllocationLimits,
   ThreadId,
+  workerProfileForInstanceType,
 } from "@t3tools/contracts";
 import { sourceControlRepositorySelector } from "@t3tools/shared/sourceControl";
 import type { ProviderInstanceEntry } from "../providerInstances";
@@ -222,12 +223,7 @@ export function buildCloudRunLaunchCommand(input: {
           createdAt: occurredAt,
         },
       },
-      profile: {
-        id: "linux-web",
-        os: "linux",
-        arch: "x64",
-        instanceType: input.draft.instanceType,
-      },
+      profile: workerProfileForInstanceType(input.draft.instanceType),
       deadlines: {
         launchBy: deadline(startedAt, Math.min(2 * 60, runMinutes * 60)),
         bootBy: deadline(startedAt, Math.min(5 * 60, runMinutes * 60)),

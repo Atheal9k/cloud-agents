@@ -15,6 +15,7 @@ import {
   warmGuestHasForbiddenIdentity,
   warmPoolInventories,
   warmPoolIsWorthKeeping,
+  warmPoolSupportsProfile,
 } from "./cloudWarmPoolPolicy.ts";
 
 const timings = {
@@ -31,6 +32,11 @@ const key = {
 };
 
 describe("cloudWarmPoolPolicy", () => {
+  it("keeps dedicated-host Mac profiles out of the Firecracker warm pool", () => {
+    expect(warmPoolSupportsProfile("linux-web")).toBe(true);
+    expect(warmPoolSupportsProfile("macos-ios")).toBe(false);
+  });
+
   it("holds existing guests until timings are compared", () => {
     const plan = planWarmPoolCapacity({
       timings: undefined,

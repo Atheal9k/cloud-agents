@@ -1,10 +1,15 @@
 import {
+  CloudMacHostId,
   CloudWarmGuestId,
   RunAllocationCommand,
   type CloudAllocationSnapshot,
   type RunAllocation,
   type RunRuntimeFlush,
   type RunRuntimeSnapshot,
+  admitMacIosWorker,
+  isMacIosWorkerProfile,
+  placeMacIosJob,
+  simulatorWakeResumption,
 } from "@t3tools/contracts";
 import * as NodeCrypto from "node:crypto";
 import * as DateTime from "effect/DateTime";
@@ -23,11 +28,13 @@ import {
   retainedRuntimeSnapshot,
   runDeadlineApplies,
 } from "./cloudHibernationPolicy.ts";
+import * as CloudMacHostCatalog from "./CloudMacHostCatalog.ts";
 import * as CloudWarmPoolCatalog from "./CloudWarmPoolCatalog.ts";
 import {
   planWarmPoolCapacity,
   placementForClaim,
   warmPoolInventories,
+  warmPoolSupportsProfile,
 } from "./cloudWarmPoolPolicy.ts";
 import * as CloudWorkerRegistration from "./CloudWorkerRegistration.ts";
 import * as CloudWorkerProvider from "./CloudWorkerProvider.ts";
@@ -79,12 +86,26 @@ function orderedAllocations(
  * or a worker the controller cannot reach would hold compute forever. The
  * report says so instead of claiming a flush that did not happen.
  */
-function unflushed(reason: string, flushedAt: string): RunRuntimeFlush {
+function unflushed(reason: string, flushedAt: string, macosIos = false): RunRuntimeFlush {
   const component = { status: "unavailable", reason } as const;
   return {
     userdata: component,
     workspace: component,
     providerHome: component,
+    ...(macosIos
+      ? {
+          simulator: {
+            status: "unavailable" as const,
+            reason:
+              "The iOS Simulator process is not restorable across hibernation. Wake creates a new reserved UDID.",
+          },
+          xcodeCache: {
+            status: "unavailable" as const,
+            reason:
+              "Xcode caches stay on the Mac image and environment Build, not in the job snapshot.",
+          },
+        }
+      : {}),
     flushedAt,
   };
 }
@@ -113,6 +134,7 @@ export const make = Effect.fn("CloudAllocationReconciler.make")(function* (input
   const controller = yield* CloudAllocationController.CloudAllocationController;
   const registrations = yield* CloudWorkerRegistration.CloudWorkerRegistration;
   const workers = yield* CloudWorkerProvider.CloudWorkerProvider;
+  const macHosts = yield* CloudMacHostCatalog.make();
   const warmPool = yield* CloudWarmPoolCatalog.make();
   const runClient = input?.runClient;
   const dispatch = Effect.fn("CloudAllocationReconciler.dispatch")(function* (
@@ -188,6 +210,26 @@ export const make = Effect.fn("CloudAllocationReconciler.make")(function* (input
     }
 
     const liveResources = resources.filter((resource) => resource.state !== "terminated");
+    if (isMacIosWorkerProfile(allocation.profile)) {
+      yield* Effect.forEach(
+        liveResources,
+        (resource) =>
+          resource.registrationCredentialPresent
+            ? workers.revokeRegistrationCredential(resource.instanceId)
+            : Effect.void,
+        { discard: true },
+      );
+      const hosts = yield* macHosts.list;
+      const host = hosts.find((candidate) => candidate.occupiedBy?.allocationId === allocation.id);
+      if (host !== undefined) {
+        yield* macHosts.save(CloudMacHostCatalog.finishMacHostJob({ host, occurredAt }));
+      }
+      yield* dispatch(allocation, occurredAt, {
+        type: "allocation.cleanup-succeeded",
+        commandId: commandId(allocation, "cleanup-succeeded", allocation.cleanupState.startedAt),
+      });
+      return;
+    }
     if (liveResources.length === 0) {
       yield* dispatch(allocation, occurredAt, {
         type: "allocation.cleanup-succeeded",
@@ -238,12 +280,28 @@ export const make = Effect.fn("CloudAllocationReconciler.make")(function* (input
   ) {
     const flushed =
       runClient === undefined ? undefined : yield* runClient.flush(allocation).pipe(Effect.result);
+    const macosIos = isMacIosWorkerProfile(allocation.profile);
     const flush =
       flushed === undefined
-        ? unflushed("This controller has no run client to flush the guest with.", occurredAt)
+        ? unflushed(
+            "This controller has no run client to flush the guest with.",
+            occurredAt,
+            macosIos,
+          )
         : Result.isSuccess(flushed)
-          ? flushed.success
-          : unflushed(flushed.failure.message, occurredAt);
+          ? {
+              ...flushed.success,
+              ...(macosIos && flushed.success.simulator === undefined
+                ? {
+                    simulator: {
+                      status: "unavailable" as const,
+                      reason:
+                        "The iOS Simulator process is not restorable across hibernation. Wake creates a new reserved UDID.",
+                    },
+                  }
+                : {}),
+            }
+          : unflushed(flushed.failure.message, occurredAt, macosIos);
     yield* dispatch(allocation, occurredAt, {
       type: "allocation.idle",
       commandId: commandId(allocation, "idle"),
@@ -480,7 +538,10 @@ export const make = Effect.fn("CloudAllocationReconciler.make")(function* (input
         const snapshot = retainedRuntimeSnapshot(allocation);
         const claimStarted = yield* DateTime.now;
         const claimed =
-          snapshot !== undefined || environment === undefined || build === undefined
+          !warmPoolSupportsProfile(allocation.profile.id) ||
+          snapshot !== undefined ||
+          environment === undefined ||
+          build === undefined
             ? undefined
             : yield* warmPool.claim({
                 key: {
@@ -526,6 +587,7 @@ export const make = Effect.fn("CloudAllocationReconciler.make")(function* (input
           return;
         }
         const registrationCredential = yield* registrations.issueCredential(allocation);
+        let placementHostId: string | undefined;
         if (snapshot !== undefined) {
           const restored = yield* workers
             .restore({
@@ -557,6 +619,82 @@ export const make = Effect.fn("CloudAllocationReconciler.make")(function* (input
             error: restored.failure.message,
           });
         }
+        if (isMacIosWorkerProfile(allocation.profile)) {
+          const capacity = yield* workers.inspectMacCapacity({ instanceType }).pipe(Effect.result);
+          if (Result.isFailure(capacity)) {
+            yield* failLaunch(allocation, occurredAt, capacity.failure.message);
+            return;
+          }
+          const admitted = admitMacIosWorker({
+            profile: allocation.profile,
+            region: capacity.success.region,
+            capacity: capacity.success,
+          });
+          if (admitted.status === "rejected") {
+            yield* failLaunch(allocation, occurredAt, admitted.message);
+            return;
+          }
+          const hosts = yield* macHosts.list;
+          const macPlacement = placeMacIosJob({
+            hosts,
+            region: capacity.success.region,
+            instanceType,
+            releaseRequested: hosts.some((host) => host.releaseRequestedAt !== undefined),
+          });
+          if (macPlacement.action === "wait") return;
+          if (macPlacement.action === "reject") {
+            yield* failLaunch(allocation, occurredAt, macPlacement.reason);
+            return;
+          }
+          if (macPlacement.action === "occupy") {
+            yield* macHosts.save(
+              CloudMacHostCatalog.occupyMacHost({
+                host: macPlacement.host,
+                allocationId: allocation.id,
+                attempt: allocation.attempt,
+                occurredAt,
+              }),
+            );
+            placementHostId = macPlacement.host.awsHostId;
+          } else {
+            const availabilityZone = capacity.success.availabilityZones[0];
+            if (availabilityZone === undefined) {
+              yield* failLaunch(
+                allocation,
+                occurredAt,
+                `Region ${capacity.success.region} has no availability zone offering ${instanceType}.`,
+              );
+              return;
+            }
+            const allocated = yield* workers
+              .allocateDedicatedHost({ instanceType, availabilityZone })
+              .pipe(Effect.result);
+            if (Result.isFailure(allocated)) {
+              yield* failLaunch(allocation, occurredAt, allocated.failure.message);
+              return;
+            }
+            const recorded = CloudMacHostCatalog.recordAllocatedMacHost({
+              id: CloudMacHostId.make(`mac:${allocated.success.hostId}`),
+              awsHostId: allocated.success.hostId,
+              region: capacity.success.region,
+              availabilityZone,
+              instanceType,
+              macos: "image",
+              xcode: "image",
+              simulatorRuntime: "image",
+              allocatedAt: occurredAt,
+            });
+            yield* macHosts.save(
+              CloudMacHostCatalog.occupyMacHost({
+                host: recorded,
+                allocationId: allocation.id,
+                attempt: allocation.attempt,
+                occurredAt,
+              }),
+            );
+            placementHostId = allocated.success.hostId;
+          }
+        }
         const launched = yield* workers
           .launch({
             allocationId: allocation.id,
@@ -569,14 +707,31 @@ export const make = Effect.fn("CloudAllocationReconciler.make")(function* (input
             maxInputWaitSeconds,
             launchTemplate: allocation.allocationState.launchTemplate,
             registrationCredential,
+            ...(placementHostId === undefined ? {} : { placementHostId }),
           })
           .pipe(Effect.result);
         if (Result.isSuccess(launched)) {
+          if (placementHostId !== undefined) {
+            const hosts = yield* macHosts.list;
+            const host = hosts.find((candidate) => candidate.awsHostId === placementHostId);
+            if (host !== undefined) {
+              yield* macHosts.save({
+                ...host,
+                instanceId: launched.success.instanceId,
+                updatedAt: occurredAt,
+              });
+            }
+          }
           const placement = placementForClaim({
             claimed: undefined,
             buildId: allocation.build?.buildId,
             claimLatencyMs,
-            fallbackReason: allocation.build === undefined ? "no-fresh-build" : "no-warm-guest",
+            fallbackReason:
+              placementHostId !== undefined
+                ? "dedicated-host"
+                : allocation.build === undefined
+                  ? "no-fresh-build"
+                  : "no-warm-guest",
           });
           yield* dispatch(allocation, occurredAt, {
             type: "allocation.instance-launched",
@@ -716,6 +871,13 @@ export const make = Effect.fn("CloudAllocationReconciler.make")(function* (input
                     ? snapshot.flush.providerHome.reason
                     : "The provider starts a new native session against the restored workspace.",
               },
+              ...(isMacIosWorkerProfile(allocation.profile)
+                ? {
+                    simulator: simulatorWakeResumption({
+                      simulatorFlush: snapshot.flush.simulator,
+                    }),
+                  }
+                : {}),
               restoredAt: occurredAt,
             },
           });
@@ -916,6 +1078,45 @@ export const make = Effect.fn("CloudAllocationReconciler.make")(function* (input
         idleReleaseSeconds,
       );
     }
+    yield* reconcileMacHosts(DateTime.formatIso(yield* DateTime.now));
+  });
+
+  const reconcileMacHosts = Effect.fn("CloudAllocationReconciler.reconcileMacHosts")(function* (
+    occurredAt: string,
+  ) {
+    const hosts = yield* macHosts.list;
+    yield* Effect.forEach(
+      hosts,
+      (host) =>
+        Effect.gen(function* () {
+          if (host.availability === "scrubbing" && host.occupiedBy === undefined) {
+            yield* macHosts.save(CloudMacHostCatalog.markMacHostAvailable({ host, occurredAt }));
+            return;
+          }
+          if (
+            (host.availability === "release-requested" || host.availability === "releasing") &&
+            host.occupiedBy === undefined
+          ) {
+            const now = Date.parse(occurredAt);
+            const earliest = Date.parse(host.earliestReleaseAt);
+            if (!Number.isFinite(now) || !Number.isFinite(earliest) || now < earliest) return;
+            const released = yield* workers
+              .releaseDedicatedHost(host.awsHostId)
+              .pipe(Effect.result);
+            if (Result.isFailure(released)) {
+              yield* macHosts.save({ ...host, availability: "releasing", updatedAt: occurredAt });
+              return;
+            }
+            yield* macHosts.save({
+              ...host,
+              availability: "released",
+              releasedAt: occurredAt,
+              updatedAt: occurredAt,
+            });
+          }
+        }),
+      { discard: true },
+    );
   });
 
   const removeAbandonedResource = Effect.fn("CloudAllocationReconciler.removeAbandonedResource")(

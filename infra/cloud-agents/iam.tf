@@ -222,6 +222,41 @@ data "aws_iam_policy_document" "controller_worker_allocation" {
   }
 
   statement {
+    sid       = "StopAndStartMacDedicatedHostWorkers"
+    actions   = ["ec2:StopInstances", "ec2:StartInstances"]
+    resources = ["arn:${data.aws_partition.current.partition}:ec2:${var.aws_region}:${data.aws_caller_identity.current.account_id}:instance/*"]
+
+    condition {
+      test     = "StringEquals"
+      variable = "ec2:ResourceTag/CloudAgentProject"
+      values   = [var.name_prefix]
+    }
+
+    condition {
+      test     = "StringEquals"
+      variable = "ec2:ResourceTag/CloudAgentRole"
+      values   = ["worker"]
+    }
+
+    condition {
+      test     = "StringEquals"
+      variable = "ec2:ResourceTag/CloudAgentLifecycle"
+      values   = ["dedicated-host"]
+    }
+  }
+
+  statement {
+    sid = "InspectAndAllocateMacDedicatedHosts"
+    actions = [
+      "ec2:AllocateHosts",
+      "ec2:DescribeHosts",
+      "ec2:DescribeInstanceTypeOfferings",
+      "ec2:ReleaseHosts",
+    ]
+    resources = ["*"]
+  }
+
+  statement {
     sid       = "RetagOwnedWorkersForWake"
     actions   = ["ec2:CreateTags"]
     resources = ["arn:${data.aws_partition.current.partition}:ec2:${var.aws_region}:${data.aws_caller_identity.current.account_id}:instance/*"]

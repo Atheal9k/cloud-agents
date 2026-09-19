@@ -115,7 +115,26 @@ export const flushCloudRuntimeState = Effect.fn("CloudWorkerFlush.flushCloudRunt
       flushProviderHome().pipe(Effect.catchCause(reportFailure("the provider home"))),
       DateTime.now,
     ]);
-    return { userdata, workspace, providerHome, flushedAt: DateTime.formatIso(now) };
+    const simulator =
+      process.platform === "darwin"
+        ? unavailable(
+            "The iOS Simulator process is not restorable across hibernation. Wake creates a new reserved UDID.",
+          )
+        : undefined;
+    const xcodeCache =
+      process.platform === "darwin"
+        ? unavailable(
+            "Xcode caches stay on the Mac image and environment Build, not in the job snapshot.",
+          )
+        : undefined;
+    return {
+      userdata,
+      workspace,
+      providerHome,
+      ...(simulator === undefined ? {} : { simulator }),
+      ...(xcodeCache === undefined ? {} : { xcodeCache }),
+      flushedAt: DateTime.formatIso(now),
+    };
   },
 );
 

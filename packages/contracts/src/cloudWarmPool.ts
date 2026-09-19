@@ -18,6 +18,7 @@ export type CloudWarmFork = typeof CloudWarmFork.Type;
 export const CloudRuntimePlacementFallbackReason = Schema.Literals([
   "no-warm-guest",
   "no-fresh-build",
+  "dedicated-host",
   "obsolete-version",
   "warm-claim-raced",
   "ec2-startup",

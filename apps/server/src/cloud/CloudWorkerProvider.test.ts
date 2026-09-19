@@ -299,6 +299,88 @@ const hypervisor = {
   kvm: true,
 } as const;
 
+it.effect("places a Mac guest on a Dedicated Host and inspects Apple Silicon capacity", () =>
+  Effect.gen(function* () {
+    const invocations: ProcessRunner.ProcessRunInput[] = [];
+    const runner = ProcessRunner.ProcessRunner.of({
+      run: (input) => {
+        invocations.push(input);
+        const operation = input.args[1];
+        if (operation === "describe-instance-type-offerings") {
+          return Effect.succeed(
+            output({
+              stdout: JSON.stringify({
+                InstanceTypeOfferings: [{ InstanceType: "mac2-m2.metal", Location: "us-west-2a" }],
+              }),
+            }),
+          );
+        }
+        if (operation === "describe-hosts") {
+          return Effect.succeed(output({ stdout: JSON.stringify({ Hosts: [] }) }));
+        }
+        if (operation === "allocate-hosts") {
+          return Effect.succeed(output({ stdout: JSON.stringify({ HostIds: ["h-mac"] }) }));
+        }
+        if (operation === "describe-launch-templates") {
+          return Effect.succeed(
+            output({
+              stdout: JSON.stringify({
+                LaunchTemplates: [{ LaunchTemplateId: "lt-mac", DefaultVersionNumber: 1 }],
+              }),
+            }),
+          );
+        }
+        return Effect.succeed(
+          output({
+            stdout: JSON.stringify({
+              Instances: [{ InstanceId: "i-mac", State: { Name: "pending" } }],
+            }),
+          }),
+        );
+      },
+    });
+    const provider = yield* make({
+      region: "us-west-2",
+      project: "t3-cloud-agents",
+      controllerUrl: "https://controller.example.test/",
+      workerRouteUrl: "https://worker.example.test/",
+      runtimeKind: "firecracker",
+      hypervisors: [hypervisor],
+    }).pipe(Effect.provideService(ProcessRunner.ProcessRunner, runner));
+
+    const capacity = yield* provider.inspectMacCapacity({ instanceType: "mac2-m2.metal" });
+    const host = yield* provider.allocateDedicatedHost({
+      instanceType: "mac2-m2.metal",
+      availabilityZone: "us-west-2a",
+    });
+    const launchTemplate = yield* provider.resolveLaunchTemplate("macos-ios");
+    yield* provider.launch({
+      allocationId,
+      attempt,
+      repository: "acme/ios",
+      selectedRef: "main",
+      outputBranch: "cloud/allocation-1",
+      expiresAt: "2026-09-17T05:00:00.000Z",
+      instanceType: "mac2-m2.metal",
+      maxInputWaitSeconds: 900,
+      launchTemplate,
+      registrationCredential: "registration-credential",
+      placementHostId: host.hostId,
+    });
+
+    expect(capacity).toMatchObject({
+      region: "us-west-2",
+      appleSilicon: true,
+      availabilityZones: ["us-west-2a"],
+    });
+    expect(host).toEqual({ hostId: "h-mac" });
+    const launch = invocations.find((invocation) => invocation.args[1] === "run-instances");
+    expect(launch?.args.join(" ")).toContain("Tenancy=host,HostId=h-mac");
+    expect(launch?.args.join(" ")).toContain("CloudAgentDedicatedHost");
+    expect(launch?.args.join(" ")).toContain("CloudAgentRuntimeKind");
+  }),
+);
+
 it.effect("places Firecracker guests without calling RunInstances", () =>
   Effect.gen(function* () {
     const runner = ProcessRunner.ProcessRunner.of({

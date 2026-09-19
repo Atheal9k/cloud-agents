@@ -160,6 +160,7 @@ describe("cloud run launch", () => {
       control: { agentId: "agent:request-19", runId: "run:request-19:1" },
       target: { repository: "Atheal9k/cloud-agents", baseCommit: "main" },
       publication: { mode: "automatic-draft-pr", baseBranch: "main" },
+      profile: { id: "linux-web", os: "linux", arch: "x64", instanceType: "t3.medium" },
       execution: {
         threadId: "thread-request-19-1",
         selectedRef: "main",
@@ -170,6 +171,25 @@ describe("cloud run launch", () => {
           modelSelection: { instanceId: "codex", model: "gpt-5.6-sol" },
         },
       },
+    });
+  });
+
+  it("selects the macos-ios profile for Apple Silicon instance types", () => {
+    const result = buildCloudRunLaunchCommand({
+      draft: { ...draft, instanceType: "mac2-m2.metal" },
+      limits: { ...limits, allowedInstanceTypes: ["mac2-m2.metal"] },
+      now: new Date("2026-09-17T10:00:00.000Z"),
+      requestId: "request-ios",
+    });
+
+    expect(result.status).toBe("valid");
+    if (result.status !== "valid" || result.command.type !== "allocation.launch") return;
+    expect(result.command.profile).toEqual({
+      id: "macos-ios",
+      os: "darwin",
+      arch: "arm64",
+      device: "ios",
+      instanceType: "mac2-m2.metal",
     });
   });
 

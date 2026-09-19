@@ -5,6 +5,7 @@
  */
 import {
   DEFAULT_CLOUD_WARM_POOL_BOUNDS,
+  MACOS_IOS_WORKER_PROFILE_ID,
   WARM_GUEST_FORBIDDEN_IDENTITY_KEYS,
   type CloudRuntimePlacement,
   type CloudRuntimePlacementFallbackReason,
@@ -27,6 +28,10 @@ export function warmPoolIsWorthKeeping(timings: CloudWarmPoolTimings): boolean {
   return (
     timings.warmClaimMs < timings.coldBuildRestoreMs && timings.warmClaimMs < timings.ec2StartupMs
   );
+}
+
+export function warmPoolSupportsProfile(profileId: string): boolean {
+  return profileId !== MACOS_IOS_WORKER_PROFILE_ID;
 }
 
 export function targetWarmGuests(input: {
@@ -164,7 +169,13 @@ export function warmPoolInventories(input: {
   for (const allocation of input.allocations) {
     const environment = allocation.environment;
     const build = allocation.build;
-    if (environment === undefined || build === undefined) continue;
+    if (
+      !warmPoolSupportsProfile(allocation.profile.id) ||
+      environment === undefined ||
+      build === undefined
+    ) {
+      continue;
+    }
     const pool = ensure(
       {
         environmentId: environment.environmentId,

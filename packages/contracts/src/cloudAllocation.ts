@@ -21,6 +21,7 @@ import { ExecutionEnvironmentPlatformArch, ExecutionEnvironmentPlatformOs } from
 import { CloudProviderTurnInput, CloudProviderUnansweredRequestSeconds } from "./cloudExecution.ts";
 import { CloudEnvironment, CloudEnvironmentVersionReference } from "./cloudEnvironment.ts";
 import { CloudEnvironmentBuild, CloudEnvironmentBuildReference } from "./cloudEnvironmentBuild.ts";
+import { CloudMacHost } from "./cloudMacIos.ts";
 import {
   CloudRuntimePlacement,
   CloudWarmGuest,
@@ -120,6 +121,9 @@ export const RunRuntimeFlush = Schema.Struct({
   userdata: RunRuntimeFlushComponent,
   workspace: RunRuntimeFlushComponent,
   providerHome: RunRuntimeFlushComponent,
+  /** Present on macos-ios workers. Absent on Linux flush records. */
+  simulator: Schema.optionalKey(RunRuntimeFlushComponent),
+  xcodeCache: Schema.optionalKey(RunRuntimeFlushComponent),
   flushedAt: IsoDateTime,
 });
 export type RunRuntimeFlush = typeof RunRuntimeFlush.Type;
@@ -159,6 +163,8 @@ export type RunRuntimeResumption = typeof RunRuntimeResumption.Type;
 export const RunRuntimeRestore = Schema.Struct({
   filesystem: RunRuntimeResumption,
   providerSession: RunRuntimeResumption,
+  /** Present on macos-ios wakes. A missing Simulator process is not a silent resume. */
+  simulator: Schema.optionalKey(RunRuntimeResumption),
   restoredAt: IsoDateTime,
 });
 export type RunRuntimeRestore = typeof RunRuntimeRestore.Type;
@@ -901,6 +907,8 @@ export const CloudRunUsage = Schema.Struct({
   costs: Schema.Struct({
     controllerHost: CloudRunCostCategory,
     workerCompute: CloudRunCostCategory,
+    /** 24-hour Dedicated Host billing, independent of iOS job runtime. */
+    dedicatedHost: Schema.optionalKey(CloudRunCostCategory),
     storage: CloudRunCostCategory,
     provider: CloudRunCostCategory,
     streamingTransfer: CloudRunCostCategory,
@@ -931,6 +939,8 @@ export const CloudAllocationSnapshot = Schema.Struct({
   environments: Schema.optionalKey(Schema.Array(CloudEnvironment)),
   /** Absent when decoding snapshots from controllers older than CA-42. */
   builds: Schema.optionalKey(Schema.Array(CloudEnvironmentBuild)),
+  /** Absent when decoding snapshots from controllers older than CA-38. */
+  macHosts: Schema.optionalKey(Schema.Array(CloudMacHost)),
   /** Absent when decoding snapshots from controllers older than CA-45. */
   warmGuests: Schema.optionalKey(Schema.Array(CloudWarmGuest)),
   /** Absent when decoding snapshots from controllers older than CA-45. */
