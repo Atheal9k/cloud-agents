@@ -1,0 +1,812 @@
+// @effect-diagnostics nodeBuiltinImport:off
+import * as NodeCrypto from "node:crypto";
+
+import {
+  CloudAgentId,
+  CloudAllocationControllerError,
+  CloudProviderUnansweredRequestSeconds,
+  CloudRunId,
+  CommandId,
+  MessageId,
+  ProviderInstanceId,
+  RunAllocationAttempt,
+  RunAllocationId,
+  ThreadId,
+  type CloudAgent,
+  type CloudAgentsApiAgent,
+  type CloudAgentsApiAgentSummary,
+  type CloudAgentsApiAgentUsage,
+  type CloudAgentsApiCreateAgentRequest,
+  type CloudAgentsApiCreateAgentResponse,
+  type CloudAgentsApiCreateRunRequest,
+  type CloudAgentsApiCreateRunResponse,
+  type CloudAgentsApiEnvTarget,
+  type CloudAgentsApiIdResponse,
+  type CloudAgentsApiModel,
+  type CloudAgentsApiPrincipal,
+  type CloudAgentsApiRepoInput,
+  type CloudAgentsApiRepository,
+  type CloudAgentsApiRun,
+  type CloudAgentsApiStreamEvent,
+  type CloudRun,
+  type RunAllocation,
+} from "@t3tools/contracts";
+import * as Context from "effect/Context";
+import * as DateTime from "effect/DateTime";
+import * as Effect from "effect/Effect";
+import * as Layer from "effect/Layer";
+import * as Option from "effect/Option";
+import * as Ref from "effect/Ref";
+import * as Schema from "effect/Schema";
+import * as SqlClient from "effect/unstable/sql/SqlClient";
+import * as SqlSchema from "effect/unstable/sql/SqlSchema";
+
+import * as CloudAllocationController from "./CloudAllocationController.ts";
+import * as CloudRunPublication from "./CloudRunPublication.ts";
+import * as CloudRunResults from "./CloudRunResults.ts";
+import { isDeletionPurgeReady } from "./cloudRetentionPolicy.ts";
+import {
+  agentUsageFromRuns,
+  apiError,
+  CloudAgentsApiFailure,
+  interactionMode,
+  isActiveRunStatus,
+  isTerminalRunStatus,
+  modelsFromProviders,
+  paginateNewestFirst,
+  parseRepositoryUrl,
+  publicAgent,
+  publicAgentSummary,
+  publicGit,
+  publicRun,
+  resumeStream,
+  streamEventId,
+  titleFromPrompt,
+  validateCreateAgentRequest,
+  validateCreateRunRequest,
+  type CloudAgentsApiAgentRecord,
+} from "./cloudAgentsApiModel.ts";
+import { ProviderRegistry } from "../provider/Services/ProviderRegistry.ts";
+import { ProjectionSnapshotQuery } from "../orchestration/Services/ProjectionSnapshotQuery.ts";
+import { sourceControlRepositorySelector } from "@t3tools/shared/sourceControl";
+
+const AgentIdRequest = Schema.Struct({ agentId: Schema.String });
+const PrincipalRequest = Schema.Struct({ principalId: Schema.String });
+const RecordRow = Schema.Struct({
+  agentId: Schema.String,
+  principalId: Schema.String,
+  allocationId: Schema.String,
+  recordJson: Schema.String,
+});
+
+const AgentRecordPayload = Schema.Struct({
+  env: Schema.Struct({
+    type: Schema.Literals(["cloud", "pool", "machine"]),
+    name: Schema.optionalKey(Schema.String),
+  }),
+  repos: Schema.optionalKey(
+    Schema.Array(
+      Schema.Struct({
+        url: Schema.String,
+        startingRef: Schema.optionalKey(Schema.String),
+        prUrl: Schema.optionalKey(Schema.String),
+      }),
+    ),
+  ),
+  workOnCurrentBranch: Schema.optionalKey(Schema.Boolean),
+  autoCreatePR: Schema.optionalKey(Schema.Boolean),
+});
+const decodeRecord = Schema.decodeUnknownSync(Schema.fromJsonString(AgentRecordPayload));
+const encodeRecord = Schema.encodeSync(Schema.fromJsonString(AgentRecordPayload));
+
+export interface CloudAgentsApiPage<Item> {
+  readonly items: ReadonlyArray<Item>;
+  readonly nextCursor?: string;
+}
+
+export class CloudAgentsApi extends Context.Service<
+  CloudAgentsApi,
+  {
+    readonly me: (principal: CloudAgentsApiPrincipal) => Effect.Effect<{
+      apiKeyName: string;
+      createdAt: string;
+      userId?: number;
+      userEmail?: string;
+      userFirstName?: string;
+      userLastName?: string;
+    }>;
+    readonly createAgent: (input: {
+      readonly principal: CloudAgentsApiPrincipal;
+      readonly body: CloudAgentsApiCreateAgentRequest;
+      readonly urlOrigin: string;
+    }) => Effect.Effect<CloudAgentsApiCreateAgentResponse, CloudAgentsApiFailure>;
+    readonly listAgents: (input: {
+      readonly principal: CloudAgentsApiPrincipal;
+      readonly urlOrigin: string;
+      readonly limit?: number;
+      readonly cursor?: string;
+      readonly includeArchived?: boolean;
+      readonly prUrl?: string;
+    }) => Effect.Effect<CloudAgentsApiPage<CloudAgentsApiAgentSummary>, CloudAgentsApiFailure>;
+    readonly getAgent: (input: {
+      readonly principal: CloudAgentsApiPrincipal;
+      readonly agentId: string;
+      readonly urlOrigin: string;
+    }) => Effect.Effect<CloudAgentsApiAgent, CloudAgentsApiFailure>;
+    readonly createRun: (input: {
+      readonly principal: CloudAgentsApiPrincipal;
+      readonly agentId: string;
+      readonly body: CloudAgentsApiCreateRunRequest;
+    }) => Effect.Effect<CloudAgentsApiCreateRunResponse, CloudAgentsApiFailure>;
+    readonly listRuns: (input: {
+      readonly principal: CloudAgentsApiPrincipal;
+      readonly agentId: string;
+      readonly limit?: number;
+      readonly cursor?: string;
+    }) => Effect.Effect<CloudAgentsApiPage<CloudAgentsApiRun>, CloudAgentsApiFailure>;
+    readonly getRun: (input: {
+      readonly principal: CloudAgentsApiPrincipal;
+      readonly agentId: string;
+      readonly runId: string;
+    }) => Effect.Effect<CloudAgentsApiRun, CloudAgentsApiFailure>;
+    readonly cancelRun: (input: {
+      readonly principal: CloudAgentsApiPrincipal;
+      readonly agentId: string;
+      readonly runId: string;
+    }) => Effect.Effect<CloudAgentsApiIdResponse, CloudAgentsApiFailure>;
+    readonly usage: (input: {
+      readonly principal: CloudAgentsApiPrincipal;
+      readonly agentId: string;
+      readonly runId?: string;
+    }) => Effect.Effect<CloudAgentsApiAgentUsage, CloudAgentsApiFailure>;
+    readonly archive: (input: {
+      readonly principal: CloudAgentsApiPrincipal;
+      readonly agentId: string;
+    }) => Effect.Effect<CloudAgentsApiIdResponse, CloudAgentsApiFailure>;
+    readonly unarchive: (input: {
+      readonly principal: CloudAgentsApiPrincipal;
+      readonly agentId: string;
+    }) => Effect.Effect<CloudAgentsApiIdResponse, CloudAgentsApiFailure>;
+    readonly deleteAgent: (input: {
+      readonly principal: CloudAgentsApiPrincipal;
+      readonly agentId: string;
+    }) => Effect.Effect<CloudAgentsApiIdResponse, CloudAgentsApiFailure>;
+    readonly streamRun: (input: {
+      readonly principal: CloudAgentsApiPrincipal;
+      readonly agentId: string;
+      readonly runId: string;
+      readonly lastEventId?: string;
+      readonly nowMs: number;
+    }) => Effect.Effect<ReadonlyArray<CloudAgentsApiStreamEvent>, CloudAgentsApiFailure>;
+    readonly appendStreamEvent: (input: {
+      readonly runId: string;
+      readonly event: CloudAgentsApiStreamEvent["event"];
+      readonly data: unknown;
+      readonly nowMs: number;
+      readonly id?: boolean;
+    }) => Effect.Effect<CloudAgentsApiStreamEvent>;
+    readonly listModels: Effect.Effect<ReadonlyArray<CloudAgentsApiModel>>;
+    readonly listRepositories: Effect.Effect<ReadonlyArray<CloudAgentsApiRepository>>;
+  }
+>()("t3/cloud/CloudAgentsApi") {}
+
+function mapControllerError(error: unknown): CloudAgentsApiFailure {
+  if (Schema.is(CloudAllocationControllerError)(error)) {
+    switch (error.reason) {
+      case "agent_busy":
+        return apiError("agent_busy", error.message);
+      case "agent-archived":
+        return apiError("agent_archived", error.message);
+      case "agent-deleted":
+        return apiError("agent_not_found", error.message);
+      case "admission-stopped":
+        return apiError("admission_stopped", error.message);
+      case "invalid-request":
+        return error.message.includes("already exists")
+          ? apiError("agent_id_conflict", error.message)
+          : apiError("invalid_request", error.message);
+      default:
+        return apiError("internal_error", error.message);
+    }
+  }
+  return apiError("internal_error", "The cloud agents API could not complete this request.");
+}
+
+function deadline(startMillis: number, seconds: number): string {
+  return DateTime.formatIso(DateTime.makeUnsafe(startMillis + seconds * 1_000));
+}
+
+function epochNowMs(): number {
+  return DateTime.toEpochMillis(DateTime.nowUnsafe());
+}
+
+function defaultEnv(body: CloudAgentsApiCreateAgentRequest): CloudAgentsApiEnvTarget {
+  return body.env ?? { type: "cloud" };
+}
+
+export const make = Effect.fn("CloudAgentsApi.make")(function* () {
+  const sql = yield* SqlClient.SqlClient;
+  const allocations = yield* CloudAllocationController.CloudAllocationController;
+  const resultsOption = yield* Effect.serviceOption(CloudRunResults.CloudRunResults);
+  const publicationOption = yield* Effect.serviceOption(CloudRunPublication.CloudRunPublication);
+  const providersOption = yield* Effect.serviceOption(ProviderRegistry);
+  const projectionOption = yield* Effect.serviceOption(ProjectionSnapshotQuery);
+  const results = Option.getOrUndefined(resultsOption);
+  const publication = Option.getOrUndefined(publicationOption);
+  const providers = Option.getOrUndefined(providersOption);
+  const projection = Option.getOrUndefined(projectionOption);
+  const streams = yield* Ref.make<ReadonlyMap<string, ReadonlyArray<CloudAgentsApiStreamEvent>>>(
+    new Map(),
+  );
+
+  const readRecord = SqlSchema.findAll({
+    Request: AgentIdRequest,
+    Result: RecordRow,
+    execute: ({ agentId }) => sql`
+      SELECT agent_id AS "agentId", principal_id AS "principalId",
+             allocation_id AS "allocationId", record_json AS "recordJson"
+      FROM cloud_agents_api_records
+      WHERE agent_id = ${agentId}
+    `,
+  });
+  const readOwned = SqlSchema.findAll({
+    Request: PrincipalRequest,
+    Result: RecordRow,
+    execute: ({ principalId }) => sql`
+      SELECT agent_id AS "agentId", principal_id AS "principalId",
+             allocation_id AS "allocationId", record_json AS "recordJson"
+      FROM cloud_agents_api_records
+      WHERE principal_id = ${principalId}
+    `,
+  });
+
+  const appendStreamEvent: CloudAgentsApi["Service"]["appendStreamEvent"] = (input) =>
+    Ref.modify(streams, (current) => {
+      const existing = current.get(input.runId) ?? [];
+      const event: CloudAgentsApiStreamEvent = {
+        ...(input.id === false ? {} : { id: streamEventId(input.nowMs, existing.length) }),
+        event: input.event,
+        data: input.data,
+        createdAtMs: input.nowMs,
+      };
+      const next = new Map(current);
+      next.set(input.runId, [...existing, event]);
+      return [event, next] as const;
+    });
+
+  const snapshot = allocations.snapshot.pipe(Effect.mapError(mapControllerError));
+
+  const locate = Effect.fn("CloudAgentsApi.locate")(function* (
+    principal: CloudAgentsApiPrincipal,
+    agentId: string,
+  ) {
+    const owned = (yield* readRecord({ agentId }).pipe(
+      Effect.mapError(() => apiError("internal_error", "The API catalog is unavailable.")),
+    ))[0];
+    if (owned === undefined || owned.principalId !== principal.principalId) {
+      return yield* Effect.fail(apiError("agent_not_found", `Agent '${agentId}' was not found.`));
+    }
+    const current = yield* snapshot;
+    const agent = current.agents?.find((candidate) => candidate.id === agentId);
+    const allocation = current.allocations.find((candidate) => candidate.id === owned.allocationId);
+    if (allocation?.deletion !== undefined) {
+      return yield* Effect.fail(apiError("agent_not_found", `Agent '${agentId}' was not found.`));
+    }
+    if (agent === undefined || allocation === undefined) {
+      const deleted = current.deletions?.some((row) => row.agentId === agentId) === true;
+      return yield* Effect.fail(apiError(
+        "agent_not_found",
+        deleted ? `Agent '${agentId}' was not found.` : `Agent '${agentId}' was not found.`,
+      ));
+    }
+    const runs = (current.runs ?? []).filter((run) => run.agentId === agentId);
+    const payload = decodeRecord(owned.recordJson);
+    const record: CloudAgentsApiAgentRecord = {
+      env: payload.env,
+      ...(payload.repos === undefined ? {} : { repos: payload.repos }),
+      ...(payload.workOnCurrentBranch === undefined
+        ? {}
+        : { workOnCurrentBranch: payload.workOnCurrentBranch }),
+      ...(payload.autoCreatePR === undefined ? {} : { autoCreatePR: payload.autoCreatePR }),
+      urlOrigin: "",
+    };
+    return { current, agent, allocation, runs, record, payload };
+  });
+
+  const gitFor = Effect.fn("CloudAgentsApi.gitFor")(function* (
+    agent: CloudAgent,
+    allocation: RunAllocation,
+    repos: ReadonlyArray<CloudAgentsApiRepoInput> | undefined,
+  ) {
+    const published =
+      publication === undefined
+        ? undefined
+        : Option.getOrUndefined(
+            yield* publication.status(allocation.id, allocation.attempt).pipe(Effect.option),
+          );
+    const prUrl =
+      published?.outcome.status === "published" ? published.outcome.pullRequestUrl : repos?.[0]?.prUrl;
+    return publicGit(agent, repos, prUrl);
+  });
+
+  const seedStatus = (run: CloudRun, nowMs: number) =>
+    appendStreamEvent({
+      runId: run.id,
+      event: "status",
+      data: { runId: run.id, status: run.status },
+      nowMs,
+      id: false,
+    });
+
+  const me: CloudAgentsApi["Service"]["me"] = (principal) =>
+    Effect.succeed({
+      apiKeyName: principal.apiKeyName,
+      createdAt: principal.createdAt,
+      ...(principal.kind === "service_account"
+        ? {}
+        : {
+            ...(principal.userId === undefined ? {} : { userId: principal.userId }),
+            ...(principal.userEmail === undefined ? {} : { userEmail: principal.userEmail }),
+            ...(principal.userFirstName === undefined
+              ? {}
+              : { userFirstName: principal.userFirstName }),
+            ...(principal.userLastName === undefined ? {} : { userLastName: principal.userLastName }),
+          }),
+    });
+
+  const listModels: CloudAgentsApi["Service"]["listModels"] = Effect.gen(function* () {
+    if (providers === undefined) return [];
+    const snapshots = yield* providers.getProviders;
+    return modelsFromProviders(snapshots);
+  });
+
+  const listRepositories: CloudAgentsApi["Service"]["listRepositories"] = Effect.gen(function* () {
+    if (projection === undefined) return [];
+    const shells = yield* projection.getProjectShells().pipe(Effect.orElseSucceed(() => []));
+    const seen = new Set<string>();
+    const items: CloudAgentsApiRepository[] = [];
+    for (const shell of shells) {
+      if (shell.repositoryIdentity?.provider !== "github") continue;
+      const selector = sourceControlRepositorySelector(shell.repositoryIdentity);
+      if (selector === null) continue;
+      const url = `https://github.com/${selector}`;
+      if (seen.has(url)) continue;
+      seen.add(url);
+      items.push({ url });
+    }
+    return items;
+  });
+
+  const createAgent: CloudAgentsApi["Service"]["createAgent"] = (input) =>
+    Effect.gen(function* () {
+      const invalid = validateCreateAgentRequest(input.body);
+      if (invalid !== undefined) return yield* Effect.fail(invalid);
+      const current = yield* snapshot;
+      if (input.body.agentId !== undefined) {
+        const existing = current.agents?.find((agent) => agent.id === input.body.agentId);
+        if (existing !== undefined) {
+          return yield* Effect.fail(apiError(
+            "agent_id_conflict",
+            `Agent '${input.body.agentId}' already exists.`,
+          ));
+        }
+      }
+      const occurredAt = DateTime.formatIso(yield* DateTime.now);
+      const startedAt = Date.parse(occurredAt);
+      const agentId = CloudAgentId.make(input.body.agentId ?? `bc-${NodeCrypto.randomUUID()}`);
+      const runId = CloudRunId.make(`run-${NodeCrypto.randomUUID()}`);
+      const allocationId = RunAllocationId.make(`alloc-${agentId}`);
+      const commandId = CommandId.make(`cmd-${NodeCrypto.randomUUID()}`);
+      const messageId = MessageId.make(`msg-${NodeCrypto.randomUUID()}`);
+      const threadId = ThreadId.make(`thread-${agentId}`);
+      const title = titleFromPrompt(input.body.prompt.text, input.body.name);
+      const repo = input.body.repos?.[0];
+      const parsedRepo = repo === undefined ? undefined : parseRepositoryUrl(repo.url);
+      const repository = parsedRepo?.ownerName ?? "local/none";
+      const selectedRef = repo?.startingRef ?? "main";
+      const workOnCurrentBranch = input.body.workOnCurrentBranch === true;
+      const branch = workOnCurrentBranch ? selectedRef : `cloud/${agentId.slice(-12)}`;
+      const models = yield* listModels;
+      const modelId = input.body.model?.id ?? models[0]?.id ?? "default";
+      const instanceType = current.limits.allowedInstanceTypes[0] ?? "t3.medium";
+      const runSeconds = Math.min(current.limits.maxRunSeconds, 3 * 24 * 60 * 60);
+      const autoCreatePR = input.body.autoCreatePR === true;
+      yield* allocations
+        .dispatch({
+          type: "allocation.launch",
+          commandId,
+          allocationId,
+          attempt: RunAllocationAttempt.make(1),
+          occurredAt,
+          target: { repository, baseCommit: selectedRef, branch },
+          publication: autoCreatePR
+            ? {
+                mode: "automatic-draft-pr",
+                baseBranch: selectedRef,
+                title,
+                body: "Started from the Cloud Agents API.",
+              }
+            : { mode: "review-only" },
+          control: { agentId, runId },
+          execution: {
+            threadId,
+            title,
+            selectedRef,
+            unansweredRequestSeconds: CloudProviderUnansweredRequestSeconds.make(
+              Math.min(900, current.limits.maxInputWaitSeconds),
+            ),
+            turn: {
+              commandId,
+              messageId,
+              prompt: input.body.prompt.text,
+              attachments: [],
+              modelSelection: {
+                instanceId: ProviderInstanceId.make("codex"),
+                model: modelId,
+                ...(input.body.model?.params === undefined
+                  ? {}
+                  : {
+                      options: input.body.model.params.map((param) => ({
+                        id: param.id,
+                        value: param.value,
+                      })),
+                    }),
+              },
+              runtimeMode: "full-access",
+              interactionMode: interactionMode(input.body.mode),
+              createdAt: occurredAt,
+            },
+          },
+          profile: { id: "linux-web", os: "linux", arch: "x64", instanceType },
+          deadlines: {
+            launchBy: deadline(startedAt, Math.min(120, runSeconds)),
+            bootBy: deadline(startedAt, Math.min(300, runSeconds)),
+            registerBy: deadline(startedAt, Math.min(420, runSeconds)),
+            expiresAt: deadline(startedAt, runSeconds),
+            cleanupBy: deadline(startedAt, runSeconds + 600),
+          },
+        })
+        .pipe(Effect.mapError(mapControllerError));
+      yield* sql`
+        INSERT INTO cloud_agents_api_records (agent_id, principal_id, allocation_id, record_json, created_at)
+        VALUES (
+          ${agentId},
+          ${input.principal.principalId},
+          ${allocationId},
+          ${encodeRecord({
+            env: defaultEnv(input.body),
+            ...(input.body.repos === undefined ? {} : { repos: input.body.repos }),
+            ...(input.body.workOnCurrentBranch === undefined
+              ? {}
+              : { workOnCurrentBranch: input.body.workOnCurrentBranch }),
+            ...(input.body.autoCreatePR === undefined ? {} : { autoCreatePR: input.body.autoCreatePR }),
+          })},
+          ${occurredAt}
+        )
+      `.pipe(Effect.mapError(() => apiError("internal_error", "Could not persist the agent record.")));
+      const located = yield* locate(input.principal, agentId);
+      const run = located.runs.find((candidate) => candidate.id === runId) ?? located.runs[0];
+      if (run === undefined) {
+        return yield* Effect.fail(apiError("internal_error", "The initial run was not recorded."));
+      }
+      const nowMs = Date.parse(occurredAt);
+      yield* seedStatus(run, Number.isFinite(nowMs) ? nowMs : epochNowMs());
+      const record = { ...located.record, urlOrigin: input.urlOrigin };
+      return {
+        agent: publicAgent(located.agent, record),
+        run: publicRun(run),
+      };
+    });
+
+  const listAgents: CloudAgentsApi["Service"]["listAgents"] = (input) =>
+    Effect.gen(function* () {
+      const owned = yield* readOwned({ principalId: input.principal.principalId }).pipe(
+        Effect.mapError(() => apiError("internal_error", "The API catalog is unavailable.")),
+      );
+      const current = yield* snapshot;
+      const byId = new Map(owned.map((row) => [row.agentId, row]));
+      const items = [...(current.agents ?? [])]
+        .filter((agent) => byId.has(agent.id))
+        .filter((agent) => {
+          const allocation = current.allocations.find((row) => row.id === agent.allocationId);
+          return allocation?.deletion === undefined;
+        })
+        .filter((agent) => input.includeArchived !== false || agent.status !== "ARCHIVED")
+        .filter((agent) => {
+          if (input.prUrl === undefined) return true;
+          const row = byId.get(agent.id);
+          if (row === undefined) return false;
+          const payload = decodeRecord(row.recordJson);
+          return payload.repos?.some((repo) => repo.prUrl === input.prUrl) === true;
+        })
+        .sort((left, right) => right.updatedAt.localeCompare(left.updatedAt));
+      const page = paginateNewestFirst(items, {
+        ...(input.limit === undefined ? {} : { limit: input.limit }),
+        ...(input.cursor === undefined ? {} : { cursor: input.cursor }),
+      });
+      return {
+        items: page.items.map((agent) => {
+          const row = byId.get(agent.id)!;
+          const payload = decodeRecord(row.recordJson);
+          return publicAgentSummary(agent, {
+            env: payload.env,
+            urlOrigin: input.urlOrigin,
+          });
+        }),
+        ...(page.nextCursor === undefined ? {} : { nextCursor: page.nextCursor }),
+      };
+    });
+
+  const getAgent: CloudAgentsApi["Service"]["getAgent"] = (input) =>
+    Effect.gen(function* () {
+      const located = yield* locate(input.principal, input.agentId);
+      return publicAgent(located.agent, { ...located.record, urlOrigin: input.urlOrigin });
+    });
+
+  const createRun: CloudAgentsApi["Service"]["createRun"] = (input) =>
+    Effect.gen(function* () {
+      const invalid = validateCreateRunRequest(input.body);
+      if (invalid !== undefined) return yield* Effect.fail(invalid);
+      const located = yield* locate(input.principal, input.agentId);
+      if (located.agent.status === "ARCHIVED") {
+        return yield* Effect.fail(apiError("agent_archived", `Agent '${input.agentId}' is archived.`));
+      }
+      if (located.runs.some((run) => isActiveRunStatus(run.status))) {
+        return yield* Effect.fail(apiError("agent_busy", `Agent '${input.agentId}' already has an active run.`));
+      }
+      const occurredAt = DateTime.formatIso(yield* DateTime.now);
+      const runId = CloudRunId.make(`run-${NodeCrypto.randomUUID()}`);
+      const commandId = CommandId.make(`cmd-${NodeCrypto.randomUUID()}`);
+      const messageId = MessageId.make(`msg-${NodeCrypto.randomUUID()}`);
+      const title = titleFromPrompt(input.body.prompt.text);
+      const previous = located.allocation.execution;
+      yield* allocations
+        .dispatch({
+          type: "allocation.follow-up",
+          commandId,
+          allocationId: located.allocation.id,
+          attempt: located.allocation.attempt,
+          occurredAt,
+          runId,
+          execution: {
+            threadId: previous?.threadId ?? ThreadId.make(`thread-${input.agentId}`),
+            title,
+            selectedRef: previous?.selectedRef ?? located.agent.baseCommit,
+            unansweredRequestSeconds:
+              previous?.unansweredRequestSeconds ??
+              CloudProviderUnansweredRequestSeconds.make(900),
+            turn: {
+              commandId,
+              messageId,
+              prompt: input.body.prompt.text,
+              attachments: [],
+              modelSelection: previous?.turn.modelSelection ?? {
+                instanceId: ProviderInstanceId.make("codex"),
+                model: "default",
+              },
+              runtimeMode: previous?.turn.runtimeMode ?? "full-access",
+              interactionMode: interactionMode(input.body.mode),
+              createdAt: occurredAt,
+            },
+          },
+          deadlines: located.allocation.deadlines,
+        })
+        .pipe(Effect.mapError(mapControllerError));
+      const refreshed = yield* locate(input.principal, input.agentId);
+      const run = refreshed.runs.find((candidate) => candidate.id === runId);
+      if (run === undefined) {
+        return yield* Effect.fail(apiError("internal_error", "The follow-up run was not recorded."));
+      }
+      yield* seedStatus(run, Date.parse(occurredAt) || epochNowMs());
+      return { run: publicRun(run) };
+    });
+
+  const listRuns: CloudAgentsApi["Service"]["listRuns"] = (input) =>
+    Effect.gen(function* () {
+      const located = yield* locate(input.principal, input.agentId);
+      const git = yield* gitFor(located.agent, located.allocation, located.record.repos);
+      const items = [...located.runs]
+        .sort((left, right) => right.createdAt.localeCompare(left.createdAt))
+        .map((run) => publicRun(run, git === undefined ? {} : { git }));
+      return paginateNewestFirst(items, {
+        ...(input.limit === undefined ? {} : { limit: input.limit }),
+        ...(input.cursor === undefined ? {} : { cursor: input.cursor }),
+      });
+    });
+
+  const getRun: CloudAgentsApi["Service"]["getRun"] = (input) =>
+    Effect.gen(function* () {
+      const located = yield* locate(input.principal, input.agentId);
+      const run = located.runs.find((candidate) => candidate.id === input.runId);
+      if (run === undefined) {
+        return yield* Effect.fail(apiError("run_not_found", `Run '${input.runId}' was not found.`));
+      }
+      const git = yield* gitFor(located.agent, located.allocation, located.record.repos);
+      let result: string | undefined;
+      if (results !== undefined && isTerminalRunStatus(run.status)) {
+        const resultId = CloudRunResults.cloudResultIdFor(
+          located.allocation.id,
+          located.allocation.attempt,
+        );
+        const text = Option.getOrUndefined(
+          yield* results.readText(resultId, "transcript").pipe(Effect.option),
+        );
+        result = text;
+      }
+      return publicRun(run, {
+        ...(git === undefined ? {} : { git }),
+        ...(result === undefined ? {} : { result }),
+      });
+    });
+
+  const cancelRun: CloudAgentsApi["Service"]["cancelRun"] = (input) =>
+    Effect.gen(function* () {
+      const located = yield* locate(input.principal, input.agentId);
+      const run = located.runs.find((candidate) => candidate.id === input.runId);
+      if (run === undefined) {
+        return yield* Effect.fail(apiError("run_not_found", `Run '${input.runId}' was not found.`));
+      }
+      if (!isActiveRunStatus(run.status)) {
+        return yield* Effect.fail(apiError("run_not_cancellable", `Run '${input.runId}' cannot be cancelled.`));
+      }
+      const occurredAt = DateTime.formatIso(yield* DateTime.now);
+      yield* allocations
+        .dispatch({
+          type: "allocation.cancel",
+          commandId: CommandId.make(`cmd-${NodeCrypto.randomUUID()}`),
+          allocationId: located.allocation.id,
+          attempt: located.allocation.attempt,
+          occurredAt,
+        })
+        .pipe(Effect.mapError(mapControllerError));
+      const nowMs = Date.parse(occurredAt) || epochNowMs();
+      yield* appendStreamEvent({
+        runId: run.id,
+        event: "result",
+        data: { runId: run.id, status: "CANCELLED" },
+        nowMs,
+      });
+      yield* appendStreamEvent({ runId: run.id, event: "done", data: {}, nowMs });
+      return { id: run.id };
+    });
+
+  const usage: CloudAgentsApi["Service"]["usage"] = (input) =>
+    Effect.gen(function* () {
+      const located = yield* locate(input.principal, input.agentId);
+      const selected =
+        input.runId === undefined
+          ? located.runs
+          : located.runs.filter((run) => run.id === input.runId);
+      if (input.runId !== undefined && selected.length === 0) {
+        return yield* Effect.fail(apiError("run_not_found", `Run '${input.runId}' was not found.`));
+      }
+      const newestFirst = [...selected].sort((left, right) =>
+        right.createdAt.localeCompare(left.createdAt),
+      );
+      return agentUsageFromRuns(newestFirst.map((run) => ({ id: run.id })));
+    });
+
+  const mutateLifecycle = (
+    type: "allocation.agent-archive" | "allocation.agent-unarchive" | "allocation.agent-delete",
+  ) =>
+    Effect.fn("CloudAgentsApi.lifecycle")(function* (input: {
+      readonly principal: CloudAgentsApiPrincipal;
+      readonly agentId: string;
+    }) {
+      const located = yield* locate(input.principal, input.agentId);
+      if (
+        type === "allocation.agent-delete" &&
+        located.runs.some((run) => isActiveRunStatus(run.status))
+      ) {
+        return yield* Effect.fail(apiError(
+          "agent_busy",
+          `Agent '${input.agentId}' still has an active run.`,
+        ));
+      }
+      const occurredAt = DateTime.formatIso(yield* DateTime.now);
+      yield* allocations
+        .dispatch({
+          type,
+          commandId: CommandId.make(`cmd-${NodeCrypto.randomUUID()}`),
+          allocationId: located.allocation.id,
+          attempt: located.allocation.attempt,
+          occurredAt,
+        })
+        .pipe(Effect.mapError(mapControllerError));
+      if (type === "allocation.agent-delete" && results !== undefined) {
+        const after = yield* snapshot;
+        const allocation = after.allocations.find((row) => row.id === located.allocation.id);
+        if (allocation !== undefined && isDeletionPurgeReady(allocation)) {
+          const purged = yield* results.purgeAllocation({
+            allocationId: allocation.id,
+            attempts: Array.from({ length: allocation.attempt }, (_, index) => index + 1),
+          }).pipe(Effect.orElseSucceed(() => []));
+          yield* allocations
+            .purgeAllocation({
+              allocationId: allocation.id,
+              deletedAt: occurredAt,
+              purgedResultIds: purged,
+            })
+            .pipe(Effect.mapError(mapControllerError));
+        }
+      }
+      return { id: input.agentId };
+    });
+
+  const streamRun: CloudAgentsApi["Service"]["streamRun"] = (input) =>
+    Effect.gen(function* () {
+      const located = yield* locate(input.principal, input.agentId);
+      const run = located.runs.find((candidate) => candidate.id === input.runId);
+      if (run === undefined) {
+        return yield* Effect.fail(apiError("run_not_found", `Run '${input.runId}' was not found.`));
+      }
+      const log = (yield* Ref.get(streams)).get(run.id) ?? [];
+      const events: CloudAgentsApiStreamEvent[] = [...log];
+      if (!events.some((event) => event.event === "status")) {
+        events.unshift({
+          event: "status",
+          data: { runId: run.id, status: run.status },
+          createdAtMs: Date.parse(run.createdAt) || input.nowMs,
+        });
+      }
+      if (isActiveRunStatus(run.status) && !events.some((event) => event.event === "heartbeat")) {
+        events.push({
+          id: streamEventId(input.nowMs, events.length),
+          event: "heartbeat",
+          data: {},
+          createdAtMs: input.nowMs,
+        });
+      }
+      if (run.status === "ERROR" && !events.some((event) => event.event === "error")) {
+        events.push({
+          id: streamEventId(input.nowMs, events.length),
+          event: "error",
+          data: { code: "internal_error", message: "The run failed." },
+          createdAtMs: input.nowMs,
+        });
+      }
+      if (isTerminalRunStatus(run.status) && !events.some((event) => event.event === "done")) {
+        const completedMs = Date.parse(run.updatedAt) || input.nowMs;
+        events.push({
+          id: streamEventId(completedMs, events.length),
+          event: "result",
+          data: { runId: run.id, status: run.status },
+          createdAtMs: completedMs,
+        });
+        events.push({
+          id: streamEventId(completedMs, events.length + 1),
+          event: "done",
+          data: {},
+          createdAtMs: completedMs,
+        });
+      }
+      const resumed = resumeStream({
+        events,
+        lastEventId: input.lastEventId,
+        nowMs: input.nowMs,
+      });
+      if (!resumed.ok) return yield* Effect.fail(resumed.error);
+      return resumed.events;
+    });
+
+  return CloudAgentsApi.of({
+    me,
+    createAgent,
+    listAgents,
+    getAgent,
+    createRun,
+    listRuns,
+    getRun,
+    cancelRun,
+    usage,
+    archive: mutateLifecycle("allocation.agent-archive"),
+    unarchive: mutateLifecycle("allocation.agent-unarchive"),
+    deleteAgent: mutateLifecycle("allocation.agent-delete"),
+    streamRun,
+    appendStreamEvent,
+    listModels,
+    listRepositories,
+  });
+});
+
+export const layer = Layer.effect(CloudAgentsApi, make());

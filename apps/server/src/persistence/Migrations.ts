@@ -72,6 +72,7 @@ import Migration0057 from "./Migrations/057_CloudEnvironmentBuilds.ts";
 import Migration0058 from "./Migrations/058_CloudAgentDeletions.ts";
 import Migration0059 from "./Migrations/059_CloudWarmGuests.ts";
 import Migration0060 from "./Migrations/060_CloudMacHosts.ts";
+import Migration0061 from "./Migrations/061_CloudAgentsApi.ts";
 
 /**
  * Migration loader with all migrations defined inline.
@@ -144,6 +145,7 @@ const migrationEntries = [
   [58, "CloudAgentDeletions", Migration0058],
   [59, "CloudWarmGuests", Migration0059],
   [60, "CloudMacHosts", Migration0060],
+  [61, "CloudAgentsApi", Migration0061],
 ] as const;
 
 export const migrationManifest = migrationEntries.map(([id, name]) => [id, name] as const);

@@ -138,6 +138,9 @@ import * as CloudCliTokenManager from "./cloud/CliTokenManager.ts";
 import * as CloudCliState from "./cloud/CliState.ts";
 import * as CloudAllocationController from "./cloud/CloudAllocationController.ts";
 import * as CloudAgentRetention from "./cloud/CloudAgentRetention.ts";
+import * as CloudAgentsApi from "./cloud/CloudAgentsApi.ts";
+import * as CloudAgentsApiKeys from "./cloud/CloudAgentsApiKeys.ts";
+import { cloudAgentsApiRateLimitsLayer, cloudAgentsApiRouteLayer } from "./cloud/CloudAgentsApiHttp.ts";
 import * as CloudAllocationReconciler from "./cloud/CloudAllocationReconciler.ts";
 import * as CloudWorkerRegistration from "./cloud/CloudWorkerRegistration.ts";
 import * as CloudWorkerRunClient from "./cloud/CloudWorkerRunClient.ts";
@@ -623,6 +626,9 @@ const RuntimeCoreDependenciesBaseLive = ReactorLayerLive.pipe(
 const RuntimeCoreDependenciesLive = Layer.mergeAll(
   CloudRunControl.layer,
   CloudAgentReview.layer,
+  CloudAgentsApi.layer,
+  CloudAgentsApiKeys.layer,
+  cloudAgentsApiRateLimitsLayer,
 ).pipe(
   Layer.provideMerge(CloudArtifactAccess.layer),
   Layer.provideMerge(CloudRunResultsLayerLive),
@@ -677,6 +683,7 @@ export const makeRoutesLayer = Layer.mergeAll(
     attachmentUploadRouteLayer,
     cloudResultRouteLayer,
     cloudAgentReviewRouteLayer,
+    cloudAgentsApiRouteLayer,
     deviceHubProxyRouteLayer,
     previewGatewayBootstrapRouteLayer,
     sharedBrowserBootstrapRouteLayer,
