@@ -4,6 +4,7 @@ import {
   type CloudAllocationControllerMode,
   CloudAllocationLimits,
   type CloudAllocationSnapshot,
+  DEFAULT_IDLE_RELEASE_SECONDS,
   type CloudEnvironment,
   type CloudEnvironmentBuild,
   cloudEnvironmentBuildReference,
@@ -59,6 +60,7 @@ const DEFAULT_LIMITS = {
   maxRunSeconds: 3 * 24 * 60 * 60,
   maxInputWaitSeconds: 15 * 60,
   previewGraceSeconds: 15 * 60,
+  idleReleaseSeconds: DEFAULT_IDLE_RELEASE_SECONDS,
   allowedInstanceTypes: ["t3.medium"],
 } as const satisfies CloudAllocationLimits;
 
@@ -148,6 +150,17 @@ function replayEvents(
         "The cloud allocation catalog contains an inconsistent event sequence.",
       ),
   });
+}
+
+/**
+ * Queue depth counts allocations that want a running guest. A hibernated one
+ * holds no worker, so an open conversation does not consume the queue an
+ * active run needs.
+ */
+function waitingForAWorker(allocation: RunAllocation): boolean {
+  return (
+    allocation.cleanupState.status !== "succeeded" && allocation.idleState.status !== "hibernated"
+  );
 }
 
 function allocationInstanceId(allocation: RunAllocation): string | undefined {
@@ -259,21 +272,29 @@ export const make = Effect.fn("CloudAllocationController.make")(function* (input
     events: ReadonlyArray<RunAllocationEvent>,
     now: DateTime.Utc,
   ): CloudRunUsage => {
-    const workerStartedAt = events.find(
-      (event) =>
-        event.attempt === allocation.attempt && event.type === "allocation.instance-launched",
-    )?.occurredAt;
-    const workerStoppedAt = events.findLast(
-      (event) =>
-        event.attempt === allocation.attempt && event.type === "allocation.cleanup-succeeded",
-    )?.occurredAt;
-    const startMillis = workerStartedAt === undefined ? undefined : Date.parse(workerStartedAt);
-    const endMillis =
-      workerStoppedAt === undefined ? DateTime.toEpochMillis(now) : Date.parse(workerStoppedAt);
-    const elapsedWorkerSeconds =
-      startMillis === undefined || !Number.isFinite(startMillis) || !Number.isFinite(endMillis)
-        ? 0
-        : Math.max(0, Math.ceil((endMillis - startMillis) / 1_000));
+    // Compute is billed while a guest runs, and hibernation stops it. Summing
+    // the running intervals is what keeps an open conversation from reporting
+    // days of compute it never used.
+    let runningSinceMillis: number | undefined;
+    let elapsedWorkerMillis = 0;
+    for (const event of events) {
+      if (event.type === "allocation.instance-launched") {
+        runningSinceMillis = Date.parse(event.occurredAt);
+        continue;
+      }
+      if (event.type !== "allocation.hibernated" && event.type !== "allocation.cleanup-succeeded") {
+        continue;
+      }
+      const stoppedMillis = Date.parse(event.occurredAt);
+      if (runningSinceMillis !== undefined && Number.isFinite(stoppedMillis)) {
+        elapsedWorkerMillis += Math.max(0, stoppedMillis - runningSinceMillis);
+      }
+      runningSinceMillis = undefined;
+    }
+    if (runningSinceMillis !== undefined && Number.isFinite(runningSinceMillis)) {
+      elapsedWorkerMillis += Math.max(0, DateTime.toEpochMillis(now) - runningSinceMillis);
+    }
+    const elapsedWorkerSeconds = Math.ceil(elapsedWorkerMillis / 1_000);
     const instanceType = allocation.profile.instanceType;
     const price = workerPriceAssumptions.find(
       (assumption) => assumption.instanceType === instanceType,
@@ -492,9 +513,7 @@ export const make = Effect.fn("CloudAllocationController.make")(function* (input
           }
           const invalid = validateAdmission(command);
           if (invalid !== undefined) return yield* invalid;
-          const pending = snapshot.allocations.filter(
-            (allocation) => allocation.cleanupState.status !== "succeeded",
-          ).length;
+          const pending = snapshot.allocations.filter(waitingForAWorker).length;
           if (pending >= limits.maxConcurrentWorkers + limits.maxQueueDepth) {
             return yield* controllerError(
               "queue-full",
@@ -556,9 +575,7 @@ export const make = Effect.fn("CloudAllocationController.make")(function* (input
           }
           const invalid = validateAdmission(command);
           if (invalid !== undefined) return yield* invalid;
-          const pending = snapshot.allocations.filter(
-            (allocation) => allocation.cleanupState.status !== "succeeded",
-          ).length;
+          const pending = snapshot.allocations.filter(waitingForAWorker).length;
           if (pending >= limits.maxConcurrentWorkers + limits.maxQueueDepth) {
             return yield* controllerError(
               "queue-full",
@@ -741,6 +758,9 @@ const CloudAllocationPolicyConfig = Config.all({
   previewGraceSeconds: Config.int("T3CODE_CLOUD_PREVIEW_GRACE_SECONDS").pipe(
     Config.withDefault(15 * 60),
   ),
+  idleReleaseSeconds: Config.int("T3CODE_CLOUD_IDLE_RELEASE_SECONDS").pipe(
+    Config.withDefault(DEFAULT_IDLE_RELEASE_SECONDS),
+  ),
   workerPrices: Config.string("T3CODE_CLOUD_WORKER_PRICES").pipe(
     Config.withDefault("t3.medium=0.0496"),
   ),
@@ -769,6 +789,7 @@ export const layer = Layer.effect(
       maxRunSeconds: policy.maxRunSeconds,
       maxInputWaitSeconds: policy.maxInputWaitSeconds,
       previewGraceSeconds: policy.previewGraceSeconds,
+      idleReleaseSeconds: policy.idleReleaseSeconds,
       allowedInstanceTypes: workerPriceAssumptions.map((assumption) => assumption.instanceType),
     });
     return yield* make({

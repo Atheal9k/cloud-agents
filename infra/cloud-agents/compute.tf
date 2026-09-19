@@ -101,8 +101,12 @@ resource "aws_launch_template" "worker" {
   image_id      = each.value.ami_id
   instance_type = each.value.instance_type
 
-  update_default_version               = true
-  instance_initiated_shutdown_behavior = "terminate"
+  update_default_version = true
+  # The guest's own timer bounds how long it may run unattended, not how long
+  # the conversation lives. Stopping keeps the agent's disk so the controller
+  # can record it as a snapshot and wake it; the cleanup backstop still
+  # terminates a stopped worker that no allocation claims.
+  instance_initiated_shutdown_behavior = "stop"
 
   tags = {
     CloudAgentProject = var.name_prefix

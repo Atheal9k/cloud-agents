@@ -43,6 +43,11 @@ def handler(_event, _context):
                     or tags.get("Ephemeral") != "true"
                 ):
                     continue
+                # A hibernated guest is stopped on purpose and its disk is the
+                # agent's saved state. Its run deadline has usually passed, so
+                # only the tag separates it from an abandoned stopped worker.
+                if tags.get("CloudAgentHibernated") == "true":
+                    continue
                 ttl_minutes = tag_integer(
                     tags, "CloudAgentDefaultTtlMinutes", default_ttl_minutes
                 )

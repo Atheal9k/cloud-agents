@@ -88,6 +88,9 @@ const DISPLAY_LABELS = {
   finalizing: "Finalizing",
   failed: "Failed",
   cleanup: "Cleaning up",
+  idle: "Idle",
+  hibernated: "Hibernated",
+  waking: "Waking",
   complete: "Complete",
 } as const;
 
@@ -145,6 +148,7 @@ function CloudRunRow(props: {
   const canOpen =
     props.allocation.allocationState.status === "ready" &&
     props.allocation.allocationState.route !== undefined &&
+    props.allocation.idleState.status !== "hibernated" &&
     props.allocation.cleanupState.status === "not-requested";
 
   return (
@@ -162,6 +166,12 @@ function CloudRunRow(props: {
             {cost === null ? null : <span>{cost}</span>}
           </div>
           {error === null ? null : <p className="mt-2 text-xs text-destructive">{error}</p>}
+          {displayState === "hibernated" ? (
+            <p className="mt-2 text-xs text-muted-foreground">
+              The worker was released while this agent was idle. A follow-up restores it from its
+              snapshot.
+            </p>
+          ) : null}
         </div>
         <div className="flex shrink-0 gap-1.5">
           {canOpen ? (

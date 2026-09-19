@@ -67,6 +67,7 @@ const allocation = decodeAllocation({
   },
   agentOutcome: { status: "not-started" },
   previewState: { status: "unavailable" },
+  idleState: { status: "busy" },
   cleanupState: { status: "not-requested" },
   handledCommandIds: [],
   sequence: 1,

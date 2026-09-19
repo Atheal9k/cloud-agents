@@ -80,6 +80,27 @@ export class CloudWorkerProvider extends Context.Service<
     readonly revokeRegistrationCredential: (
       instanceId: string,
     ) => Effect.Effect<void, CloudWorkerProviderError>;
+    /**
+     * Stops the guest with its disk intact and marks it so neither the
+     * controller's own sweep nor the AWS backstop reads a stopped snapshot as
+     * an expired worker.
+     */
+    readonly hibernate: (instanceId: string) => Effect.Effect<void, CloudWorkerProviderError>;
+    /**
+     * Starts a hibernated guest back up for a new attempt. The tags carry the
+     * attempt, route, and registration credential the guest reads at boot, so
+     * re-tagging before the start is what makes it register as the new runtime.
+     */
+    readonly restore: (input: {
+      readonly instanceId: string;
+      readonly allocationId: RunAllocationId;
+      readonly attempt: RunAllocationAttempt;
+      readonly selectedRef: string;
+      readonly outputBranch: string;
+      readonly expiresAt: string;
+      readonly maxInputWaitSeconds: number;
+      readonly registrationCredential: string;
+    }) => Effect.Effect<CloudWorkerInstance, CloudWorkerProviderError>;
     readonly terminate: (instanceId: string) => Effect.Effect<void, CloudWorkerProviderError>;
   }
 >()("t3/cloud/CloudWorkerProvider") {}
@@ -108,11 +129,22 @@ const InstancesResponse = Schema.Struct({
   Reservations: Schema.Array(Schema.Struct({ Instances: Schema.Array(AwsListedInstance) })),
 });
 const RunInstancesResponse = Schema.Struct({ Instances: Schema.Array(AwsInstance) });
+const StartInstancesResponse = Schema.Struct({
+  StartingInstances: Schema.Array(
+    Schema.Struct({
+      InstanceId: Schema.String,
+      CurrentState: Schema.Struct({ Name: AwsInstanceState }),
+    }),
+  ),
+});
 const decodeLaunchTemplatesResponse = Schema.decodeEffect(
   Schema.fromJsonString(LaunchTemplatesResponse),
 );
 const decodeInstancesResponse = Schema.decodeEffect(Schema.fromJsonString(InstancesResponse));
 const decodeRunInstancesResponse = Schema.decodeEffect(Schema.fromJsonString(RunInstancesResponse));
+const decodeStartInstancesResponse = Schema.decodeEffect(
+  Schema.fromJsonString(StartInstancesResponse),
+);
 const decodeLaunchTemplate = Schema.decodeEffect(RunLaunchTemplate);
 const decodeAllocationId = Schema.decodeUnknownOption(RunAllocationId);
 const decodeAttempt = Schema.decodeUnknownOption(RunAllocationAttempt);
@@ -387,6 +419,81 @@ export const make = Effect.fn("CloudWorkerProvider.make")(function* (input: {
       return { instanceId: instance.InstanceId, state: instance.State.Name };
     });
 
+  const hibernate: CloudWorkerProvider["Service"]["hibernate"] = (instanceId) =>
+    Effect.gen(function* () {
+      // Tag first. A stopped instance without this tag looks abandoned to the
+      // cleanup backstop, so the tag has to exist before the stop does.
+      yield* runAws([
+        "create-tags",
+        "--resources",
+        instanceId,
+        "--tags",
+        "Key=CloudAgentHibernated,Value=true",
+      ]);
+      yield* runAws(["stop-instances", "--instance-ids", instanceId]);
+    }).pipe(
+      Effect.catchIf(
+        (error) => /InvalidInstanceID\.NotFound/.test(error.message),
+        () =>
+          providerError(
+            "fatal",
+            "The guest to hibernate no longer exists, so its disk cannot be kept.",
+          ),
+      ),
+      Effect.asVoid,
+    );
+
+  const restore: CloudWorkerProvider["Service"]["restore"] = (restoreInput) =>
+    Effect.gen(function* () {
+      const workerRouteUrl = normalizeHttpsOrigin(
+        input.workerRouteUrl?.replaceAll("{workerHostname}", workerHostname(restoreInput)),
+      );
+      if (workerRouteUrl === null) {
+        return yield* providerError(
+          "invalid-config",
+          "Cloud worker routing requires a valid HTTPS T3CODE_CLOUD_WORKER_ROUTE_URL value.",
+        );
+      }
+      const expiresAtMillis = Date.parse(restoreInput.expiresAt);
+      if (!Number.isFinite(expiresAtMillis)) {
+        return yield* providerError(
+          "invalid-config",
+          "The worker expiry is not a valid timestamp.",
+        );
+      }
+      yield* runAws([
+        "create-tags",
+        "--resources",
+        restoreInput.instanceId,
+        "--tags",
+        `Key=CloudAgentAttempt,Value=${restoreInput.attempt}`,
+        `Key=CloudAgentExpiresAtEpoch,Value=${Math.floor(expiresAtMillis / 1000)}`,
+        `Key=CloudAgentMaxInputWaitSeconds,Value=${restoreInput.maxInputWaitSeconds}`,
+        `Key=CloudAgentSelectedRef,Value=${restoreInput.selectedRef}`,
+        `Key=CloudAgentOutputBranch,Value=${restoreInput.outputBranch}`,
+        `Key=CloudAgentWorkerRouteUrl,Value=${workerRouteUrl}`,
+        `Key=CloudAgentRegistrationCredential,Value=${restoreInput.registrationCredential}`,
+      ]);
+      yield* runAws([
+        "delete-tags",
+        "--resources",
+        restoreInput.instanceId,
+        "--tags",
+        "Key=CloudAgentHibernated",
+      ]);
+      const output = yield* runAws(["start-instances", "--instance-ids", restoreInput.instanceId]);
+      const response = yield* decodeStartInstancesResponse(output).pipe(
+        Effect.mapError(() =>
+          providerError("fatal", "The AWS CLI returned an unexpected response."),
+        ),
+      );
+      const instance = response.StartingInstances[0];
+      if (instance === undefined) {
+        return yield* providerError("fatal", "AWS accepted the start but returned no instance.");
+      }
+      return { instanceId: instance.InstanceId, state: instance.CurrentState.Name };
+    });
+
   const terminate: CloudWorkerProvider["Service"]["terminate"] = (instanceId) =>
     runAws(["terminate-instances", "--instance-ids", instanceId]).pipe(
       Effect.catchIf(
@@ -418,6 +525,8 @@ export const make = Effect.fn("CloudWorkerProvider.make")(function* (input: {
     listWorkers,
     launch,
     revokeRegistrationCredential,
+    hibernate,
+    restore,
     terminate,
   });
 });

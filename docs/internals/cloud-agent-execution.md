@@ -30,7 +30,7 @@ client ran at `2026-09-17T02:35:07Z`. Snapshot sequence 54 showed a ready
 | ------------------------------------------------------------------------ | ------------------------ | --------------------------------------------------------------------------------- |
 | Thread events and projections                                            | Worker T3 environment    | The selected T3 base directory's `userdata/state.sqlite`                          |
 | Checkout and task files                                                  | Worker T3 environment    | The project workspace, such as `/work/ca01`                                       |
-| Provider authentication and resumable provider session                   | Worker provider user     | `/home/cloudagent/.codex` or `/home/cloudagent/.claude`                           |
+| Provider authentication and resumable provider session                   | Worker provider user     | The provider home under the worker runtime directory, cleared by a stop           |
 | Allocation, attempt, deadlines, and worker/environment/thread references | Controller               | AWS tags and controller proof records in CA-01; a durable store from CA-02 onward |
 | Retained results                                                         | Controller-owned archive | Read-only after capture; never a live orchestration writer                        |
 
@@ -213,3 +213,57 @@ and therefore part of the fingerprint, so changing it still invalidates the
 snapshot. `install` runs from a generated script file rather than an inline
 shell argument, because passing a shell string as one spawn argument is mangled
 by Windows quoting, where a quoted command silently exits 0 without running.
+
+## Idle release
+
+A run ends; the conversation does not. When a turn settles, the controller
+flushes the guest and starts an idle-release timer instead of terminating the
+worker. A follow-up inside the window reuses the same guest. After it, the
+guest is stopped with its disk intact, and a later follow-up starts it again on
+a new, fenced attempt. See
+[`cloudHibernationPolicy`](../../apps/server/src/cloud/cloudHibernationPolicy.ts).
+
+The flush is what makes the window safe to hold. It runs on the guest, because
+only the guest knows where its database, workspace, and provider home are: it
+truncates the T3 write-ahead log into the database file and captures the
+workspace, including uncommitted and untracked work, at
+`refs/t3/cloud-idle/<allocation>/<attempt>`. Each part is reported separately
+and `unavailable` is a real answer. The provider home is a runtime directory
+that a stop clears, so the flush says so rather than implying the provider
+session survives.
+
+That is also why a wake reports two things. The filesystem comes back from the
+snapshot; the provider CLI does not resume its native session against it. T3
+continues the thread from its own restored database, and the restore record
+keeps those two claims apart instead of collapsing them into "restored".
+
+Stopping the guest and recording its snapshot are separate steps, so a crash
+can land between them. The snapshot is written only after AWS reports the guest
+stopped, which makes the step idempotent: a controller that restarts mid-release
+observes the stopped guest and records the same snapshot. If the guest is gone
+instead, the allocation is cleaned up rather than left claiming a snapshot it
+cannot restore, and the retained result stays the recovery boundary.
+
+Three rules keep a stopped guest from being read as an expired one:
+
+- The controller's own sweep skips any instance an allocation still holds a
+  snapshot for. A hibernated guest carries the attempt it stopped on, which is
+  behind the attempt a wake creates, so every staleness rule would otherwise
+  match it.
+- The AWS backstop skips instances tagged `CloudAgentHibernated`. Its run
+  deadline has usually passed, so only the tag separates it from an abandoned
+  stopped worker. The controller sets that tag before it stops the guest.
+- The guest's own timer stops the instance rather than terminating it. It
+  bounds how long a guest may run unattended, not how long the conversation
+  lives.
+
+A woken guest boots from cloud-init state that ran once, on a different boot.
+Provider credentials live in a runtime directory that is empty every time, so
+`cloud-agent-worker-credentials.service` materializes them from Secrets Manager
+on every boot, preferring the refreshed cache the previous shutdown staged.
+Bootstrap runs the same script, so the first boot exercises the path a wake
+depends on.
+
+Compute is metered across these transitions by summing the intervals a guest
+was running, rather than from launch to cleanup. An open conversation would
+otherwise report days of compute it never used.

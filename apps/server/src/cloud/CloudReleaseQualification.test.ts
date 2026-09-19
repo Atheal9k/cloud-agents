@@ -292,6 +292,7 @@ it.layer(TestLayer)("cloud release qualification", (it) => {
             completedAt: NOW,
           },
           previewState: { status: "unavailable" },
+          idleState: { status: "busy" },
           cleanupState: { status: "requested", requestedAt: NOW },
           handledCommandIds: [],
           sequence: 1,

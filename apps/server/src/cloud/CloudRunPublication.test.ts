@@ -94,6 +94,7 @@ it.layer(NodeServices.layer)("CloudRunPublication", (it) => {
       allocationState: { status: "queued" },
       agentOutcome: { status: "not-started" },
       previewState: { status: "unavailable" },
+      idleState: { status: "busy" },
       cleanupState: { status: "not-requested" },
       handledCommandIds: [],
       sequence: 1,

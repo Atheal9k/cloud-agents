@@ -381,3 +381,246 @@ describe("cloud allocation transitions", () => {
     expect(allocation.cleanupState.status).toBe("succeeded");
   });
 });
+
+describe("cloud allocation hibernation", () => {
+  const flush = {
+    userdata: { status: "flushed", detail: "Checkpointed 12 write-ahead log pages." },
+    workspace: { status: "flushed", detail: "Captured refs/t3/cloud-idle/allocation-1/1." },
+    providerHome: { status: "unavailable", reason: "The provider home is a runtime directory." },
+    flushedAt: "2026-09-17T03:10:00.000Z",
+  } as const;
+
+  const followUpTurn = {
+    threadId: "thread-1",
+    title: "Cloud task",
+    selectedRef: "afd7667ed",
+    unansweredRequestSeconds: 900,
+    turn: {
+      commandId: "turn-2",
+      messageId: "message-2",
+      prompt: "Pick this back up",
+      attachments: [],
+      modelSelection: { instanceId: "codex", model: "gpt-5.6-sol" },
+      runtimeMode: "approval-required",
+      interactionMode: "default",
+      createdAt: "2026-09-18T09:00:00.000Z",
+    },
+  } as const;
+
+  function settledAllocation(): RunAllocation {
+    return applyAccepted(
+      runningAllocation().allocation,
+      command({
+        type: "allocation.agent-succeeded",
+        commandId: "command-agent-succeeded",
+        allocationId: "allocation-1",
+        attempt: 1,
+        occurredAt: "2026-09-17T03:10:00.000Z",
+        resultLocation: { uri: "t3://environment-1/thread-1" },
+      }),
+    ).allocation;
+  }
+
+  function idleAllocation(): RunAllocation {
+    return applyAccepted(
+      settledAllocation(),
+      command({
+        type: "allocation.idle",
+        commandId: "command-idle",
+        allocationId: "allocation-1",
+        attempt: 1,
+        occurredAt: "2026-09-17T03:10:01.000Z",
+        releaseAt: "2026-09-17T04:10:01.000Z",
+        flush,
+      }),
+    ).allocation;
+  }
+
+  function hibernatedAllocation(): RunAllocation {
+    return applyAccepted(
+      idleAllocation(),
+      command({
+        type: "allocation.hibernate",
+        commandId: "command-hibernate",
+        allocationId: "allocation-1",
+        attempt: 1,
+        occurredAt: "2026-09-17T04:10:02.000Z",
+        snapshot: {
+          instanceId: "i-worker",
+          attempt: 1,
+          flush,
+          capturedAt: "2026-09-17T04:10:02.000Z",
+        },
+      }),
+    ).allocation;
+  }
+
+  it("records the flush and the release deadline when a settled turn goes idle", () => {
+    const idle = idleAllocation();
+
+    expect(idle.idleState).toEqual({
+      status: "idle",
+      settledAt: "2026-09-17T03:10:01.000Z",
+      releaseAt: "2026-09-17T04:10:01.000Z",
+      flush,
+    });
+    expect(idle.agentOutcome.status).toBe("succeeded");
+  });
+
+  it("refuses to idle a turn that is still running", () => {
+    expect(
+      decideRunAllocationCommand(
+        runningAllocation().allocation,
+        command({
+          type: "allocation.idle",
+          commandId: "command-idle-early",
+          allocationId: "allocation-1",
+          attempt: 1,
+          occurredAt: "2026-09-17T03:05:00.000Z",
+          releaseAt: "2026-09-17T04:05:00.000Z",
+          flush,
+        }),
+      ),
+    ).toEqual([]);
+  });
+
+  it("drops the worker route when the guest stops so nothing dials it", () => {
+    const hibernated = hibernatedAllocation();
+
+    expect(hibernated.idleState).toMatchObject({
+      status: "hibernated",
+      snapshot: { instanceId: "i-worker" },
+    });
+    expect(hibernated.allocationState).toEqual({
+      status: "ready",
+      instanceId: "i-worker",
+      references,
+      readyAt: "2026-09-17T03:00:04.000Z",
+    });
+  });
+
+  it("reuses the guest for a follow-up inside the idle window", () => {
+    const followedUp = applyAccepted(
+      idleAllocation(),
+      command({
+        type: "allocation.follow-up",
+        commandId: "command-follow-up",
+        allocationId: "allocation-1",
+        attempt: 1,
+        occurredAt: "2026-09-17T03:20:00.000Z",
+        runId: "run-2",
+        execution: followUpTurn,
+        deadlines: retryDeadlines,
+      }),
+    ).allocation;
+
+    expect(followedUp.attempt).toBe(1);
+    expect(followedUp.idleState).toEqual({ status: "busy" });
+    expect(followedUp.allocationState.status).toBe("ready");
+  });
+
+  it("wakes a hibernated guest on one new attempt that restores its snapshot", () => {
+    const woken = applyAccepted(
+      hibernatedAllocation(),
+      command({
+        type: "allocation.follow-up",
+        commandId: "command-follow-up-after-release",
+        allocationId: "allocation-1",
+        attempt: 1,
+        occurredAt: "2026-09-18T09:00:00.000Z",
+        runId: "run-2",
+        execution: followUpTurn,
+        deadlines: retryDeadlines,
+      }),
+    ).allocation;
+
+    expect(woken.attempt).toBe(2);
+    expect(woken.allocationState).toEqual({ status: "queued" });
+    expect(woken.idleState).toMatchObject({
+      status: "waking",
+      snapshot: { instanceId: "i-worker", attempt: 1 },
+    });
+
+    const wakeCommands = [
+      command({
+        type: "allocation.launch-started",
+        commandId: "command-wake-launch-started",
+        allocationId: "allocation-1",
+        attempt: 2,
+        occurredAt: "2026-09-18T09:00:01.000Z",
+        launchTemplate: { id: "lt-worker", version: 7 },
+      }),
+      command({
+        type: "allocation.instance-launched",
+        commandId: "command-wake-instance-launched",
+        allocationId: "allocation-1",
+        attempt: 2,
+        occurredAt: "2026-09-18T09:00:02.000Z",
+        instanceId: "i-worker",
+      }),
+      command({
+        type: "allocation.worker-booted",
+        commandId: "command-wake-worker-booted",
+        allocationId: "allocation-1",
+        attempt: 2,
+        occurredAt: "2026-09-18T09:00:03.000Z",
+      }),
+      command({
+        type: "allocation.worker-registered",
+        commandId: "command-wake-worker-registered",
+        allocationId: "allocation-1",
+        attempt: 2,
+        occurredAt: "2026-09-18T09:00:04.000Z",
+        references,
+        route,
+      }),
+      command({
+        type: "allocation.runtime-restored",
+        commandId: "command-wake-restored",
+        allocationId: "allocation-1",
+        attempt: 2,
+        occurredAt: "2026-09-18T09:00:05.000Z",
+        restore: {
+          filesystem: { status: "resumed", detail: "Restored the guest disk from its snapshot." },
+          providerSession: {
+            status: "not-resumed",
+            reason: "The provider home is a runtime directory.",
+          },
+          restoredAt: "2026-09-18T09:00:05.000Z",
+        },
+      }),
+    ];
+    let restored = woken;
+    for (const nextCommand of wakeCommands) {
+      restored = applyAccepted(restored, nextCommand).allocation;
+    }
+
+    // The two halves of a wake are reported separately: the disk came back,
+    // the native provider session did not.
+    expect(restored.idleState).toMatchObject({
+      status: "busy",
+      restore: {
+        filesystem: { status: "resumed" },
+        providerSession: { status: "not-resumed" },
+      },
+    });
+    expect(restored.allocationState.status).toBe("ready");
+  });
+
+  it("stops holding a snapshot once cleanup is requested", () => {
+    const cancelled = applyAccepted(
+      hibernatedAllocation(),
+      command({
+        type: "allocation.cancel",
+        commandId: "command-cancel-hibernated",
+        allocationId: "allocation-1",
+        attempt: 1,
+        occurredAt: "2026-09-18T09:00:00.000Z",
+      }),
+    ).allocation;
+
+    expect(cancelled.idleState).toEqual({ status: "busy" });
+    expect(cancelled.cleanupState.status).toBe("requested");
+    expect(cancelled.agentOutcome.status).toBe("succeeded");
+  });
+});
