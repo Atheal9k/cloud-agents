@@ -141,6 +141,8 @@ import * as CloudWorkerRegistration from "./cloud/CloudWorkerRegistration.ts";
 import * as CloudWorkerRunClient from "./cloud/CloudWorkerRunClient.ts";
 import { cloudWorkerRegistrationHttpApiLayer } from "./cloud/CloudWorkerRegistrationHttp.ts";
 import * as CloudWorkerProvider from "./cloud/CloudWorkerProvider.ts";
+import * as CloudEnvironmentBuildCatalog from "./cloud/CloudEnvironmentBuildCatalog.ts";
+import * as CloudEnvironmentBuildRunner from "./cloud/CloudEnvironmentBuildRunner.ts";
 import * as CloudGitCredentials from "./cloud/CloudGitCredentials.ts";
 import * as CloudRepositoryPreparation from "./cloud/CloudRepositoryPreparation.ts";
 import * as CloudProviderExecution from "./cloud/CloudProviderExecution.ts";
@@ -322,6 +324,12 @@ const CloudGitCredentialsLayerLive = CloudGitCredentials.layer.pipe(
 
 const CloudRepositoryPreparationLayerLive = CloudRepositoryPreparation.layer.pipe(
   Layer.provide(ProcessRunner.layer),
+  Layer.provideMerge(CloudGitCredentialsLayerLive),
+);
+
+const CloudEnvironmentBuildRunnerLayerLive = CloudEnvironmentBuildRunner.layer.pipe(
+  Layer.provide(ProcessRunner.layer),
+  Layer.provide(CloudEnvironmentBuildCatalog.layer.pipe(Layer.provide(PersistenceLayerLive))),
   Layer.provideMerge(CloudGitCredentialsLayerLive),
 );
 
@@ -602,6 +610,7 @@ const RuntimeCoreDependenciesBaseLive = ReactorLayerLive.pipe(
         Layer.provide(ExternalLauncher.layer),
       ),
       CloudManagedEndpointRuntimeLive,
+      CloudEnvironmentBuildRunnerLayerLive,
       CloudRepositoryPreparationLayerLive,
       CloudRunPublicationLayerLive,
     ),

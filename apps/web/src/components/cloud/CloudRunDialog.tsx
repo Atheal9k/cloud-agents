@@ -7,6 +7,8 @@ import {
   cloudEnvironmentBase,
   type CloudEnvironment,
   type CloudEnvironmentBase,
+  type CloudEnvironmentBuild,
+  CloudEnvironmentBuildId,
   type CloudEnvironmentVersion,
   ProviderDriverKind,
   type RunAllocation,
@@ -204,14 +206,83 @@ function cloudEnvironmentBaseLabel(base: CloudEnvironmentBase): string {
   }
 }
 
+const CLOUD_BUILD_TRIGGER_LABELS: Record<CloudEnvironmentBuild["trigger"], string> = {
+  manual: "Manual",
+  recurring: "Recurring",
+  "configuration-change": "Config change",
+  "agent-requested": "Agent",
+};
+
+function cloudBuildStatusLabel(build: CloudEnvironmentBuild): string {
+  switch (build.outcome.status) {
+    case "running":
+      return "Running";
+    case "succeeded":
+      return build.draft ? "Draft ready" : "Succeeded";
+    case "failed":
+      return `Failed at ${build.outcome.stage}`;
+    case "cancelled":
+      return "Cancelled";
+    case "skipped":
+      return "Skipped, inputs unchanged";
+  }
+}
+
+function CloudEnvironmentBuildRow(props: {
+  readonly build: CloudEnvironmentBuild;
+  readonly busy: boolean;
+  readonly onSave: (build: CloudEnvironmentBuild) => void;
+  readonly onCancel: (build: CloudEnvironmentBuild) => void;
+}) {
+  const build = props.build;
+  const canSave = build.draft && build.outcome.status === "succeeded";
+  const canCancel = build.outcome.status === "running";
+  return (
+    <li className="flex items-center justify-between gap-2 text-xs">
+      <span className="truncate">
+        v{build.version} · {CLOUD_BUILD_TRIGGER_LABELS[build.trigger]} ·{" "}
+        {cloudBuildStatusLabel(build)}
+        {build.outcome.status === "succeeded"
+          ? ` · ${Math.round(build.outcome.snapshot.sizeBytes / 1_000_000)} MB`
+          : ""}
+      </span>
+      {canSave ? (
+        <Button
+          size="sm"
+          variant="outline"
+          disabled={props.busy}
+          onClick={() => props.onSave(build)}
+        >
+          Save
+        </Button>
+      ) : canCancel ? (
+        <Button
+          size="sm"
+          variant="outline"
+          disabled={props.busy}
+          onClick={() => props.onCancel(build)}
+        >
+          Cancel
+        </Button>
+      ) : null}
+    </li>
+  );
+}
+
 function CloudEnvironmentCard(props: {
   readonly environment: CloudEnvironment;
+  readonly builds: ReadonlyArray<CloudEnvironmentBuild>;
   readonly busy: boolean;
   readonly onRestore: (environment: CloudEnvironment, version: number) => void;
+  readonly onBuild: (environment: CloudEnvironment) => void;
+  readonly onSaveBuild: (build: CloudEnvironmentBuild) => void;
+  readonly onCancelBuild: (build: CloudEnvironmentBuild) => void;
 }) {
   const [historyOpen, setHistoryOpen] = useState(false);
+  const [buildsOpen, setBuildsOpen] = useState(false);
   const current = props.environment.current;
   const history = props.environment.history;
+  const activeBuild = props.builds.find((build) => build.id === props.environment.activeBuildId);
 
   return (
     <div className="rounded-xl border bg-muted/24 p-3">
@@ -240,7 +311,11 @@ function CloudEnvironmentCard(props: {
         </div>
         <div className="flex gap-1">
           <dt className="text-muted-foreground">Active Build</dt>
-          <dd>{props.environment.activeBuildId ?? "None"}</dd>
+          <dd className="truncate">
+            {activeBuild === undefined
+              ? "None"
+              : `v${activeBuild.version} · ${CLOUD_BUILD_TRIGGER_LABELS[activeBuild.trigger]}`}
+          </dd>
         </div>
         <div className="flex gap-1">
           <dt className="text-muted-foreground">Base</dt>
@@ -255,6 +330,39 @@ function CloudEnvironmentCard(props: {
           </dd>
         </div>
       </dl>
+      <div className="mt-3 flex flex-wrap items-center gap-2">
+        <Button
+          size="sm"
+          variant="outline"
+          disabled={props.busy}
+          onClick={() => props.onBuild(props.environment)}
+        >
+          Build now
+        </Button>
+        {props.builds.length > 0 ? (
+          <Button
+            size="sm"
+            variant="ghost"
+            aria-expanded={buildsOpen}
+            onClick={() => setBuildsOpen((open) => !open)}
+          >
+            {props.builds.length} Build{props.builds.length === 1 ? "" : "s"}
+          </Button>
+        ) : null}
+      </div>
+      {buildsOpen ? (
+        <ul className="mt-2 space-y-1 border-t pt-2">
+          {props.builds.map((build) => (
+            <CloudEnvironmentBuildRow
+              key={build.id}
+              build={build}
+              busy={props.busy}
+              onSave={props.onSaveBuild}
+              onCancel={props.onCancelBuild}
+            />
+          ))}
+        </ul>
+      ) : null}
       {historyOpen ? (
         <ul className="mt-3 space-y-1 border-t pt-2">
           {history.map((version) => (
@@ -325,6 +433,9 @@ function CloudRunDialogForEnvironment(props: {
   const restoreEnvironment = useAtomCommand(cloudAllocations.restoreEnvironment, {
     reportFailure: false,
   });
+  const startBuild = useAtomCommand(cloudAllocations.startBuild, { reportFailure: false });
+  const saveBuild = useAtomCommand(cloudAllocations.saveBuild, { reportFailure: false });
+  const cancelBuild = useAtomCommand(cloudAllocations.cancelBuild, { reportFailure: false });
   const [open, setOpen] = useState(false);
   const [draft, setDraft] = useState(() =>
     createInitialCloudRunDraft(snapshot, providers, projectOptions[0]?.repository),
@@ -416,6 +527,61 @@ function CloudRunDialogForEnvironment(props: {
     }
     setError(null);
   };
+
+  /** Every Build mutation reports through the same environment-scoped busy flag. */
+  const runBuildCommand = async (
+    environmentId: string,
+    command: () => Promise<{ readonly _tag: string }>,
+    failureMessage: string,
+  ) => {
+    setBusyEnvironmentId(environmentId);
+    const result = await command();
+    setBusyEnvironmentId(null);
+    if (result._tag === "Failure") {
+      const cause = squashAtomCommandFailure(result as never);
+      setError(cause instanceof Error ? cause.message : failureMessage);
+      return;
+    }
+    setError(null);
+  };
+
+  const build = (environment: CloudEnvironment) =>
+    runBuildCommand(
+      environment.id,
+      () =>
+        startBuild({
+          environmentId: props.environmentId,
+          input: {
+            buildId: CloudEnvironmentBuildId.make(`build:${randomUUID()}`),
+            environmentId: environment.id,
+            trigger: "manual",
+            occurredAt: new Date().toISOString(),
+          },
+        }),
+      "The controller could not start that Build.",
+    );
+
+  const acceptBuild = (target: CloudEnvironmentBuild) =>
+    runBuildCommand(
+      target.environmentId,
+      () =>
+        saveBuild({
+          environmentId: props.environmentId,
+          input: { buildId: target.id, occurredAt: new Date().toISOString() },
+        }),
+      "The controller could not save that Build.",
+    );
+
+  const stopBuild = (target: CloudEnvironmentBuild) =>
+    runBuildCommand(
+      target.environmentId,
+      () =>
+        cancelBuild({
+          environmentId: props.environmentId,
+          input: { buildId: target.id, occurredAt: new Date().toISOString() },
+        }),
+      "The controller could not cancel that Build.",
+    );
 
   const cancel = async (allocation: RunAllocation) => {
     setBusyAllocationId(allocation.id);
@@ -676,8 +842,14 @@ function CloudRunDialogForEnvironment(props: {
                   <CloudEnvironmentCard
                     key={environment.id}
                     environment={environment}
+                    builds={(snapshot.builds ?? []).filter(
+                      (entry) => entry.environmentId === environment.id,
+                    )}
                     busy={busyEnvironmentId === environment.id}
                     onRestore={(target, version) => void restore(target, version)}
+                    onBuild={(target) => void build(target)}
+                    onSaveBuild={(target) => void acceptBuild(target)}
+                    onCancelBuild={(target) => void stopBuild(target)}
                   />
                 ))}
               </section>

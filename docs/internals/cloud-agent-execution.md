@@ -174,3 +174,42 @@ The config shape follows Cursor's
 one added rule: exactly one of `build`, `image`, or `snapshot`. A committed
 file may carry `$schema` for editor completion; decoding ignores it and T3
 never writes it back.
+
+## Builds
+
+A Build is a prepared disk snapshot for one environment version: it resolves
+each repository's default ref, clones at those commits, runs `install` to
+completion, and leaves the tree behind for later runs to boot. Clone and
+dependency installation therefore happen before a run rather than inside it.
+See [`CloudEnvironmentBuildRunner`](../../apps/server/src/cloud/CloudEnvironmentBuildRunner.ts).
+
+Activation is the invariant worth protecting. A Build becomes an environment's
+`activeBuildId` only when it is both successful and saved, and the pointer
+moves in the same transaction that settles the record. A failed, cancelled, or
+still-draft Build cannot displace the last active one, and a settle only
+applies to the status the caller read, so a late success cannot overwrite a
+cancellation. Agent-requested Builds from CA-59 start as drafts: they can be
+tested, but a person saving one is what activates it.
+
+Each Build records an inputs fingerprint covering the environment version's
+config, its build-time secret references, and the commits it cloned. Runtime
+secrets are excluded because they never enter a shared snapshot. A recurring
+trigger whose fingerprint matches the active Build is skipped instead of
+rebuilt, and the skip refreshes the active Build's `freshAt`. Manual,
+configuration-change, and agent-requested triggers always rebuild, because each
+one means the caller wants the disk remade.
+
+Staleness decides what a launch boots. The controller pins the active Build
+onto the allocation only when it is fresh, defaulting to 24 hours and
+configurable per environment; `0` refreshes every time. A run that boots a
+Build then checks out the ref it asked for, so a feature branch starts from the
+prepared tree rather than a cold clone. When no fresh Build exists the
+allocation carries none and the run prepares for itself, which is the honest
+outcome when the refs, config, or secrets may have moved on.
+
+The base stage records the base a snapshot was made on rather than packing an
+image; packing Linux runtimes is CA-44's work. The base is part of the config
+and therefore part of the fingerprint, so changing it still invalidates the
+snapshot. `install` runs from a generated script file rather than an inline
+shell argument, because passing a shell string as one spawn argument is mangled
+by Windows quoting, where a quoted command silently exits 0 without running.

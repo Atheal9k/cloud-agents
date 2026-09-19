@@ -81,6 +81,13 @@ export class CloudGitCredentials extends Context.Service<
       readonly ref: string;
       readonly cwd: string;
     }) => Effect.Effect<void, CloudGitCredentialError>;
+    /** Resolves a ref to its commit without cloning, so a Build can decide
+        whether anything changed before it pays for a checkout. */
+    readonly resolveRef: (input: {
+      readonly runId: string;
+      readonly repository: string;
+      readonly ref: string;
+    }) => Effect.Effect<string, CloudGitCredentialError>;
     readonly push: (input: {
       readonly runId: string;
       readonly repository: string;
@@ -421,7 +428,7 @@ export const make = Effect.fn("CloudGitCredentials.make")(function* (input: {
     );
 
   const runGit = Effect.fn("CloudGitCredentials.runGit")(function* (input: {
-    readonly operation: "clone" | "fetch" | "push";
+    readonly operation: "clone" | "fetch" | "inspect" | "push";
     readonly runId: string;
     readonly repository: string;
     readonly cwd?: string;
@@ -454,7 +461,7 @@ export const make = Effect.fn("CloudGitCredentials.make")(function* (input: {
           ),
           Effect.flatMap((result) =>
             result.code === ChildProcessSpawner.ExitCode(0)
-              ? Effect.void
+              ? Effect.succeed(result)
               : Effect.fail(classifyGitFailure(result.stderr, input.operation)),
           ),
         ),
@@ -469,7 +476,7 @@ export const make = Effect.fn("CloudGitCredentials.make")(function* (input: {
       cwd: request.destination,
       args: ["clone", "--no-checkout", "--no-tags", "--origin", "origin", "--"],
       trailingArgs: [request.destination],
-    });
+    }).pipe(Effect.asVoid);
 
   const fetch: CloudGitCredentials["Service"]["fetch"] = (request) =>
     runGit({
@@ -479,7 +486,25 @@ export const make = Effect.fn("CloudGitCredentials.make")(function* (input: {
       cwd: request.cwd,
       args: ["fetch", "--no-tags", "--force", "--"],
       trailingArgs: [request.ref],
-    });
+    }).pipe(Effect.asVoid);
+
+  const resolveRef: CloudGitCredentials["Service"]["resolveRef"] = (request) =>
+    runGit({
+      operation: "inspect",
+      runId: request.runId,
+      repository: request.repository,
+      args: ["ls-remote", "--"],
+      trailingArgs: [request.ref],
+    }).pipe(
+      Effect.flatMap((result) => {
+        const commit = result.stdout.trim().split(/\s+/)[0];
+        return commit !== undefined && /^[0-9a-f]{40,64}$/.test(commit)
+          ? Effect.succeed(commit)
+          : Effect.fail(
+              error("git-failed", `The ref '${request.ref}' did not resolve to a commit.`),
+            );
+      }),
+    );
 
   const push: CloudGitCredentials["Service"]["push"] = (request) =>
     decodeBranch(request.branch).pipe(
@@ -722,6 +747,7 @@ export const make = Effect.fn("CloudGitCredentials.make")(function* (input: {
   return CloudGitCredentials.of({
     clone,
     fetch,
+    resolveRef,
     push,
     readBranch,
     findPullRequest,

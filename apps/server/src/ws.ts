@@ -6,6 +6,7 @@ import * as Cause from "effect/Cause";
 import * as Crypto from "effect/Crypto";
 import * as DateTime from "effect/DateTime";
 import * as Duration from "effect/Duration";
+import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
 import * as Fiber from "effect/Fiber";
 import * as FileSystem from "effect/FileSystem";
@@ -28,6 +29,9 @@ import {
   ClientOs,
   ClientSurface,
   ClientWebDeployment,
+  CloudAllocationControllerError,
+  type CloudEnvironmentBuild,
+  CloudEnvironmentBuildError,
   CommandId,
   type DiscoveredLocalServerList,
   EventId,
@@ -117,6 +121,7 @@ import { makeProviderInstallation } from "./provider/providerInstallation.ts";
 import * as ServerSelfUpdate from "./cloud/selfUpdate.ts";
 import * as CloudAllocationController from "./cloud/CloudAllocationController.ts";
 import * as CloudArtifactAccess from "./cloud/CloudArtifactAccess.ts";
+import * as CloudEnvironmentBuildRunner from "./cloud/CloudEnvironmentBuildRunner.ts";
 import * as SharedBrowserGateway from "./cloud/SharedBrowserGateway.ts";
 import * as ServerLifecycleEvents from "./serverLifecycleEvents.ts";
 import * as ServerRuntimeStartup from "./serverRuntimeStartup.ts";
@@ -563,6 +568,7 @@ const makeWsRpcLayer = (
       const previewGateway = yield* PreviewGateway.PreviewGateway;
       const sharedBrowserGateway = yield* SharedBrowserGateway.SharedBrowserGateway;
       const cloudArtifactAccess = yield* CloudArtifactAccess.CloudArtifactAccess;
+      const cloudBuildRunner = yield* CloudEnvironmentBuildRunner.CloudEnvironmentBuildRunner;
       const deviceService = yield* DeviceService.DeviceService;
       const deviceHostContext =
         yield* Effect.context<Effect.Services<ReturnType<typeof remoteSshDeviceHosts>>>();
@@ -2697,6 +2703,76 @@ const makeWsRpcLayer = (
           observeRpcEffect(
             WS_METHODS.cloudEnvironmentResolve,
             cloudAllocations.resolveEnvironment(input),
+            { "rpc.aggregate": "cloud-environment" },
+          ),
+        [WS_METHODS.cloudEnvironmentBuildStart]: (input) =>
+          observeRpcEffect(
+            WS_METHODS.cloudEnvironmentBuildStart,
+            Effect.gen(function* () {
+              const snapshot = yield* cloudAllocations.snapshot;
+              const environment = snapshot.environments?.find(
+                (candidate) => candidate.id === input.environmentId,
+              );
+              if (environment === undefined) {
+                return yield* new CloudEnvironmentBuildError({
+                  reason: "environment-not-found",
+                  message: `Environment '${input.environmentId}' does not exist.`,
+                });
+              }
+              /**
+               * A Build outlives the request that asked for it: clone and
+               * install take minutes, and a client that disconnects must not
+               * interrupt one or strand a record marked running. The caller
+               * gets the running record and watches the snapshot stream for
+               * the rest.
+               */
+              const started = yield* Deferred.make<
+                CloudEnvironmentBuild,
+                CloudAllocationControllerError | CloudEnvironmentBuildError
+              >();
+              yield* Effect.forkDetach(
+                cloudBuildRunner
+                  .run({
+                    buildId: input.buildId,
+                    version: environment.current,
+                    trigger: input.trigger,
+                    // CA-59's agent-requested Builds stay draft until a person saves.
+                    draft: input.trigger === "agent-requested",
+                    occurredAt: input.occurredAt,
+                    onStarted: (build) =>
+                      Deferred.succeed(started, build).pipe(
+                        Effect.andThen(cloudAllocations.refresh),
+                        Effect.ignore,
+                      ),
+                  })
+                  .pipe(
+                    Effect.andThen(cloudAllocations.refresh),
+                    Effect.catch((cause) => Deferred.fail(started, cause).pipe(Effect.ignore)),
+                    Effect.ignore,
+                  ),
+              );
+              return yield* Deferred.await(started);
+            }),
+            { "rpc.aggregate": "cloud-environment" },
+          ),
+        [WS_METHODS.cloudEnvironmentBuildCancel]: (input) =>
+          observeRpcEffect(
+            WS_METHODS.cloudEnvironmentBuildCancel,
+            cloudAllocations.cancelBuild(input),
+            { "rpc.aggregate": "cloud-environment" },
+          ),
+        [WS_METHODS.cloudEnvironmentBuildSave]: (input) =>
+          observeRpcEffect(
+            WS_METHODS.cloudEnvironmentBuildSave,
+            cloudAllocations.saveBuild(input),
+            {
+              "rpc.aggregate": "cloud-environment",
+            },
+          ),
+        [WS_METHODS.cloudEnvironmentBuildStaleThreshold]: (input) =>
+          observeRpcEffect(
+            WS_METHODS.cloudEnvironmentBuildStaleThreshold,
+            cloudAllocations.setBuildStaleThreshold(input),
             { "rpc.aggregate": "cloud-environment" },
           ),
         [WS_METHODS.pullRequestsList]: (input) =>
