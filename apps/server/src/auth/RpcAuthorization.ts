@@ -89,6 +89,8 @@ export const RPC_REQUIRED_SCOPES = {
   [WS_METHODS.cloudAgentReviewInspect]: AuthOrchestrationReadScope,
   [WS_METHODS.cloudAgentReviewAct]: AuthOrchestrationOperateScope,
   [WS_METHODS.cloudAgentReviewShare]: AuthOrchestrationReadScope,
+  [WS_METHODS.cloudHandoffPreview]: AuthOrchestrationReadScope,
+  [WS_METHODS.cloudHandoffExecute]: AuthOrchestrationOperateScope,
   [WS_METHODS.sharedBrowserIssue]: AuthOrchestrationReadScope,
   [WS_METHODS.sharedBrowserKeepAlive]: AuthOrchestrationReadScope,
   [WS_METHODS.sharedBrowserTakeControl]: AuthOrchestrationOperateScope,

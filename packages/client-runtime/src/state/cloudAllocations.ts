@@ -4,6 +4,8 @@ import {
   type CloudAgentReviewActInput,
   type CloudAgentReviewInspectInput,
   type CloudAgentReviewShareInput,
+  type CloudHandoffExecuteInput,
+  type CloudHandoffPreviewInput,
   type CloudEnvironmentBuildCancelInput,
   type CloudEnvironmentBuildSaveInput,
   type CloudEnvironmentBuildStaleThresholdInput,
@@ -230,6 +232,27 @@ export function createCloudAllocationAtoms<R, E>(
     execute: (input: CloudAgentReviewShareInput) =>
       request(WS_METHODS.cloudAgentReviewShare, input),
   });
+  const previewHandoff = createEnvironmentRpcCommand(runtime, {
+    label: "environment-data:cloud-handoff:preview",
+    tag: WS_METHODS.cloudHandoffPreview,
+    scheduler,
+    concurrency: {
+      mode: "singleFlight",
+      key: ({ environmentId, input }) =>
+        `${environmentId}:${input.direction}:${input.intent}:${input.localWorkspacePath}`,
+    },
+    execute: (input: CloudHandoffPreviewInput) => request(WS_METHODS.cloudHandoffPreview, input),
+  });
+  const executeHandoff = createEnvironmentRpcCommand(runtime, {
+    label: "environment-data:cloud-handoff:execute",
+    tag: WS_METHODS.cloudHandoffExecute,
+    scheduler,
+    concurrency: {
+      mode: "singleFlight",
+      key: ({ environmentId, input }) => `${environmentId}:${input.transferId}`,
+    },
+    execute: (input: CloudHandoffExecuteInput) => request(WS_METHODS.cloudHandoffExecute, input),
+  });
 
   return {
     snapshot,
@@ -253,5 +276,7 @@ export function createCloudAllocationAtoms<R, E>(
     inspectAgentReview,
     actAgentReview,
     shareAgentReview,
+    previewHandoff,
+    executeHandoff,
   };
 }

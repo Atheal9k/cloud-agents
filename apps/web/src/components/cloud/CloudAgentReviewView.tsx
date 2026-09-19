@@ -11,6 +11,7 @@ import { AsyncResult } from "effect/unstable/reactivity";
 import { useEffect, useState } from "react";
 
 import { Button } from "../ui/button";
+import { CloudHandoffPanel } from "./CloudHandoffPanel";
 import { cloudAllocations } from "../../state/cloudAllocations";
 import { useAtomCommand } from "../../state/use-atom-command";
 import { randomUUID } from "../../lib/utils";
@@ -122,7 +123,11 @@ export function CloudAgentReviewView(props: {
         </div>
         <div>
           <dt className="text-muted-foreground">Environment</dt>
-          <dd>{review.environment?.current.name ?? review.environmentReference?.environmentId ?? "None"}</dd>
+          <dd>
+            {review.environment?.current.name ??
+              review.environmentReference?.environmentId ??
+              "None"}
+          </dd>
         </div>
         <div>
           <dt className="text-muted-foreground">Build</dt>
@@ -232,6 +237,11 @@ export function CloudAgentReviewView(props: {
         </Button>
       </div>
       {shareUrl === null ? null : <p className="text-xs text-muted-foreground">{shareUrl}</p>}
+      <CloudHandoffPanel
+        environmentId={props.environmentId}
+        agentId={props.agentId}
+        defaultDirection="cloud-to-local"
+      />
     </div>
   );
 }
@@ -242,22 +252,28 @@ export function CloudAgentReviewList(props: { readonly environmentId: Environmen
   );
   const snapshot = AsyncResult.getOrElse(snapshotResult, () => null);
   const agents = snapshot?.agents ?? [];
-  if (agents.length === 0) {
-    return <p className="p-6 text-sm text-muted-foreground">No cloud agents to review.</p>;
-  }
   return (
-    <ul className="flex flex-col gap-2 p-6">
-      {agents.map((agent) => (
-        <li key={agent.id}>
-          <Link
-            to="/cloud-agents/$agentId"
-            params={{ agentId: agent.id }}
-            className="text-sm underline"
-          >
-            {agent.conversation.title} · {cloudAgentStatusLabel(agent.status)}
-          </Link>
-        </li>
-      ))}
-    </ul>
+    <div className="flex flex-col gap-6">
+      {agents.length === 0 ? (
+        <p className="p-6 pb-0 text-sm text-muted-foreground">No cloud agents to review.</p>
+      ) : (
+        <ul className="flex flex-col gap-2 p-6 pb-0">
+          {agents.map((agent) => (
+            <li key={agent.id}>
+              <Link
+                to="/cloud-agents/$agentId"
+                params={{ agentId: agent.id }}
+                className="text-sm underline"
+              >
+                {agent.conversation.title} · {cloudAgentStatusLabel(agent.status)}
+              </Link>
+            </li>
+          ))}
+        </ul>
+      )}
+      <div className="p-6 pt-0">
+        <CloudHandoffPanel environmentId={props.environmentId} defaultDirection="local-to-cloud" />
+      </div>
+    </div>
   );
 }

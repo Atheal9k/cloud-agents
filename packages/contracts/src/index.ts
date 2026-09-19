@@ -44,6 +44,7 @@ export * from "./cloudReadiness.ts";
 export * from "./cloudSecurity.ts";
 export * from "./cloudPrivateNetwork.ts";
 export * from "./cloudReview.ts";
+export * from "./cloudHandoff.ts";
 export * from "./pullRequest.ts";
 export * from "./orchestration.ts";
 export * from "./t3ProjectFile.ts";

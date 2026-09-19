@@ -140,7 +140,10 @@ import * as CloudAllocationController from "./cloud/CloudAllocationController.ts
 import * as CloudAgentRetention from "./cloud/CloudAgentRetention.ts";
 import * as CloudAgentsApi from "./cloud/CloudAgentsApi.ts";
 import * as CloudAgentsApiKeys from "./cloud/CloudAgentsApiKeys.ts";
-import { cloudAgentsApiRateLimitsLayer, cloudAgentsApiRouteLayer } from "./cloud/CloudAgentsApiHttp.ts";
+import {
+  cloudAgentsApiRateLimitsLayer,
+  cloudAgentsApiRouteLayer,
+} from "./cloud/CloudAgentsApiHttp.ts";
 import * as CloudAllocationReconciler from "./cloud/CloudAllocationReconciler.ts";
 import * as CloudWorkerRegistration from "./cloud/CloudWorkerRegistration.ts";
 import * as CloudWorkerRunClient from "./cloud/CloudWorkerRunClient.ts";
@@ -160,6 +163,7 @@ import {
 } from "./cloud/SharedBrowserProxy.ts";
 import * as CloudArtifactAccess from "./cloud/CloudArtifactAccess.ts";
 import * as CloudAgentReview from "./cloud/CloudAgentReview.ts";
+import * as CloudHandoff from "./cloud/CloudHandoff.ts";
 import * as CloudReadiness from "./cloud/CloudReadiness.ts";
 import * as CloudRunControl from "./cloud/CloudRunControl.ts";
 import * as CloudRunPublication from "./cloud/CloudRunPublication.ts";
@@ -347,6 +351,7 @@ const CloudRunPublicationLayerLive = CloudRunPublication.layer.pipe(
 );
 
 const CloudRunResultsLayerLive = CloudRunResults.layer.pipe(Layer.provide(ProcessRunner.layer));
+const CloudHandoffLayerLive = CloudHandoff.layer.pipe(Layer.provide(ProcessRunner.layer));
 
 const VcsDriverRegistryLayerLive = VcsDriverRegistry.layer.pipe(
   Layer.provide(VcsProjectConfig.layer),
@@ -627,6 +632,7 @@ const RuntimeCoreDependenciesBaseLive = ReactorLayerLive.pipe(
 const RuntimeCoreDependenciesLive = Layer.mergeAll(
   CloudRunControl.layer,
   CloudAgentReview.layer,
+  CloudHandoffLayerLive,
   CloudAgentsApi.layer,
   CloudAgentsApiKeys.layer,
   cloudAgentsApiRateLimitsLayer,

@@ -178,7 +178,7 @@ stay last until you choose to pick them up.
 | 8    | ~~CA-21~~, ~~CA-45~~             | Retained-results review UI; fleet capacity and Build pre-warming.                          |
 | 9    | ~~CA-05~~, ~~CA-37~~, ~~CA-47~~  | AWS settings UI; Android worker profile; public Cloud Agents API.                          |
 | 10   | ~~CA-49~~                        | Shared secret, identity, encryption, and network policy.                                   |
-| 11   | ~~CA-12~~, ~~CA-13~~, CA-26      | Environment recipes; event-stream performance; local/cloud handoff.                        |
+| 11   | ~~CA-12~~, ~~CA-13~~, ~~CA-26~~  | Environment recipes; event-stream performance; local/cloud handoff.                        |
 | 12   | CA-36, CA-51, ~~CA-55~~          | Preview leases; provider extensibility; usage and audit accounting.                        |
 | 13   | ~~CA-32~~, CA-50                 | Private dependency networking; source-control and collaboration entry points.              |
 | 14   | CA-56, CA-58                     | Multi-repository environments; self-hosted pools.                                          |
@@ -1349,6 +1349,8 @@ Acceptance criteria:
 ### CA-26: Hand work between local and cloud environments
 
 Dependencies: CA-10, CA-14, CA-15, CA-16, CA-21, CA-40, CA-43.
+
+Status: Done on 19 September 2026 in [PR #44](https://github.com/Atheal9k/cloud-agents/pull/44).
 
 Description: Transfer selected local changes into a cloud agent/environment and
 bring cloud changes into a new local worktree. Distinguish continuing the same
