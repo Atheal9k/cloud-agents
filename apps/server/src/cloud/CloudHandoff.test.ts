@@ -75,6 +75,7 @@ function idleAgentSnapshot(baseCommit: string): CloudAllocationSnapshot {
   return {
     controller: {
       mode: "local",
+      requiresHostOnline: true,
       admission: { status: "open" },
     },
     limits: {
@@ -83,6 +84,9 @@ function idleAgentSnapshot(baseCommit: string): CloudAllocationSnapshot {
       maxRunSeconds: 60,
       maxInputWaitSeconds: 60,
       previewGraceSeconds: 60,
+      idleReleaseSeconds: 60,
+      conversationRetentionDays: 0,
+      allowedInstanceTypes: ["c7i.2xlarge"],
     },
     workerPriceAssumptions: [],
     spendingControl: "estimate-only",
@@ -102,7 +106,7 @@ function idleAgentSnapshot(baseCommit: string): CloudAllocationSnapshot {
       },
     ],
     usage: [],
-  } as CloudAllocationSnapshot;
+  };
 }
 
 it.layer(TestLayer)("CloudHandoff", (it) => {
@@ -194,7 +198,7 @@ it.layer(TestLayer)("CloudHandoff", (it) => {
 
   it.effect("imports cloud changes without overwriting dirty local files", () =>
     Effect.gen(function* () {
-      const { fs, path, git, workspace, root, service } = yield* fixture();
+      const { fs, path, git, workspace, root } = yield* fixture();
       yield* fs.writeFileString(path.join(workspace, "README.md"), "from cloud\n");
       const patch = `${yield* git(workspace, ["diff", "HEAD", "--", "README.md"], true)}\n`;
       yield* git(workspace, ["checkout", "--", "README.md"]);

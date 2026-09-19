@@ -99,6 +99,13 @@ export const make = Effect.fn("CloudHandoff.make")(function* (input: CloudHandof
   const runner = yield* ProcessRunner.ProcessRunner;
   const mutex = yield* Semaphore.make(1);
   const records = yield* Ref.make(new Map<string, typeof PersistedTransfer.Type>());
+
+  const atomicWrite = (filePath: string, contents: string) =>
+    writeFileStringAtomically({ filePath, contents }).pipe(
+      Effect.provideService(FileSystem.FileSystem, fs),
+      Effect.provideService(Path.Path, path),
+    );
+
   yield* fs
     .makeDirectory(input.handoffsRoot, { recursive: true })
     .pipe(
@@ -227,10 +234,10 @@ export const make = Effect.fn("CloudHandoff.make")(function* (input: CloudHandof
     record: typeof PersistedTransfer.Type,
   ) {
     yield* Ref.update(records, (current) => new Map(current).set(record.transferId, record));
-    yield* writeFileStringAtomically({
-      filePath: path.join(transferDirectory(record.transferId), RECORD_FILE),
-      contents: encodeRecord(record),
-    }).pipe(
+    yield* atomicWrite(
+      path.join(transferDirectory(record.transferId), RECORD_FILE),
+      encodeRecord(record),
+    ).pipe(
       Effect.mapError(() =>
         handoffError("persistence-failed", "The handoff record could not be saved."),
       ),
@@ -534,10 +541,10 @@ export const make = Effect.fn("CloudHandoff.make")(function* (input: CloudHandof
           status: "applying",
           fingerprint,
         });
-        yield* writeFileStringAtomically({
-          filePath: path.join(transferDirectory(request.transferId), PATCH_FILE),
-          contents: patch,
-        }).pipe(
+        yield* atomicWrite(
+          path.join(transferDirectory(request.transferId), PATCH_FILE),
+          patch,
+        ).pipe(
           Effect.mapError(() =>
             handoffError("persistence-failed", "The handoff patch could not be saved."),
           ),
@@ -603,7 +610,7 @@ export const make = Effect.fn("CloudHandoff.make")(function* (input: CloudHandof
               };
         const result: CloudHandoffExecuteResult = {
           transferId: request.transferId,
-          status: retry === "resume" ? "applied" : "applied",
+          status: "applied",
           direction: request.direction,
           intent: request.intent,
           source,
