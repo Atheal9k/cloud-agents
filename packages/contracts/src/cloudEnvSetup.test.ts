@@ -98,6 +98,9 @@ describe("cloud env-setup workflow routing", () => {
   it("classifies prompt intent without substituting a dashboard form", () => {
     expect(cloudEnvSetupPromptIntent(CLOUD_ENV_SETUP_USER_REQUEST)).toBe("create");
     expect(cloudEnvSetupPromptIntent("Please migrate to prebuilt builds")).toBe("migrate");
+    expect(cloudEnvSetupPromptIntent("Test whether builds will work for this environment")).toBe(
+      "migrate",
+    );
     expect(cloudEnvSetupPromptIntent("Update the environment")).toBe("update");
     expect(cloudEnvSetupPromptIntent("Ship the diff")).toBe("none");
   });

@@ -83,7 +83,7 @@ it.effect(
       expect(refused.reason).toBe("invalid-request");
       expect(yield* diagnostics.readProposal()).toBeUndefined();
 
-      yield* diagnostics.resolveSetupActions();
+      yield* diagnostics.resolveSetupActions;
       expect(yield* diagnostics.outstandingSetupActions).toEqual([]);
 
       const saved = yield* environments.save(

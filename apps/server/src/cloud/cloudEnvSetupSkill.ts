@@ -14,6 +14,12 @@ import {
   selectCloudEnvSetupWorkflow,
 } from "@t3tools/contracts";
 
+import envSetupSkillMd from "../../../../.agents/skills/env-setup/SKILL.md?raw";
+import createEnvironmentMd from "../../../../.agents/skills/env-setup/references/create-environment.md?raw";
+import updateRepoManagedMd from "../../../../.agents/skills/env-setup/references/update-repo-managed-environment.md?raw";
+import updateDbManagedMd from "../../../../.agents/skills/env-setup/references/update-db-managed-environment.md?raw";
+import migrateToBuildsMd from "../../../../.agents/skills/env-setup/references/migrate-to-builds.md?raw";
+
 const SKILL_FILE = "SKILL.md";
 const OPENER_FENCE = /```text\n([\s\S]*?)\n```/;
 const CHECKLIST_TITLES = [
@@ -121,25 +127,14 @@ function resolveReference(directory: string, relativePath: string): CloudEnvSetu
   return { relativePath, contents: readFile(absolute).replaceAll("\r\n", "\n") };
 }
 
-export function loadCloudEnvSetupSkillPackage(
-  directory = findCloudEnvSetupSkillDirectory(),
-): CloudEnvSetupSkillPackage {
-  const skillPath = NodePath.join(directory, SKILL_FILE);
-  if (!exists(skillPath)) {
-    throw new CloudEnvSetupSkillError(
-      "missing-skill",
-      `env-setup is missing ${SKILL_FILE} in '${directory}'.`,
-    );
-  }
+function assembleCloudEnvSetupSkillPackage(input: {
+  readonly directory: string;
+  readonly skillContents: string;
+  readonly references: CloudEnvSetupSkillPackage["references"];
+}): CloudEnvSetupSkillPackage {
   const skill = {
     relativePath: SKILL_FILE,
-    contents: readFile(skillPath).replaceAll("\r\n", "\n"),
-  };
-  const references = {
-    create: resolveReference(directory, CLOUD_ENV_SETUP_REFERENCE_FILES.create),
-    "repo-managed": resolveReference(directory, CLOUD_ENV_SETUP_REFERENCE_FILES["repo-managed"]),
-    "db-managed": resolveReference(directory, CLOUD_ENV_SETUP_REFERENCE_FILES["db-managed"]),
-    migrate: resolveReference(directory, CLOUD_ENV_SETUP_REFERENCE_FILES.migrate),
+    contents: input.skillContents.replaceAll("\r\n", "\n"),
   };
   for (const relativePath of Object.values(CLOUD_ENV_SETUP_REFERENCE_FILES)) {
     if (!skill.contents.includes(relativePath)) {
@@ -151,12 +146,70 @@ export function loadCloudEnvSetupSkillPackage(
   }
   return {
     name: CLOUD_ENV_SETUP_SKILL_NAME,
-    directory,
+    directory: input.directory,
     skill,
-    references,
-    opener: parseOpener(references.create.contents),
-    checklist: parseChecklist(references.create.contents),
+    references: input.references,
+    opener: parseOpener(input.references.create.contents),
+    checklist: parseChecklist(input.references.create.contents),
   };
+}
+
+/** Inlined by the CLI pack so a published `t3` still has the skill without a git checkout. */
+export function loadBundledCloudEnvSetupSkillPackage(): CloudEnvSetupSkillPackage {
+  return assembleCloudEnvSetupSkillPackage({
+    directory: CLOUD_ENV_SETUP_RELATIVE_DIR,
+    skillContents: envSetupSkillMd,
+    references: {
+      create: {
+        relativePath: CLOUD_ENV_SETUP_REFERENCE_FILES.create,
+        contents: createEnvironmentMd.replaceAll("\r\n", "\n"),
+      },
+      "repo-managed": {
+        relativePath: CLOUD_ENV_SETUP_REFERENCE_FILES["repo-managed"],
+        contents: updateRepoManagedMd.replaceAll("\r\n", "\n"),
+      },
+      "db-managed": {
+        relativePath: CLOUD_ENV_SETUP_REFERENCE_FILES["db-managed"],
+        contents: updateDbManagedMd.replaceAll("\r\n", "\n"),
+      },
+      migrate: {
+        relativePath: CLOUD_ENV_SETUP_REFERENCE_FILES.migrate,
+        contents: migrateToBuildsMd.replaceAll("\r\n", "\n"),
+      },
+    },
+  });
+}
+
+export function loadCloudEnvSetupSkillPackage(
+  directory?: string,
+): CloudEnvSetupSkillPackage {
+  if (directory === undefined) {
+    try {
+      return loadCloudEnvSetupSkillPackage(findCloudEnvSetupSkillDirectory());
+    } catch (error) {
+      if (error instanceof CloudEnvSetupSkillError && error.reason === "missing-skill") {
+        return loadBundledCloudEnvSetupSkillPackage();
+      }
+      throw error;
+    }
+  }
+  const skillPath = NodePath.join(directory, SKILL_FILE);
+  if (!exists(skillPath)) {
+    throw new CloudEnvSetupSkillError(
+      "missing-skill",
+      `env-setup is missing ${SKILL_FILE} in '${directory}'.`,
+    );
+  }
+  return assembleCloudEnvSetupSkillPackage({
+    directory,
+    skillContents: readFile(skillPath),
+    references: {
+      create: resolveReference(directory, CLOUD_ENV_SETUP_REFERENCE_FILES.create),
+      "repo-managed": resolveReference(directory, CLOUD_ENV_SETUP_REFERENCE_FILES["repo-managed"]),
+      "db-managed": resolveReference(directory, CLOUD_ENV_SETUP_REFERENCE_FILES["db-managed"]),
+      migrate: resolveReference(directory, CLOUD_ENV_SETUP_REFERENCE_FILES.migrate),
+    },
+  });
 }
 
 export function installCloudEnvSetupSkillPackage(input: {
@@ -258,13 +311,9 @@ export function attachCloudEnvSetupTurn(input: {
     ...(input.environmentInfo === undefined ? {} : { environmentInfo: input.environmentInfo }),
   });
   if (workflow === null) return { prompt: input.prompt, workflow: null };
-  try {
-    const skill = input.skill ?? loadCloudEnvSetupSkillPackage();
-    return {
-      prompt: buildCloudEnvSetupTurn({ skill, workflow, userPrompt: input.prompt }).prompt,
-      workflow,
-    };
-  } catch {
-    return { prompt: input.prompt, workflow };
-  }
+  const skill = input.skill ?? loadCloudEnvSetupSkillPackage();
+  return {
+    prompt: buildCloudEnvSetupTurn({ skill, workflow, userPrompt: input.prompt }).prompt,
+    workflow,
+  };
 }
