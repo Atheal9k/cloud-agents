@@ -613,7 +613,7 @@ export const make = Effect.fn("CloudAllocationController.make")(function* (input
   const validateAdmission = (
     command: RunAllocationCommand,
     longRunning?: boolean,
-    previous?: RunAllocation,
+    previousAllocation?: RunAllocation,
   ): CloudAllocationControllerError | undefined => {
     const instanceType =
       command.type === "allocation.launch" ? command.profile.instanceType : undefined;
@@ -734,9 +734,9 @@ export const make = Effect.fn("CloudAllocationController.make")(function* (input
       if (execution !== undefined) {
         const admitted = admitCloudProviderExecution({
           instanceId: execution.turn.modelSelection.instanceId,
-          ...(previous?.execution === undefined
+          ...(previousAllocation?.execution === undefined
             ? {}
-            : { previousInstanceId: previous.execution.turn.modelSelection.instanceId }),
+            : { previousInstanceId: previousAllocation.execution.turn.modelSelection.instanceId }),
         });
         if (admitted.status === "rejected") {
           return controllerError("invalid-request", admitted.message);

@@ -286,7 +286,9 @@ export function admitCloudProviderExecution(input: {
   readonly computerUse?: boolean;
 }): CloudProviderAdmission {
   const instanceId = String(input.instanceId);
-  const driver = input.driver ?? cloudProviderDriverFromInstanceId(instanceId);
+  const driver =
+    (input.driver === undefined ? undefined : DRIVER_BY_KIND.get(input.driver)) ??
+    cloudProviderDriverFromInstanceId(instanceId);
   if (driver === undefined) {
     return {
       status: "rejected",
