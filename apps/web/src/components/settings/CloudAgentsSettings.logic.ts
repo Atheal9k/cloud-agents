@@ -102,6 +102,7 @@ export interface CloudGuidedSetupDraft {
   readonly owner: string;
   readonly repository: string;
   readonly defaultRef: string;
+  readonly additionalRepositories: string;
   readonly baseKind: "image" | "dockerfile";
   readonly image: string;
   readonly dockerfile: string;
@@ -126,6 +127,10 @@ export function createCloudGuidedSetupDraft(
         : "",
     repository: current?.repositories[0]?.repository ?? "",
     defaultRef: current?.repositories[0]?.defaultRef ?? "main",
+    additionalRepositories: (current?.repositories ?? [])
+      .slice(1)
+      .map((entry) => `${entry.repository} ${entry.defaultRef}`)
+      .join("\n"),
     baseKind: base?.kind === "image" ? "image" : "dockerfile",
     image: base?.kind === "image" ? base.image : "",
     dockerfile: current?.config.build?.dockerfile ?? "Dockerfile",
@@ -176,6 +181,13 @@ export function validateCloudGuidedSetupDraft(input: {
   }
   const install = draft.install.trim();
   const start = draft.start.trim();
+  const additionalRepositories = draft.additionalRepositories.split(/\r?\n/).flatMap((line) => {
+    const trimmed = line.trim();
+    if (trimmed.length === 0) return [];
+    const [repo, ref] = trimmed.split(/\s+/, 2);
+    if (repo === undefined || repo.length === 0) return [];
+    return [{ repository: repo, defaultRef: (ref ?? defaultRef).trim() || defaultRef }];
+  });
   return {
     status: "valid",
     input: {
@@ -187,6 +199,7 @@ export function validateCloudGuidedSetupDraft(input: {
       ...(draft.scope === "default" ? {} : { owner }),
       repository,
       defaultRef,
+      ...(additionalRepositories.length === 0 ? {} : { additionalRepositories }),
       base,
       ...(install.length === 0 ? {} : { install }),
       ...(start.length === 0 ? {} : { start }),

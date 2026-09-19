@@ -74,6 +74,12 @@ export const CloudRunPublicationOutcome = Schema.Union([
 ]);
 export type CloudRunPublicationOutcome = typeof CloudRunPublicationOutcome.Type;
 
+export const CloudRunCoordinatedPublication = Schema.Struct({
+  repository: TrimmedNonEmptyString,
+  outcome: CloudRunPublicationOutcome,
+});
+export type CloudRunCoordinatedPublication = typeof CloudRunCoordinatedPublication.Type;
+
 export const CloudRunPublicationRecord = Schema.Struct({
   allocationId: RunAllocationId,
   attempt: RunAllocationAttempt,
@@ -85,6 +91,8 @@ export const CloudRunPublicationRecord = Schema.Struct({
   resultId: CloudRunResultId,
   savedDiffPath: TrimmedNonEmptyString,
   outcome: CloudRunPublicationOutcome,
+  /** One entry per additional repository that actually changed. */
+  publications: Schema.optionalKey(Schema.Array(CloudRunCoordinatedPublication)),
 });
 export type CloudRunPublicationRecord = typeof CloudRunPublicationRecord.Type;
 

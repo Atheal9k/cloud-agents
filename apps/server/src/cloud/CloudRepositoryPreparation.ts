@@ -12,6 +12,8 @@ import {
   type CloudRepositoryVerificationRecord,
   CloudWorkerStartupTimings,
   IsoDateTime,
+  cloudWorkspaceRepositorySegment,
+  isCloudScratchRepository,
 } from "@t3tools/contracts";
 import { HostProcessArchitecture, HostProcessPlatform } from "@t3tools/shared/hostProcess";
 import * as Config from "effect/Config";
@@ -742,69 +744,179 @@ export const make = Effect.fn("CloudRepositoryPreparation.make")(function* (inpu
     );
 
     const runId = `${request.allocationId}:${request.attempt}`;
-    yield* credentials
-      .clone({
-        runId,
-        repository: request.recipe.repository,
-        destination: workspacePath,
-      })
-      .pipe(
-        Effect.mapError((cause) =>
-          preparationError({
-            reason: "credential-failed",
-            stage: "clone",
-            message: cause.message,
-          }),
-        ),
-      );
-    yield* credentials
-      .fetch({
-        runId,
-        repository: request.recipe.repository,
-        ref: request.selectedRef,
+    const scratch =
+      request.workspaceKind === "scratch" || isCloudScratchRepository(request.recipe.repository);
+    let resolvedCommit: string;
+    let branch: string;
+    if (scratch) {
+      yield* runGit({
+        stage: "clone",
+        cwd: input.workspaceRoot,
+        args: ["init", "--initial-branch=main", workspacePath],
+        message: "The isolated scratch workspace could not be created.",
+      });
+      yield* runGit({
+        stage: "clone",
         cwd: workspacePath,
-      })
-      .pipe(
-        Effect.mapError((cause) =>
-          preparationError({
-            reason: "credential-failed",
-            stage: "clone",
-            message: cause.message,
-          }),
-        ),
-      );
+        args: [
+          "-c",
+          "user.name=T3 Cloud Controller",
+          "-c",
+          "user.email=cloud-controller@t3.codes",
+          "commit",
+          "--allow-empty",
+          "-m",
+          "Start from scratch",
+        ],
+        message: "The isolated scratch workspace could not be initialized.",
+      });
+      resolvedCommit = yield* runGit({
+        stage: "clone",
+        cwd: workspacePath,
+        args: ["rev-parse", "HEAD"],
+        message: "The scratch workspace commit could not be read.",
+      });
+      branch = "main";
+    } else {
+      yield* credentials
+        .clone({
+          runId,
+          repository: request.recipe.repository,
+          destination: workspacePath,
+        })
+        .pipe(
+          Effect.mapError((cause) =>
+            preparationError({
+              reason: "credential-failed",
+              stage: "clone",
+              message: cause.message,
+            }),
+          ),
+        );
+      yield* credentials
+        .fetch({
+          runId,
+          repository: request.recipe.repository,
+          ref: request.selectedRef,
+          cwd: workspacePath,
+        })
+        .pipe(
+          Effect.mapError((cause) =>
+            preparationError({
+              reason: "credential-failed",
+              stage: "clone",
+              message: cause.message,
+            }),
+          ),
+        );
 
-    const resolvedCommit = yield* runGit({
-      stage: "checkout",
-      cwd: workspacePath,
-      args: ["rev-parse", "--verify", "FETCH_HEAD^{commit}"],
-      message: `The selected ref '${request.selectedRef}' did not resolve to a commit.`,
-    });
-    const branch = outputBranch(request);
-    yield* runGit({
-      stage: "checkout",
-      cwd: workspacePath,
-      args: ["check-ref-format", "--branch", branch],
-      message: "The configured output branch prefix produced an invalid Git branch.",
-    });
-    yield* runGit({
-      stage: "checkout",
-      cwd: workspacePath,
-      args: ["checkout", "--detach", resolvedCommit],
-      message: "The resolved base commit could not be checked out.",
-    });
-    yield* runGit({
-      stage: "checkout",
-      cwd: workspacePath,
-      args: ["switch", "-c", branch],
-      message: "The isolated output branch could not be created.",
-    });
-    yield* runGit({
-      stage: "checkout",
-      cwd: workspacePath,
-      args: ["remote", "set-url", "origin", `https://github.com/${request.recipe.repository}.git`],
-      message: "The checkout's display remote could not be normalized.",
-    });
+      resolvedCommit = yield* runGit({
+        stage: "checkout",
+        cwd: workspacePath,
+        args: ["rev-parse", "--verify", "FETCH_HEAD^{commit}"],
+        message: `The selected ref '${request.selectedRef}' did not resolve to a commit.`,
+      });
+      branch = outputBranch(request);
+      yield* runGit({
+        stage: "checkout",
+        cwd: workspacePath,
+        args: ["check-ref-format", "--branch", branch],
+        message: "The configured output branch prefix produced an invalid Git branch.",
+      });
+      yield* runGit({
+        stage: "checkout",
+        cwd: workspacePath,
+        args: ["checkout", "--detach", resolvedCommit],
+        message: "The resolved base commit could not be checked out.",
+      });
+      yield* runGit({
+        stage: "checkout",
+        cwd: workspacePath,
+        args: ["switch", "-c", branch],
+        message: "The isolated output branch could not be created.",
+      });
+      yield* runGit({
+        stage: "checkout",
+        cwd: workspacePath,
+        args: [
+          "remote",
+          "set-url",
+          "origin",
+          `https://github.com/${request.recipe.repository}.git`,
+        ],
+        message: "The checkout's display remote could not be normalized.",
+      });
+    }
+
+    const additionalWorkspaces: Array<{
+      readonly repository: string;
+      readonly resolvedCommit: string;
+      readonly outputBranch: string;
+      readonly workspacePath: string;
+    }> = [];
+    if (!scratch) {
+      for (const extra of request.additionalRepositories ?? []) {
+        const extraPath = path.join(
+          input.workspaceRoot,
+          cloudWorkspaceRepositorySegment(extra.repository),
+        );
+        yield* credentials
+          .clone({
+            runId,
+            repository: extra.repository,
+            destination: extraPath,
+          })
+          .pipe(
+            Effect.mapError((cause) =>
+              preparationError({
+                reason: "credential-failed",
+                stage: "clone",
+                message: cause.message,
+              }),
+            ),
+          );
+        yield* credentials
+          .fetch({
+            runId,
+            repository: extra.repository,
+            ref: extra.selectedRef,
+            cwd: extraPath,
+          })
+          .pipe(
+            Effect.mapError((cause) =>
+              preparationError({
+                reason: "credential-failed",
+                stage: "clone",
+                message: cause.message,
+              }),
+            ),
+          );
+        const extraCommit = yield* runGit({
+          stage: "checkout",
+          cwd: extraPath,
+          args: ["rev-parse", "--verify", "FETCH_HEAD^{commit}"],
+          message: `The selected ref '${extra.selectedRef}' for '${extra.repository}' did not resolve to a commit.`,
+        });
+        yield* runGit({
+          stage: "checkout",
+          cwd: extraPath,
+          args: ["checkout", "--detach", extraCommit],
+          message: `The resolved base commit for '${extra.repository}' could not be checked out.`,
+        });
+        yield* runGit({
+          stage: "checkout",
+          cwd: extraPath,
+          args: ["switch", "-c", branch],
+          message: `The isolated output branch for '${extra.repository}' could not be created.`,
+        });
+        additionalWorkspaces.push({
+          repository: extra.repository,
+          resolvedCommit: extraCommit,
+          outputBranch: branch,
+          workspacePath: extraPath,
+        });
+      }
+    }
 
     const trackedFileOutput = yield* runGit({
       stage: "checkout",
@@ -818,41 +930,46 @@ export const make = Effect.fn("CloudRepositoryPreparation.make")(function* (inpu
       .sort();
     const cloneCompletedAt = yield* DateTime.now;
     const setupStartedAt = cloneCompletedAt;
-    const cacheInputsValue = yield* cacheInputs({
-      workspacePath,
-      trackedFiles,
-      recipe: request.recipe,
-    });
-    const setup = yield* cacheMutex.withPermits(1)(
-      Effect.gen(function* () {
-        let cache: PreparedDependencyCache = yield* prepareCache(cacheInputsValue);
-        const firstAttempt = yield* runCommands({
-          stage: "setup",
-          workspacePath,
-          commands: request.recipe.setup,
-          deadline: request.deadline,
-          environment: cacheEnvironment(cache.entryPath),
-        }).pipe(Effect.result);
-        let setupResults: ReadonlyArray<CloudRepositoryCommandResult>;
-        if (Result.isSuccess(firstAttempt)) {
-          setupResults = firstAttempt.success;
-        } else if (cache.outcome === "hit" && firstAttempt.failure.reason === "command-failed") {
-          yield* resetWorkspace(workspacePath);
-          cache = yield* rebuildCache(cache);
-          setupResults = yield* runCommands({
-            stage: "setup",
-            workspacePath,
-            commands: request.recipe.setup,
-            deadline: request.deadline,
-            environment: cacheEnvironment(cache.entryPath),
-          });
-        } else {
-          return yield* firstAttempt.failure;
-        }
-        const cacheRecord = yield* finishCache(cache);
-        return { setupResults, cacheRecord };
-      }),
-    );
+    const setup = scratch
+      ? { setupResults: [] as const, cacheRecord: undefined }
+      : yield* cacheMutex.withPermits(1)(
+          Effect.gen(function* () {
+            const cacheInputsValue = yield* cacheInputs({
+              workspacePath,
+              trackedFiles,
+              recipe: request.recipe,
+            });
+            let cache: PreparedDependencyCache = yield* prepareCache(cacheInputsValue);
+            const firstAttempt = yield* runCommands({
+              stage: "setup",
+              workspacePath,
+              commands: request.recipe.setup,
+              deadline: request.deadline,
+              environment: cacheEnvironment(cache.entryPath),
+            }).pipe(Effect.result);
+            let setupResults: ReadonlyArray<CloudRepositoryCommandResult>;
+            if (Result.isSuccess(firstAttempt)) {
+              setupResults = firstAttempt.success;
+            } else if (
+              cache.outcome === "hit" &&
+              firstAttempt.failure.reason === "command-failed"
+            ) {
+              yield* resetWorkspace(workspacePath);
+              cache = yield* rebuildCache(cache);
+              setupResults = yield* runCommands({
+                stage: "setup",
+                workspacePath,
+                commands: request.recipe.setup,
+                deadline: request.deadline,
+                environment: cacheEnvironment(cache.entryPath),
+              });
+            } else {
+              return yield* firstAttempt.failure;
+            }
+            const cacheRecord = yield* finishCache(cache);
+            return { setupResults, cacheRecord };
+          }),
+        );
     const setupCompletedAt = yield* DateTime.now;
     const workerStartup = yield* readStartupTimings();
 
@@ -876,6 +993,7 @@ export const make = Effect.fn("CloudRepositoryPreparation.make")(function* (inpu
         setup: stageTiming(setupStartedAt, setupCompletedAt),
       },
       preparedAt: DateTime.formatIso(yield* DateTime.now),
+      ...(additionalWorkspaces.length === 0 ? {} : { additionalWorkspaces }),
     } satisfies CloudRepositoryPreparationRecord;
   });
 

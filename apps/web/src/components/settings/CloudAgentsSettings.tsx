@@ -21,6 +21,7 @@ import { useAtomCommand } from "../../state/use-atom-command";
 import { openCloudLaunchDialog } from "../../cloud/cloudLaunchDialogBus";
 import { Button } from "../ui/button";
 import { Input } from "../ui/input";
+import { Textarea } from "../ui/textarea";
 import {
   cloudControllerDefaultsFromDraft,
   cloudEnvironmentSourceLabel,
@@ -491,9 +492,9 @@ function CloudAgentsSettingsForEnvironment({
         }
       >
         <p className="text-xs text-muted-foreground">
-          A repository-owned environment is created by the same env-setup skill
-          from Settings, the command palette, and the cloud setup keybinding. This
-          form only edits an already-saved personal, team, or default environment.
+          A repository-owned environment is created by the same env-setup skill from Settings, the
+          command palette, and the cloud setup keybinding. This form only edits an already-saved
+          personal, team, or default environment.
         </p>
         {report.environments.length === 0 ? (
           <p className="text-sm text-muted-foreground">No cloud environment is saved yet.</p>
@@ -620,6 +621,23 @@ function CloudAgentsSettingsForEnvironment({
                     setSetupDraft({ ...setupDraft, repository: event.currentTarget.value })
                   }
                 />
+              </label>
+              <label className={fieldClassName}>
+                <span className={labelClassName}>Additional repositories</span>
+                <Textarea
+                  value={setupDraft.additionalRepositories}
+                  placeholder="owner/api main"
+                  onChange={(event) =>
+                    setSetupDraft({
+                      ...setupDraft,
+                      additionalRepositories: event.currentTarget.value,
+                    })
+                  }
+                />
+                <span className="text-xs text-muted-foreground">
+                  One owner/name per line, optional default ref. Long-running is unavailable for
+                  more than one repository.
+                </span>
               </label>
               <label className={fieldClassName}>
                 <span className={labelClassName}>Default ref</span>
@@ -934,6 +952,10 @@ function CloudAgentsSettingsForEnvironment({
             </label>
           ))}
         </div>
+        <p className="text-xs text-muted-foreground">
+          Long-running is not available for multi-repo environments. Selecting more than one
+          repository disables it.
+        </p>
         <div>
           <Button size="xs" disabled={busy !== null} onClick={saveDefaults}>
             {busy === "defaults" ? "Saving…" : "Save defaults"}

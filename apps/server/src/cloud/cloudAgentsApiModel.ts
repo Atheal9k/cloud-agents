@@ -12,6 +12,7 @@ import {
   CLOUD_AGENTS_API_MAX_REPOS,
   CLOUD_AGENTS_API_MAX_SUBAGENTS,
   CLOUD_CUSTOM_SUBAGENT_MAX_PROMPT_BYTES,
+  CLOUD_SCRATCH_DRAFT_NAME_PATTERN,
   CLOUD_AGENTS_API_NAME_MAX_CHARS,
   CLOUD_AGENTS_API_RATE_LIMIT_PER_MINUTE,
   CLOUD_AGENTS_API_REPOSITORY_RATE_LIMIT_PER_HOUR,
@@ -56,10 +57,7 @@ export class CloudAgentsApiFailure {
   }
 }
 
-export function apiError(
-  code: CloudAgentsApiErrorCode,
-  message: string,
-): CloudAgentsApiFailure {
+export function apiError(code: CloudAgentsApiErrorCode, message: string): CloudAgentsApiFailure {
   return new CloudAgentsApiFailure(code, message, statusForCode(code));
 }
 
@@ -144,7 +142,10 @@ const BUILTIN_SUBAGENTS = new Set<string>(CLOUD_AGENTS_API_BUILTIN_SUBAGENTS);
 function validatePrompt(prompt: CloudAgentsApiPrompt): CloudAgentsApiFailure | undefined {
   const images = prompt.images ?? [];
   if (images.length > CLOUD_AGENTS_API_MAX_IMAGES) {
-    return apiError("invalid_request", `A prompt may include at most ${CLOUD_AGENTS_API_MAX_IMAGES} images.`);
+    return apiError(
+      "invalid_request",
+      `A prompt may include at most ${CLOUD_AGENTS_API_MAX_IMAGES} images.`,
+    );
   }
   for (const image of images) {
     if ("data" in image) {
@@ -221,7 +222,10 @@ function validateEnvVars(
 ): CloudAgentsApiFailure | undefined {
   if (envVars === undefined) return undefined;
   if (agentId !== undefined) {
-    return apiError("invalid_request", "envVars cannot be combined with a client-supplied agentId.");
+    return apiError(
+      "invalid_request",
+      "envVars cannot be combined with a client-supplied agentId.",
+    );
   }
   const entries = Object.entries(envVars);
   if (entries.length > CLOUD_AGENTS_API_MAX_ENV_VARS) {
@@ -258,7 +262,11 @@ export function validateCreateAgentRequest(
       `Agent names must be at most ${CLOUD_AGENTS_API_NAME_MAX_CHARS} characters.`,
     );
   }
-  if (request.repos !== undefined && request.env?.type === "cloud" && request.env.name !== undefined) {
+  if (
+    request.repos !== undefined &&
+    request.env?.type === "cloud" &&
+    request.env.name !== undefined
+  ) {
     return apiError(
       "invalid_request",
       "repos is mutually exclusive with a named cloud environment.",
@@ -268,6 +276,18 @@ export function validateCreateAgentRequest(
     return apiError(
       "invalid_request",
       `A request may include at most ${CLOUD_AGENTS_API_MAX_REPOS} repositories.`,
+    );
+  }
+  if (request.scratch !== undefined && request.repos !== undefined && request.repos.length > 0) {
+    return apiError("invalid_request", "scratch is mutually exclusive with repos.");
+  }
+  if (
+    request.scratch?.name !== undefined &&
+    !CLOUD_SCRATCH_DRAFT_NAME_PATTERN.test(request.scratch.name)
+  ) {
+    return apiError(
+      "invalid_request",
+      "Scratch repository names use letters, digits, hyphens, and underscores, up to 100 characters.",
     );
   }
   const envVarError = validateEnvVars(request.envVars, request.agentId);
@@ -290,7 +310,10 @@ export function validateCreateAgentRequest(
       );
     }
     if (names.has(subagent.name)) {
-      return apiError("invalid_request", `Custom subagent names must be unique ('${subagent.name}').`);
+      return apiError(
+        "invalid_request",
+        `Custom subagent names must be unique ('${subagent.name}').`,
+      );
     }
     names.add(subagent.name);
     if (utf8Bytes(subagent.prompt) > CLOUD_CUSTOM_SUBAGENT_MAX_PROMPT_BYTES) {
@@ -371,7 +394,11 @@ export function sumTokenUsage(
 }
 
 export function agentUsageFromRuns(
-  runs: ReadonlyArray<{ readonly id: string; usage?: CloudAgentsApiTokenUsage; usageUuid?: string }>,
+  runs: ReadonlyArray<{
+    readonly id: string;
+    usage?: CloudAgentsApiTokenUsage;
+    usageUuid?: string;
+  }>,
 ): CloudAgentsApiAgentUsage {
   const items = runs.map((run) => ({
     id: run.id,
@@ -395,15 +422,25 @@ export function publicGit(
   repos: ReadonlyArray<CloudAgentsApiRepoInput> | undefined,
   prUrl?: string,
 ): CloudAgentsApiGit | undefined {
+  if (agent.repository === "scratch/workspace" && (repos === undefined || repos.length === 0)) {
+    return undefined;
+  }
   if (agent.branches.length === 0 && repos === undefined) return undefined;
-  const repoUrl =
-    repos?.[0] === undefined
-      ? `github.com/${agent.repository}`
-      : (parseRepositoryUrl(repos[0].url)?.hostPath ?? repos[0].url.replace(/^https?:\/\//u, ""));
+  const branch = agent.branches[0];
+  if (repos !== undefined && repos.length > 0) {
+    return {
+      branches: repos.map((repo) => ({
+        repoUrl: parseRepositoryUrl(repo.url)?.hostPath ?? repo.url.replace(/^https?:\/\//u, ""),
+        ...(branch === undefined ? {} : { branch }),
+        ...(prUrl === undefined ? {} : { prUrl }),
+      })),
+    };
+  }
+  const repoUrl = `github.com/${agent.repository}`;
   return {
-    branches: agent.branches.map((branch) => ({
+    branches: agent.branches.map((name) => ({
       repoUrl,
-      branch,
+      branch: name,
       ...(prUrl === undefined ? {} : { prUrl }),
     })),
   };
@@ -483,7 +520,9 @@ export function publicRun(
       ? run.completedAt
       : undefined;
   const durationMs =
-    completedAt === undefined ? undefined : Math.max(0, Date.parse(completedAt) - Date.parse(run.createdAt));
+    completedAt === undefined
+      ? undefined
+      : Math.max(0, Date.parse(completedAt) - Date.parse(run.createdAt));
   return {
     id: run.id,
     agentId: run.agentId,

@@ -168,6 +168,12 @@ export const CloudAgentsApiCreateAgentRequest = Schema.Struct({
   name: Schema.optionalKey(TrimmedNonEmptyString),
   env: Schema.optionalKey(CloudAgentsApiEnvTarget),
   repos: Schema.optionalKey(Schema.Array(CloudAgentsApiRepoInput)),
+  scratch: Schema.optionalKey(
+    Schema.Struct({
+      name: Schema.optionalKey(TrimmedNonEmptyString),
+      visibility: Schema.optionalKey(Schema.Literals(["private", "internal"])),
+    }),
+  ),
   workOnCurrentBranch: Schema.optionalKey(Schema.Boolean),
   autoCreatePR: Schema.optionalKey(Schema.Boolean),
   skipReviewerRequest: Schema.optionalKey(Schema.Boolean),
