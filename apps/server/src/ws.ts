@@ -116,6 +116,7 @@ import { ProviderInstanceRegistry } from "./provider/Services/ProviderInstanceRe
 import { makeProviderInstallation } from "./provider/providerInstallation.ts";
 import * as ServerSelfUpdate from "./cloud/selfUpdate.ts";
 import * as CloudAllocationController from "./cloud/CloudAllocationController.ts";
+import * as CloudArtifactAccess from "./cloud/CloudArtifactAccess.ts";
 import * as SharedBrowserGateway from "./cloud/SharedBrowserGateway.ts";
 import * as ServerLifecycleEvents from "./serverLifecycleEvents.ts";
 import * as ServerRuntimeStartup from "./serverRuntimeStartup.ts";
@@ -561,6 +562,7 @@ const makeWsRpcLayer = (
       const previewManager = yield* PreviewManager.PreviewManager;
       const previewGateway = yield* PreviewGateway.PreviewGateway;
       const sharedBrowserGateway = yield* SharedBrowserGateway.SharedBrowserGateway;
+      const cloudArtifactAccess = yield* CloudArtifactAccess.CloudArtifactAccess;
       const deviceService = yield* DeviceService.DeviceService;
       const deviceHostContext =
         yield* Effect.context<Effect.Services<ReturnType<typeof remoteSshDeviceHosts>>>();
@@ -3446,6 +3448,10 @@ const makeWsRpcLayer = (
         [WS_METHODS.sharedBrowserRelease]: (input) =>
           observeRpcEffect(WS_METHODS.sharedBrowserRelease, sharedBrowserGateway.release(input), {
             "rpc.aggregate": "shared-browser",
+          }),
+        [WS_METHODS.cloudArtifactsGrant]: (input) =>
+          observeRpcEffect(WS_METHODS.cloudArtifactsGrant, cloudArtifactAccess.grant(input), {
+            "rpc.aggregate": "cloud-artifacts",
           }),
         [WS_METHODS.previewAutomationConnect]: (input) =>
           observeRpcStreamEffect(

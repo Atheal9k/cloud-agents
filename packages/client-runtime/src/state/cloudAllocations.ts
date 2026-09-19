@@ -1,4 +1,8 @@
-import { type RunAllocationCommand, WS_METHODS } from "@t3tools/contracts";
+import {
+  type CloudArtifactAccessInput,
+  type RunAllocationCommand,
+  WS_METHODS,
+} from "@t3tools/contracts";
 import type { EnvironmentRegistry } from "../connection/registry.ts";
 import { request } from "../rpc/client.ts";
 import {
@@ -26,6 +30,16 @@ export function createCloudAllocationAtoms<R, E>(
     },
     execute: (input: RunAllocationCommand) => request(WS_METHODS.cloudAllocationDispatch, input),
   });
+  const grantArtifactAccess = createEnvironmentRpcCommand(runtime, {
+    label: "environment-data:cloud-allocations:grant-artifact-access",
+    tag: WS_METHODS.cloudArtifactsGrant,
+    scheduler,
+    concurrency: {
+      mode: "singleFlight",
+      key: ({ environmentId, input }) => `${environmentId}:${input.resultId}`,
+    },
+    execute: (input: CloudArtifactAccessInput) => request(WS_METHODS.cloudArtifactsGrant, input),
+  });
 
-  return { snapshot, dispatch };
+  return { snapshot, dispatch, grantArtifactAccess };
 }
