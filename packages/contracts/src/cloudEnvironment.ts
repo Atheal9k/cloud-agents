@@ -10,6 +10,11 @@ import {
   PositiveInt,
   TrimmedNonEmptyString,
 } from "./baseSchemas.ts";
+import {
+  CloudNetworkProfile,
+  CloudNetworkProfileDetails,
+  CloudPrivateDependency,
+} from "./cloudPrivateNetwork.ts";
 import { CloudSecretScope } from "./cloudSecurity.ts";
 
 const CursorEnvironmentBuild = Schema.Struct({
@@ -65,6 +70,8 @@ const CursorEnvironmentCommon = {
       "network_settings_only",
     ]),
   ),
+  privateDependencies: Schema.optionalKey(Schema.Array(CloudPrivateDependency)),
+  networkProfile: Schema.optionalKey(CloudNetworkProfile),
   chromeExecutablePath: Schema.optionalKey(TrimmedNonEmptyString),
   enable_testing: Schema.optionalKey(
     Schema.Union([Schema.Boolean, Schema.Literals(["true", "false"])]),
@@ -177,6 +184,8 @@ export const CloudEnvironmentEffectivePolicy = Schema.Struct({
     Schema.Struct({ name: Schema.optionalKey(TrimmedNonEmptyString), port: PortSchema }),
   ),
   secrets: Schema.Array(CloudEnvironmentSecretReference),
+  privateDependencies: Schema.optionalKey(Schema.Array(CloudPrivateDependency)),
+  networkProfile: Schema.optionalKey(CloudNetworkProfileDetails),
 });
 export type CloudEnvironmentEffectivePolicy = typeof CloudEnvironmentEffectivePolicy.Type;
 

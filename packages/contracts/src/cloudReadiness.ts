@@ -11,6 +11,7 @@ import {
 } from "./baseSchemas.ts";
 import { CloudAllocationControllerStatus, CloudControllerDefaults } from "./cloudAllocation.ts";
 import { CloudEnvironmentSecretReference, CloudEnvironmentSource } from "./cloudEnvironment.ts";
+import { CloudNetworkProfileDetails, CloudPrivateDependency } from "./cloudPrivateNetwork.ts";
 import { CloudSecurityReport } from "./cloudSecurity.ts";
 
 /**
@@ -143,6 +144,8 @@ export const CloudReadinessEnvironment = Schema.Struct({
     "network_settings_only",
   ]),
   egressAllowlist: Schema.Array(TrimmedNonEmptyString),
+  privateDependencies: Schema.optionalKey(Schema.Array(CloudPrivateDependency)),
+  networkProfile: Schema.optionalKey(CloudNetworkProfileDetails),
   /** Names and references only; the controller never sends secret values. */
   secrets: Schema.Array(CloudEnvironmentSecretReference),
 });

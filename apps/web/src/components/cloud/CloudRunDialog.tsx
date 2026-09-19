@@ -344,6 +344,9 @@ function CloudEnvironmentCard(props: {
           <dt className="text-muted-foreground">Runtime policy</dt>
           <dd>
             {current.effectivePolicy.runtimeUser} · {current.effectivePolicy.egressMode}
+            {current.effectivePolicy.networkProfile === undefined
+              ? ""
+              : ` · ${current.effectivePolicy.networkProfile.enabled ? current.effectivePolicy.networkProfile.kind : "public overlay off"}`}
           </dd>
         </div>
       </dl>

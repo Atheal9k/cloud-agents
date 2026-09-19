@@ -84,6 +84,7 @@ export function cloudEgressExceptions(input: {
   readonly controllerHost: string;
   readonly scmHosts: ReadonlyArray<string>;
   readonly artifactHosts: ReadonlyArray<string>;
+  readonly cursorHosts?: ReadonlyArray<string> | undefined;
 }): ReadonlyArray<CloudEgressException> {
   return [
     {
@@ -100,6 +101,11 @@ export function cloudEgressExceptions(input: {
       kind: "artifact" as const,
       host,
       reason: "Snapshots, diffs, and artifacts are uploaded here.",
+    })),
+    ...(input.cursorHosts ?? ["cursor.com", "api2.cursor.sh"]).map((host) => ({
+      kind: "cursor" as const,
+      host,
+      reason: "Cursor and controller-adjacent APIs stay reachable under an allowlist.",
     })),
   ];
 }

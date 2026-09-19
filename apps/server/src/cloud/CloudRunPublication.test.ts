@@ -199,6 +199,8 @@ it.layer(NodeServices.layer)("CloudRunPublication", (it) => {
           calls.push("close-pr");
           state.pullRequest = null;
         }),
+      syncPrivateGitDependencies: () =>
+        Effect.die("private git deps should not run during publication"),
     });
     const publicationService = yield* make({
       publicationRoot: path.join(root, "publications"),

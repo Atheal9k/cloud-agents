@@ -24,10 +24,12 @@ import {
   type CloudEnvironmentVersion,
   type CloudRepositoryCommandResult,
   type CloudRunStageTiming,
-  injectCloudEnvironmentSecrets,
-  missingCloudEnvironmentSecrets,
+  injectCloudPrivateDependencySecrets,
+  isCloudCredentialExportPath,
+  missingCloudPrivateDependencySecrets,
   NonNegativeInt,
   redactCloudEnvironmentSecretOutput,
+  cloudPrivateGitDependencyKinds,
 } from "@t3tools/contracts";
 import { HostProcessPlatform } from "@t3tools/shared/hostProcess";
 import * as Config from "effect/Config";
@@ -50,6 +52,15 @@ import {
   planCloudEnvironmentBuild,
 } from "./cloudEnvironmentBuildPolicy.ts";
 import * as CloudGitCredentials from "./CloudGitCredentials.ts";
+import {
+  checkCloudPrivateDependencies,
+  firstFailedCloudPrivateDependency,
+} from "./cloudPrivateNetworkPolicy.ts";
+import {
+  cloudEgressExceptions,
+  cloudEgressPolicyInputFromConfig,
+  resolveCloudEgressPolicy,
+} from "./cloudSecurityPolicy.ts";
 
 const MAX_LOG_OUTPUT_BYTES = 256 * 1024;
 const DEFAULT_INSTALL_TIMEOUT_SECONDS = 30 * 60;
@@ -189,7 +200,11 @@ export const make = Effect.fn("CloudEnvironmentBuildRunner.make")(function* (inp
       readonly buildDirectory: string;
       readonly gitSetup: ReadonlyArray<CloudEnvironmentBuildGitSetup>;
       readonly runId: string;
+      readonly version: CloudEnvironmentVersion;
     }): Effect.fn.Return<void, StageFailure> {
+      const gitKinds = cloudPrivateGitDependencyKinds(
+        request.version.config.privateDependencies ?? [],
+      );
       for (const entry of request.gitSetup) {
         const destination = path.join(request.buildDirectory, workspaceSegment(entry.repository));
         yield* credentials
@@ -212,6 +227,20 @@ export const make = Effect.fn("CloudEnvironmentBuildRunner.make")(function* (inp
           args: ["checkout", "--detach", entry.commit],
           message: `Build could not check out '${entry.repository}' at ${entry.commit}.`,
         });
+        if (gitKinds.length > 0) {
+          yield* credentials
+            .syncPrivateGitDependencies({
+              runId: request.runId,
+              cwd: destination,
+              kinds: gitKinds,
+            })
+            .pipe(
+              Effect.mapError((cause): StageFailure => ({
+                stage: "clone",
+                message: cause.message,
+              })),
+            );
+        }
       }
     },
   );
@@ -327,6 +356,7 @@ export const make = Effect.fn("CloudEnvironmentBuildRunner.make")(function* (inp
           continue;
         }
         if (info.value.type !== "File") continue;
+        if (isCloudCredentialExportPath(relative)) continue;
         const size = Number(info.value.size);
         sizeBytes += size;
         manifest.push(`${relative}:${size}`);
@@ -341,6 +371,41 @@ export const make = Effect.fn("CloudEnvironmentBuildRunner.make")(function* (inp
 
   const discard = (directory: string) =>
     fs.remove(directory, { recursive: true, force: true }).pipe(Effect.ignore);
+
+  const stripCredentialFiles = Effect.fn("CloudEnvironmentBuildRunner.stripCredentialFiles")(
+    function* (root: string): Effect.fn.Return<void, StageFailure> {
+      const walk = Effect.fn("CloudEnvironmentBuildRunner.stripWalk")(function* (
+        directory: string,
+        prefix: string,
+      ): Effect.fn.Return<void, StageFailure> {
+        const names = yield* fs.readDirectory(directory).pipe(
+          Effect.mapError((): StageFailure => ({
+            stage: "snapshot",
+            message: "The Build could not inspect credential files in its prepared tree.",
+          })),
+        );
+        for (const name of names) {
+          const entryPath = path.join(directory, name);
+          const relative = prefix === "" ? name : `${prefix}/${name}`;
+          const info = yield* fs.stat(entryPath).pipe(Effect.option);
+          if (info._tag === "None") continue;
+          if (info.value.type === "Directory") {
+            yield* walk(entryPath, relative);
+            continue;
+          }
+          if (info.value.type !== "File") continue;
+          if (!isCloudCredentialExportPath(relative)) continue;
+          yield* fs.remove(entryPath, { force: true }).pipe(
+            Effect.mapError((): StageFailure => ({
+              stage: "snapshot",
+              message: "The Build could not remove a credential file from its prepared tree.",
+            })),
+          );
+        }
+      });
+      yield* walk(root, "");
+    },
+  );
 
   const prepareTree = Effect.fn("CloudEnvironmentBuildRunner.prepareTree")(function* (request: {
     readonly buildId: CloudEnvironmentBuildId;
@@ -365,7 +430,12 @@ export const make = Effect.fn("CloudEnvironmentBuildRunner.make")(function* (inp
     request.timings.base = timing(baseStartedAt, yield* now);
 
     const cloneStartedAt = yield* now;
-    yield* cloneRepositories({ buildDirectory, gitSetup: request.gitSetup, runId: request.runId });
+    yield* cloneRepositories({
+      buildDirectory,
+      gitSetup: request.gitSetup,
+      runId: request.runId,
+      version: request.version,
+    });
     request.timings.clone = timing(cloneStartedAt, yield* now);
 
     const primary = request.gitSetup[0];
@@ -386,6 +456,8 @@ export const make = Effect.fn("CloudEnvironmentBuildRunner.make")(function* (inp
       });
       request.timings.install = timing(installStartedAt, yield* now);
     }
+
+    yield* stripCredentialFiles(buildDirectory);
 
     const snapshotStartedAt = yield* now;
     const measured = yield* measureSnapshot(buildDirectory);
@@ -411,15 +483,37 @@ export const make = Effect.fn("CloudEnvironmentBuildRunner.make")(function* (inp
             message: admission.message,
           });
         }
+        const failedDependency = firstFailedCloudPrivateDependency(
+          checkCloudPrivateDependencies({
+            policy: resolveCloudEgressPolicy({
+              environment: cloudEgressPolicyInputFromConfig(version.config),
+              exceptions: cloudEgressExceptions({
+                controllerHost: "controller",
+                scmHosts: ["github.com", "ssh.github.com", "api.github.com"],
+                artifactHosts: ["s3.amazonaws.com"],
+              }),
+            }),
+            dependencies: version.config.privateDependencies ?? [],
+          }),
+        );
+        if (failedDependency !== undefined) {
+          return yield* new CloudEnvironmentBuildError({
+            reason: "admission-rejected",
+            message: failedDependency.reason,
+          });
+        }
         const secretValues = request.secretValues ?? {};
-        const injected = injectCloudEnvironmentSecrets({
+        const privateDependencies = version.config.privateDependencies ?? [];
+        const injected = injectCloudPrivateDependencySecrets({
           phase: "build",
           secrets: version.secretReferences,
+          privateDependencies,
           values: secretValues,
         });
-        const missing = missingCloudEnvironmentSecrets({
+        const missing = missingCloudPrivateDependencySecrets({
           phase: "build",
           secrets: version.secretReferences,
+          privateDependencies,
           values: secretValues,
         });
         if (missing.length > 0) {
