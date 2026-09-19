@@ -152,7 +152,7 @@ priority.
 | Product/API parity                 | CA-47, CA-48, CA-49, CA-50, CA-51, CA-52, CA-53, CA-54, CA-55, CA-56, CA-57, CA-58                                                                         | Match Cursor's API, integrations, collaboration, security, automation, diagnostics, and self-hosted runtime choices.  |
 | Mobile development workers         | CA-37, CA-38, CA-39                                                                                                                                        | Build, boot, view, control, and test your Android/iOS app from web/desktop; no T3 native-app publication.             |
 | Existing product expansion         | CA-26, CA-28, CA-29, CA-30, CA-32                                                                                                                          | Align handoff, triggers, durable assistants, and private dependencies with the new agent model.                       |
-| Deferred work                      | CA-31, CA-20, CA-22                                                                                                                                        | Qualify further providers, and add the native T3 iOS/Android client and push integration, only when you pick them up. |
+| Deferred work                      | ~~CA-31~~, CA-20, CA-22                                                                                                                                    | Qualify further providers, and add the native T3 iOS/Android client and push integration, only when you pick them up. |
 
 ### Dependency-safe implementation waves
 
@@ -185,9 +185,9 @@ stay last until you choose to pick them up.
 | 15   | ~~CA-28~~, ~~CA-39~~, ~~CA-57~~, ~~CA-59~~ | Scheduling; simulator display; commit signing; repository-owned environment setup.         |
 | 16   | ~~CA-29~~, ~~CA-30~~, CA-33                | GitHub triggers; persistent assistants; remote administration UI.                          |
 | 17   | ~~CA-52~~                                  | Subscription wake and CI autofix.                                                          |
-| 18   | CA-53                                      | Generalized automations.                                                                   |
+| 18   | ~~CA-53~~                                  | Generalized automations.                                                                   |
 | 19   | ~~CA-54~~                                  | Outbound webhooks and typed SDKs.                                                          |
-| 20   | CA-31, CA-20                               | Deferred: provider adapters; native T3 mobile controls.                                    |
+| 20   | ~~CA-31~~, CA-20                           | Deferred: provider adapters; native T3 mobile controls.                                    |
 | 21   | CA-22                                      | Deferred: native push and mobile activity integration.                                     |
 
 Within a parallel wave, each ticket owns only the area named in the third
@@ -1154,6 +1154,8 @@ Acceptance criteria:
 
 Dependencies: CA-28, CA-47, CA-50, CA-51, CA-52.
 
+Status: Done on 19 September 2026 in [PR #63](https://github.com/Atheal9k/cloud-agents/pull/63).
+
 Description: Generalize schedules and webhook triggers into reusable
 automations running as a user or service account.
 
@@ -1465,16 +1467,16 @@ Acceptance criteria:
 ## Deferred work
 
 These are lowest-priority optional tickets. They are not prerequisites for any
-web, desktop, Android-worker, or iOS-worker ticket. The selected provider from
-CA-01 remains the only cloud-executable provider, and no native T3 app
-publication is included in the current implementation scope.
+web, desktop, Android-worker, or iOS-worker ticket. Cloud execution admits
+Codex and Claude; remaining providers stay classified until a later enablement.
+No native T3 app publication is included in the current implementation scope.
 
 ### CA-31: Qualify additional providers
 
 Dependencies: CA-01, CA-07, CA-11, CA-15, CA-23, CA-40, CA-43.
 
-Status: Deferred. Nothing else depends on it; cloud execution stays on the
-provider selected in CA-01 until this is picked up.
+Status: Done on 19 September 2026 in
+[PR #62](https://github.com/Atheal9k/cloud-agents/pull/62).
 
 Description: Enable remaining providers individually after the first selected provider works reliably.
 

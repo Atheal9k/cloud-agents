@@ -67,6 +67,7 @@ export const CloudAgentsApiErrorCode = Schema.Literals([
   "schedule_not_found",
   "assistant_not_found",
   "subscription_not_found",
+  "automation_not_found",
   "webhook_not_found",
   "unsupported_api_version",
   "internal_error",

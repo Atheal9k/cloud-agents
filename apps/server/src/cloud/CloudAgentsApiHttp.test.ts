@@ -17,6 +17,7 @@ import * as CloudAgentsApi from "./CloudAgentsApi.ts";
 import { cloudAgentsApiRateLimitsLayer, cloudAgentsApiRouteLayer } from "./CloudAgentsApiHttp.ts";
 import * as CloudAgentsApiKeys from "./CloudAgentsApiKeys.ts";
 import * as CloudAgentSchedules from "./CloudAgentSchedules.ts";
+import * as CloudAgentAutomations from "./CloudAgentAutomations.ts";
 import * as CloudAssistants from "./CloudAssistants.ts";
 import * as CloudAgentSubscriptions from "./CloudAgentSubscriptions.ts";
 import * as CloudWebhooks from "./CloudWebhooks.ts";
@@ -82,6 +83,23 @@ const routesLayer = cloudAgentsApiRouteLayer.pipe(
       reconcile: unused,
     } as unknown as CloudAgentSchedules.CloudAgentSchedules["Service"]),
   ),
+  Layer.provideMerge(
+    Layer.succeed(CloudAgentAutomations.CloudAgentAutomations, {
+      create: unused,
+      list: unused,
+      get: unused,
+      replace: unused,
+      pause: unused,
+      resume: unused,
+      remove: unused,
+      deliver: unused,
+      listActivities: unused,
+      listMemory: unused,
+      writeMemory: unused,
+      deleteMemory: unused,
+      reconcile: unused,
+    } as unknown as CloudAgentAutomations.CloudAgentAutomations["Service"]),
+  ),
   Layer.provideMerge(unusedAssistants),
   Layer.provideMerge(
     Layer.succeed(CloudAgentSubscriptions.CloudAgentSubscriptions, {
@@ -126,7 +144,8 @@ const succeedingWebhookTransport = Layer.succeed(CloudWebhooks.CloudWebhookTrans
   post: () => Effect.succeed({ status: 200 }),
 });
 
-const catalogServices = CloudAssistants.layer.pipe(
+const catalogServices = CloudAgentAutomations.layer.pipe(
+  Layer.provideMerge(CloudAssistants.layer),
   Layer.provideMerge(CloudAgentSubscriptions.layer),
   Layer.provideMerge(CloudAgentSchedules.layer),
   Layer.provideMerge(
@@ -372,6 +391,83 @@ it("creates a subscription and records a wake receipt over the remote API", asyn
       acknowledged: true,
       deliveryId: "slack-1",
       runId: createdAgent.run.id,
+    });
+  } finally {
+    await dispose();
+  }
+});
+
+it("creates an automation and admits a private webhook without the owner API key", async () => {
+  const { handler, dispose } = HttpRouter.toWebHandler(scheduleRoutesLayer, {
+    disableLogger: true,
+  });
+  const headers = {
+    authorization: "Bearer t3ca_schedule",
+    "content-type": "application/json",
+  };
+  try {
+    const createdResponse = await handler(
+      new Request("http://127.0.0.1/v1/automations", {
+        method: "POST",
+        headers,
+        body: JSON.stringify({
+          name: "PagerDuty triage",
+          instructions: "Investigate the incident.",
+          triggers: [{ type: "webhook" }, { type: "pagerduty", events: ["incident_triggered"] }],
+          repositories: { mode: "none" },
+          provider: { instanceId: "codex", model: { id: "default" } },
+          tools: {
+            createPullRequest: false,
+            commentOnPullRequest: false,
+            requestReviewers: false,
+            sendToSlack: true,
+            readSlack: false,
+            mcp: false,
+            memories: true,
+            computerUse: true,
+          },
+          publication: "review_only",
+          limits: {
+            runSeconds: 3_600,
+            inputWaitSeconds: 300,
+            maxAttempts: 3,
+            retryDelaySeconds: 60,
+          },
+          missedRunPolicy: "skip",
+          overlapPolicy: "skip",
+          runAs: "service_account",
+          hibernateAfterCompletion: true,
+        }),
+      }),
+    );
+    expect(createdResponse.status, await createdResponse.clone().text()).toBe(200);
+    const created = (await createdResponse.json()) as {
+      id: string;
+      webhook?: { hookId: string };
+      webhookToken?: string;
+    };
+    expect(created.webhookToken).toMatch(/^t3auto_/u);
+
+    const hookResponse = await handler(
+      new Request(`http://127.0.0.1/v1/automation-hooks/${created.webhook?.hookId}`, {
+        method: "POST",
+        headers: {
+          authorization: `Bearer ${created.webhookToken}`,
+          "content-type": "application/json",
+        },
+        body: JSON.stringify({
+          deliveryId: "pd-9",
+          type: "pagerduty",
+          event: "incident_triggered",
+          text: "API latency",
+        }),
+      }),
+    );
+    expect(hookResponse.status, await hookResponse.clone().text()).toBe(200);
+    expect(await hookResponse.json()).toMatchObject({
+      kind: "triggered",
+      automationId: created.id,
+      deliveryId: "pd-9",
     });
   } finally {
     await dispose();

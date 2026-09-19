@@ -65,6 +65,11 @@ profile fields only for user keys. Each principal sees only the agents it create
 when preview fields change. Send `Idempotency-Key` on `POST /v1/agents` and
 `POST /v1/agents/{id}/runs` to replay the original agent or run.
 
+`GET /v1/models` lists models from providers enabled for cloud execution
+(currently Codex and Claude). Cursor, Grok, OpenCode, and Antigravity are
+omitted until they are qualified. A follow-up keeps the original provider;
+switching does not transfer native history.
+
 ## Scheduled runs
 
 `POST /v1/schedules` creates a recurring schedule. The body records a five-field
@@ -93,6 +98,34 @@ recorded bounded attempt count and delay.
 Schedules run inside the controller process. With a local controller, the host
 and Docker engine must be online. `run_once` can admit one missed occurrence when
 the controller returns; it does not make a local controller an always-on service.
+
+## Automations
+
+`POST /v1/automations` generalizes schedules and webhook triggers into a reusable
+automation. The body records instructions, one or more triggers, environment,
+repositories (`none`, `single`, or `multi`), Codex model, tools, publication,
+limits, overlap and missed-run policy, and `runAs`.
+
+Triggers may be cron, source-control (GitHub, GitLab, Bitbucket), Slack, Linear,
+Sentry, PagerDuty, or an authenticated private webhook. Source-control triggers
+require a repository. Cron uses the same daylight-saving rules as schedules: a
+skipped wall time does not run, and a repeated wall time runs once at its
+earlier occurrence.
+
+`runAs: caller` bills and authorizes as the creating principal. `runAs:
+service_account` uses a team automations service account, so spend and
+permissions stay separate from a user. Automations can create or comment on
+PRs, request reviewers, post to Slack, call MCP, use computer control, and
+update inspectable memories. Memories live at `/v1/automations/{id}/memory`.
+
+Manage automations with `GET /v1/automations`, `GET|PUT|DELETE
+/v1/automations/{id}`, and `POST /v1/automations/{id}/pause|resume`. Deliver an
+event with `POST /v1/automations/{id}/deliveries` or the private webhook URL
+`POST /v1/automation-hooks/{hookId}` using the webhook token from create. A
+repeated `deliveryId` is idempotent. Overlapping runs are skipped. Missed cron
+slots follow `missedRunPolicy`. Admission retries stay bounded. Each execution
+creates ordinary agent and run records, obeys admission and spend policy, and
+can hibernate after completion.
 
 ## Persistent assistants
 
@@ -233,8 +266,8 @@ Error bodies are `{ "code", "message" }` with stable codes including `unauthoriz
 `agent_not_found`, `run_not_found`, `run_not_cancellable`, `invalid_last_event_id`,
 `stream_expired`, `rate_limited`, `spend_limit_exceeded`, `follow_up_forbidden`,
 `scm_access_denied`, `self_hosted_disabled`, `self_hosted_required`, `schedule_not_found`,
-`assistant_not_found`, `subscription_not_found`, `webhook_not_found`, and
-`unsupported_api_version`.
+`assistant_not_found`, `subscription_not_found`, `automation_not_found`,
+`webhook_not_found`, and `unsupported_api_version`.
 
 Every response includes `X-Request-Id`, `T3-Api-Version`, `T3-Api-Stability`, and
 `X-RateLimit-*` headers. Rate-limited responses also include `Retry-After`.

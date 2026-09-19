@@ -34,6 +34,23 @@ describe("cloud assistant policy", () => {
   it("keeps files and browser persistence opt-in and isolated per assistant", () => {
     expect(defaultCloudAssistantPersistence()).toEqual({ files: false, browser: false });
     expect(validateCloudAssistantDefinition(definition)).toBeUndefined();
+    expect(
+      validateCloudAssistantDefinition(
+        decodeDefinition({
+          ...definition,
+          provider: { instanceId: "cursor", model: { id: "default" } },
+        }),
+      ),
+    ).toMatch(/unsupported/);
+    expect(
+      validateCloudAssistantDefinition(
+        decodeDefinition({
+          ...definition,
+          tools: ["shell", "computerUse"],
+          provider: { instanceId: "claudeAgent", model: { id: "default" } },
+        }),
+      ),
+    ).toMatch(/computer use/);
     expect(persistenceStoreKey("asst-a", "files")).not.toBe(persistenceStoreKey("asst-b", "files"));
     expect(
       assertPersistenceIsolation({ ownerAssistantId: "asst-a", requestedAssistantId: "asst-b" }),

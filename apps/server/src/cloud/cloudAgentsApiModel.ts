@@ -81,6 +81,7 @@ export function statusForCode(code: CloudAgentsApiErrorCode): number {
     case "schedule_not_found":
     case "assistant_not_found":
     case "subscription_not_found":
+    case "automation_not_found":
     case "webhook_not_found":
       return 404;
     case "unsupported_api_version":
