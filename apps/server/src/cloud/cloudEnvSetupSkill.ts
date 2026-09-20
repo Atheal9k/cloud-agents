@@ -32,12 +32,12 @@ const CHECKLIST_TITLES = [
 
 export class CloudEnvSetupSkillError extends Error {
   readonly _tag = "CloudEnvSetupSkillError";
-  constructor(
-    readonly reason: "missing-skill" | "missing-reference" | "invalid-skill",
-    message: string,
-  ) {
+  readonly reason: "missing-skill" | "missing-reference" | "invalid-skill";
+
+  constructor(reason: "missing-skill" | "missing-reference" | "invalid-skill", message: string) {
     super(message);
     this.name = "CloudEnvSetupSkillError";
+    this.reason = reason;
   }
 }
 
@@ -180,9 +180,7 @@ export function loadBundledCloudEnvSetupSkillPackage(): CloudEnvSetupSkillPackag
   });
 }
 
-export function loadCloudEnvSetupSkillPackage(
-  directory?: string,
-): CloudEnvSetupSkillPackage {
+export function loadCloudEnvSetupSkillPackage(directory?: string): CloudEnvSetupSkillPackage {
   if (directory === undefined) {
     try {
       return loadCloudEnvSetupSkillPackage(findCloudEnvSetupSkillDirectory());
