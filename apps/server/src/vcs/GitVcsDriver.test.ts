@@ -326,6 +326,7 @@ it.effect("restores empty checkpoints without changing paths outside the workspa
         yield* runGit(root, ["add", "outside.txt"]);
       }
       for (const staged of [false, true]) {
+        yield* fileSystem.makeDirectory(cwd, { recursive: true });
         const addedPath = path.join(cwd, "added.txt");
         yield* fileSystem.writeFileString(addedPath, "new\n");
         if (staged) yield* runGit(cwd, ["add", "added.txt"]);
@@ -338,6 +339,7 @@ it.effect("restores empty checkpoints without changing paths outside the workspa
         );
         assert.isFalse(yield* fileSystem.exists(addedPath));
       }
+      yield* fileSystem.makeDirectory(cwd, { recursive: true });
       yield* fileSystem.writeFileString(
         path.join(root, ".git", "info", "exclude"),
         "ignored.txt\n",

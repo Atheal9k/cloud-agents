@@ -224,7 +224,9 @@ export async function captureKdeWindow(
   const { executable } = kdeCapturePaths(paths);
   const directory = await NodeFSP.mkdtemp(NodePath.join(NodeOS.tmpdir(), "t3-kde-capture-"));
   let retained = false;
-  const cleanup = () => NodeFSP.rm(directory, { recursive: true, force: true });
+  let cleanupPromise: Promise<void> | undefined;
+  const cleanup = () =>
+    (cleanupPromise ??= NodeFSP.rm(directory, { recursive: true, force: true }));
   try {
     const result = decodeCapture(await run(executable, ["capture", directory]));
     const png = await readPortalPng(

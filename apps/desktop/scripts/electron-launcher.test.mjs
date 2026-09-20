@@ -2,6 +2,7 @@ import * as NodeFS from "node:fs";
 import * as NodeOS from "node:os";
 import * as NodePath from "node:path";
 
+import { HostProcessPlatform } from "@t3tools/shared/hostProcess";
 import { assert, describe, it } from "vite-plus/test";
 
 import {
@@ -135,7 +136,9 @@ describe("electron development launcher", () => {
       NodeFS.chmodSync(launcherPath, 0o644);
 
       assert.isFalse(writeDevelopmentLauncherScript(launcherPath, "/runtime/Electron"));
-      assert.equal(NodeFS.statSync(launcherPath).mode & 0o777, 0o755);
+      if (HostProcessPlatform.defaultValue() !== "win32") {
+        assert.equal(NodeFS.statSync(launcherPath).mode & 0o777, 0o755);
+      }
     } finally {
       NodeFS.rmSync(directory, { recursive: true, force: true });
     }

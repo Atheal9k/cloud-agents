@@ -2,6 +2,8 @@
 import * as NodeFSP from "node:fs/promises";
 import * as NodeOS from "node:os";
 import * as NodePath from "node:path";
+import { HostProcessPlatform } from "@t3tools/shared/hostProcess";
+import { symlinksSupported } from "@t3tools/shared/testing/symlinks";
 import { afterEach, beforeEach, expect, it, vi } from "vite-plus/test";
 
 const execute = vi.hoisted(() => vi.fn());
@@ -90,9 +92,13 @@ it("installs offline at a stable path and verifies permissions using the install
   await setup.perform("install-kde-helper");
   const { executable, desktop } = kdeCapturePaths(paths);
   expect(await NodeFSP.readFile(executable, "utf8")).toBe("bundled executable");
-  expect((await NodeFSP.stat(executable)).mode & 0o777).toBe(0o755);
+  if (HostProcessPlatform.defaultValue() !== "win32") {
+    expect((await NodeFSP.stat(executable)).mode & 0o777).toBe(0o755);
+  }
   expect(await NodeFSP.readFile(desktop, "utf8")).toBe(kdeCaptureDesktopEntry(executable));
-  expect(kdeCaptureDesktopEntry(executable)).toContain(`Exec="${executable}" check`);
+  if (HostProcessPlatform.defaultValue() !== "win32") {
+    expect(kdeCaptureDesktopEntry(executable)).toContain(`Exec="${executable}" check`);
+  }
   expect((await setup.state()).status).toBe("ready");
   expect((await setup.state()).feedbackAvailable).toBe(true);
   expect(execute.mock.calls.map(([file, args]) => [file, args])).toEqual([
@@ -174,12 +180,15 @@ it("does not report a successful install when the registry cannot be refreshed",
   await expect(setup.perform("install-kde-helper")).rejects.toThrow("KDE couldn't register");
 });
 
-it("refuses symlink destinations and unrelated desktop entries", async () => {
-  const { desktop, executable } = kdeCapturePaths(paths);
+it("refuses unrelated desktop entries", async () => {
+  const { desktop } = kdeCapturePaths(paths);
   await NodeFSP.mkdir(NodePath.dirname(desktop), { recursive: true });
   await NodeFSP.writeFile(desktop, "[Desktop Entry]\nName=Unrelated");
   await expect(setup.perform("install-kde-helper")).rejects.toThrow("Another desktop entry");
-  await NodeFSP.unlink(desktop);
+});
+
+it.skipIf(!symlinksSupported)("refuses symlink destinations", async () => {
+  const { executable } = kdeCapturePaths(paths);
   await NodeFSP.mkdir(NodePath.dirname(executable), { recursive: true });
   await NodeFSP.symlink(paths.bundle, executable);
   await expect(setup.perform("install-kde-helper")).rejects.toThrow("regular files");

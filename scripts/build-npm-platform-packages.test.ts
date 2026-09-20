@@ -14,6 +14,7 @@ import {
 } from "./build-npm-platform-packages.ts";
 
 const VERSION = "1.2.3";
+const windowsHost = HostProcessPlatform.defaultValue() === "win32";
 const decodeManifest = Schema.decodeEffect(
   Schema.fromJsonString(Schema.Record(Schema.String, Schema.Unknown)),
 );
@@ -155,7 +156,9 @@ it.layer(NodeServices.layer)("build-npm-platform-packages", (it) => {
         "# @t3code/t3-linux-x64",
       );
       assert.isTrue(yield* fs.exists(path.join(linuxDir, "node_modules/node-pty")));
-      assert.equal(Number((yield* fs.stat(path.join(linuxDir, "t3"))).mode) & 0o111, 0o111);
+      if (!windowsHost) {
+        assert.equal(Number((yield* fs.stat(path.join(linuxDir, "t3"))).mode) & 0o111, 0o111);
+      }
 
       const darwinManifest = yield* decodeManifest(
         yield* fs.readFileString(
@@ -193,13 +196,15 @@ it.layer(NodeServices.layer)("build-npm-platform-packages", (it) => {
         { cwd: fixture.outputDir },
       );
       assert.equal(listing.exitCode, 0, listing.stderr);
-      const lines = listing.stdout.split("\n");
+      const lines = listing.stdout.split(/\r?\n/);
       assert.isTrue(lines.some((line) => line.endsWith(" package/node_modules/node-pty/")));
       assert.isTrue(lines.some((line) => line.endsWith(" package/package.json")));
-      assert.isTrue(
-        lines.some((line) => /^-rwxr-xr-x .* package\/t3$/.test(line)),
-        listing.stdout,
-      );
+      if (!windowsHost) {
+        assert.isTrue(
+          lines.some((line) => /^-rwxr-xr-x .* package\/t3$/.test(line)),
+          listing.stdout,
+        );
+      }
 
       // NODE_PATH stands in for node_modules: require.resolve finds the
       // platform package there exactly as it would after `npm install`.

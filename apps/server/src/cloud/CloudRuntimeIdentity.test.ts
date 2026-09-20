@@ -168,7 +168,8 @@ it.effect("refuses a token signed by another controller's key", () =>
       });
       const token = decodeToken(tokenResponse.body);
       const [header, payload, signature] = token.token.split(".");
-      const tampered = `${header}.${payload}.${(signature ?? "").replace(/^./, "A")}`;
+      const signatureText = signature ?? "";
+      const tampered = `${header}.${payload}.${signatureText.startsWith("A") ? "B" : "A"}${signatureText.slice(1)}`;
       const jwks = decodeJwks(
         (yield* requestCloudRuntimeIdentity({
           socketPath,

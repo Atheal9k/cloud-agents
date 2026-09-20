@@ -22,6 +22,7 @@ beforeEach(async () => {
   await exec("git", ["init", "-b", "main", cwd]);
   await git("config", "user.name", "Branch test");
   await git("config", "user.email", "branch-test@example.com");
+  await git("config", "core.autocrlf", "false");
   await NodeFSP.writeFile(NodePath.join(cwd, "file.txt"), "main\n");
   await git("add", ".");
   await git("commit", "-m", "main");

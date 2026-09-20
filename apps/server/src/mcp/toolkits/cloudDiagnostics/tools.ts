@@ -185,7 +185,10 @@ export const RunEventsTool = setupTool(
 export const FleetDiagnosticsTool = setupTool(
   "fleet-diagnostics",
   "Authorized fleet diagnostics: allocations, Mac hosts, warm guests, and capacity. Requires the cloud-fleet capability.",
-  Schema.Struct({}),
+  // Empty structs serialize as `anyOf [object, array]`, which is not a valid
+  // MCP tool input schema. A record with no possible values encodes as an
+  // object that accepts no properties.
+  Schema.Record(Schema.String, Schema.Never),
   Schema.Unknown,
   { title: "Fleet diagnostics", readonly: true, destructive: false },
 );

@@ -3,6 +3,7 @@ import * as NodeFSP from "node:fs/promises";
 import * as NodeOS from "node:os";
 import * as NodePath from "node:path";
 import * as NodeEvents from "node:events";
+import { symlinksSupported } from "@t3tools/shared/testing/symlinks";
 import type { Message, MessageBus } from "dbus-next";
 import { afterEach, beforeEach, expect, it, vi } from "vite-plus/test";
 import {
@@ -101,13 +102,15 @@ it("does not damage an installed extension if a bundled file is missing", async 
   expect(await NodeFSP.readdir(NodePath.dirname(installedPath()))).toEqual([GNOME_CAPTURE_UUID]);
 });
 
-it("refuses to replace symlinks or downgrade a newer extension", async () => {
+it.skipIf(!symlinksSupported)("refuses to replace symlinks", async () => {
   await NodeFSP.mkdir(NodePath.dirname(installedPath()), { recursive: true });
   await NodeFSP.symlink(bundle, installedPath());
   await expect(installGnomeCaptureBundle({ bundle, dataHome })).rejects.toThrow(
     "regular directory",
   );
-  await NodeFSP.unlink(installedPath());
+});
+
+it("refuses to downgrade a newer extension", async () => {
   await installGnomeCaptureBundle({ bundle, dataHome });
   await NodeFSP.writeFile(
     NodePath.join(installedPath(), "metadata.json"),

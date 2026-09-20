@@ -2,6 +2,8 @@
 import * as NodeFSP from "node:fs/promises";
 import * as NodeOS from "node:os";
 import * as NodePath from "node:path";
+import { HostProcessPlatform } from "@t3tools/shared/hostProcess";
+import { symlinksSupported } from "@t3tools/shared/testing/symlinks";
 import { afterEach, beforeEach, expect, it, vi } from "vite-plus/test";
 const execute = vi.hoisted(() => vi.fn());
 const startEffects = vi.hoisted(() => vi.fn());
@@ -85,7 +87,9 @@ it("discovery neither installs a helper nor requests a screenshot", async () => 
 });
 it("installs offline at a stable executable path and probes only capabilities", async () => {
   await setup.perform("install-hyprland-helper");
-  expect((await NodeFSP.stat(hyprlandCaptureExecutable(paths))).mode & 0o777).toBe(0o755);
+  if (HostProcessPlatform.defaultValue() !== "win32") {
+    expect((await NodeFSP.stat(hyprlandCaptureExecutable(paths))).mode & 0o777).toBe(0o755);
+  }
   expect(await setup.state()).toMatchObject({ status: "ready", feedbackAvailable: true });
   expect(execute.mock.calls.map(([file, args]) => [file, args])).toEqual([
     [hyprlandCaptureExecutable(paths), ["check"]],
@@ -103,7 +107,7 @@ it("updates explicitly and removes only its helper", async () => {
   expect((await setup.state()).status).toBe("not-installed");
   expect(await NodeFSP.readFile(unrelated, "utf8")).toBe("keep");
 });
-it("does not overwrite a linked executable", async () => {
+it.skipIf(!symlinksSupported)("does not overwrite a linked executable", async () => {
   const executable = hyprlandCaptureExecutable(paths);
   await NodeFSP.mkdir(NodePath.dirname(executable), { recursive: true });
   await NodeFSP.symlink(paths.bundle, executable);

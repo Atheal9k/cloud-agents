@@ -8,6 +8,7 @@ import {
   ProviderInstanceId,
   type ServerSettings as ContractServerSettings,
 } from "@t3tools/contracts";
+import { HostProcessPlatform } from "@t3tools/shared/hostProcess";
 import { symlinksSupported } from "@t3tools/shared/testing/symlinks";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
@@ -401,68 +402,72 @@ it.layer(NodeServices.layer)("AgentSessionScanner", (it) => {
       }),
     );
 
-    it.effect("returns the imported project ID through a realpath alias", () =>
-      Effect.gen(function* () {
-        const path = yield* Path.Path;
-        const fileSystem = yield* FileSystem.FileSystem;
-        const claudeHomePath = yield* makeTempDir("t3code-claude-home-");
-        const codexHomePath = yield* makeTempDir("t3code-codex-home-");
-        const workspace = yield* makeTempDir("t3code-workspace-");
-        const linkParent = yield* makeTempDir("t3code-scanner-links-");
-        const workspaceAlias = path.join(linkParent, "workspace-alias");
-        yield* fileSystem.symlink(workspace, workspaceAlias);
+    it.effect.skipIf(!symlinksSupported)(
+      "returns the imported project ID through a realpath alias",
+      () =>
+        Effect.gen(function* () {
+          const path = yield* Path.Path;
+          const fileSystem = yield* FileSystem.FileSystem;
+          const claudeHomePath = yield* makeTempDir("t3code-claude-home-");
+          const codexHomePath = yield* makeTempDir("t3code-codex-home-");
+          const workspace = yield* makeTempDir("t3code-workspace-");
+          const linkParent = yield* makeTempDir("t3code-scanner-links-");
+          const workspaceAlias = path.join(linkParent, "workspace-alias");
+          yield* fileSystem.symlink(workspace, workspaceAlias);
 
-        yield* writeTranscript({
-          filePath: path.join(claudeHomePath, "projects", "-slug", "a.jsonl"),
-          contents: claudeSessionLine(workspaceAlias),
-          mtimeMs: Date.parse("2026-01-01T00:00:00.000Z"),
-        });
+          yield* writeTranscript({
+            filePath: path.join(claudeHomePath, "projects", "-slug", "a.jsonl"),
+            contents: claudeSessionLine(workspaceAlias),
+            mtimeMs: Date.parse("2026-01-01T00:00:00.000Z"),
+          });
 
-        const result = yield* runScan({
-          claudeHomePath,
-          codexHomePath,
-          importedWorkspaceRoots: [workspace],
-        });
+          const result = yield* runScan({
+            claudeHomePath,
+            codexHomePath,
+            importedWorkspaceRoots: [workspace],
+          });
 
-        expect(result.candidates[0]).toMatchObject({
-          path: workspace,
-          projectId: ProjectId.make("project-1"),
-          alreadyImported: true,
-          git: null,
-        });
-      }),
+          expect(result.candidates[0]).toMatchObject({
+            path: workspace,
+            projectId: ProjectId.make("project-1"),
+            alreadyImported: true,
+            git: null,
+          });
+        }),
     );
 
-    it.effect("matches a persisted project alias to a transcript realpath", () =>
-      Effect.gen(function* () {
-        const path = yield* Path.Path;
-        const fileSystem = yield* FileSystem.FileSystem;
-        const claudeHomePath = yield* makeTempDir("t3code-claude-home-");
-        const codexHomePath = yield* makeTempDir("t3code-codex-home-");
-        const workspace = yield* makeTempDir("t3code-workspace-");
-        const linkParent = yield* makeTempDir("t3code-scanner-links-");
-        const workspaceAlias = path.join(linkParent, "workspace-alias");
-        yield* fileSystem.symlink(workspace, workspaceAlias);
+    it.effect.skipIf(!symlinksSupported)(
+      "matches a persisted project alias to a transcript realpath",
+      () =>
+        Effect.gen(function* () {
+          const path = yield* Path.Path;
+          const fileSystem = yield* FileSystem.FileSystem;
+          const claudeHomePath = yield* makeTempDir("t3code-claude-home-");
+          const codexHomePath = yield* makeTempDir("t3code-codex-home-");
+          const workspace = yield* makeTempDir("t3code-workspace-");
+          const linkParent = yield* makeTempDir("t3code-scanner-links-");
+          const workspaceAlias = path.join(linkParent, "workspace-alias");
+          yield* fileSystem.symlink(workspace, workspaceAlias);
 
-        yield* writeTranscript({
-          filePath: path.join(claudeHomePath, "projects", "-slug", "a.jsonl"),
-          contents: claudeSessionLine(workspace),
-          mtimeMs: Date.parse("2026-01-01T00:00:00.000Z"),
-        });
+          yield* writeTranscript({
+            filePath: path.join(claudeHomePath, "projects", "-slug", "a.jsonl"),
+            contents: claudeSessionLine(workspace),
+            mtimeMs: Date.parse("2026-01-01T00:00:00.000Z"),
+          });
 
-        const result = yield* runScan({
-          claudeHomePath,
-          codexHomePath,
-          importedWorkspaceRoots: [workspaceAlias],
-        });
+          const result = yield* runScan({
+            claudeHomePath,
+            codexHomePath,
+            importedWorkspaceRoots: [workspaceAlias],
+          });
 
-        expect(result.candidates[0]).toMatchObject({
-          path: workspaceAlias,
-          projectId: ProjectId.make("project-1"),
-          alreadyImported: true,
-          git: null,
-        });
-      }),
+          expect(result.candidates[0]).toMatchObject({
+            path: workspaceAlias,
+            projectId: ProjectId.make("project-1"),
+            alreadyImported: true,
+            git: null,
+          });
+        }),
     );
 
     it.effect("merges case aliases and preserves the persisted project path", () =>
@@ -513,49 +518,51 @@ it.layer(NodeServices.layer)("AgentSessionScanner", (it) => {
       }),
     );
 
-    it.effect("keeps case variants distinct when the filesystem identities differ", () =>
-      Effect.gen(function* () {
-        const path = yield* Path.Path;
-        const fileSystem = yield* FileSystem.FileSystem;
-        const claudeHomePath = yield* makeTempDir("t3code-claude-home-");
-        const codexHomePath = yield* makeTempDir("t3code-codex-home-");
-        const backingUpper = yield* makeTempDir("t3code-backing-upper-");
-        const backingLower = yield* makeTempDir("t3code-backing-lower-");
-        const aliasParent = yield* makeTempDir("t3code-case-aliases-");
-        const upperWorkspace = path.join(aliasParent, "Repo");
-        const lowerWorkspace = path.join(aliasParent, "repo");
+    it.effect.skipIf(HostProcessPlatform.defaultValue() === "win32")(
+      "keeps case variants distinct when the filesystem identities differ",
+      () =>
+        Effect.gen(function* () {
+          const path = yield* Path.Path;
+          const fileSystem = yield* FileSystem.FileSystem;
+          const claudeHomePath = yield* makeTempDir("t3code-claude-home-");
+          const codexHomePath = yield* makeTempDir("t3code-codex-home-");
+          const backingUpper = yield* makeTempDir("t3code-backing-upper-");
+          const backingLower = yield* makeTempDir("t3code-backing-lower-");
+          const aliasParent = yield* makeTempDir("t3code-case-aliases-");
+          const upperWorkspace = path.join(aliasParent, "Repo");
+          const lowerWorkspace = path.join(aliasParent, "repo");
 
-        yield* writeTranscript({
-          filePath: path.join(claudeHomePath, "projects", "-upper", "a.jsonl"),
-          contents: claudeSessionLine(upperWorkspace),
-          mtimeMs: Date.parse("2026-01-02T00:00:00.000Z"),
-        });
-        yield* writeTranscript({
-          filePath: path.join(claudeHomePath, "projects", "-lower", "b.jsonl"),
-          contents: claudeSessionLine(lowerWorkspace),
-          mtimeMs: Date.parse("2026-01-01T00:00:00.000Z"),
-        });
+          yield* writeTranscript({
+            filePath: path.join(claudeHomePath, "projects", "-upper", "a.jsonl"),
+            contents: claudeSessionLine(upperWorkspace),
+            mtimeMs: Date.parse("2026-01-02T00:00:00.000Z"),
+          });
+          yield* writeTranscript({
+            filePath: path.join(claudeHomePath, "projects", "-lower", "b.jsonl"),
+            contents: claudeSessionLine(lowerWorkspace),
+            mtimeMs: Date.parse("2026-01-01T00:00:00.000Z"),
+          });
 
-        const simulatedFileSystem = FileSystem.FileSystem.of({
-          ...fileSystem,
-          stat: (filePath) =>
-            fileSystem.stat(
-              filePath === upperWorkspace
-                ? backingUpper
-                : filePath === lowerWorkspace
-                  ? backingLower
-                  : filePath,
-            ),
-        });
-        const result = yield* runScan({ claudeHomePath, codexHomePath }).pipe(
-          Effect.provideService(FileSystem.FileSystem, simulatedFileSystem),
-        );
+          const simulatedFileSystem = FileSystem.FileSystem.of({
+            ...fileSystem,
+            stat: (filePath) =>
+              fileSystem.stat(
+                filePath === upperWorkspace
+                  ? backingUpper
+                  : filePath === lowerWorkspace
+                    ? backingLower
+                    : filePath,
+              ),
+          });
+          const result = yield* runScan({ claudeHomePath, codexHomePath }).pipe(
+            Effect.provideService(FileSystem.FileSystem, simulatedFileSystem),
+          );
 
-        expect(result.candidates.map((candidate) => candidate.path)).toEqual([
-          upperWorkspace,
-          lowerWorkspace,
-        ]);
-      }),
+          expect(result.candidates.map((candidate) => candidate.path)).toEqual([
+            upperWorkspace,
+            lowerWorkspace,
+          ]);
+        }),
     );
 
     it.effect("uses explicit provider instance homes instead of overridden legacy homes", () =>
@@ -999,31 +1006,33 @@ it.layer(NodeServices.layer)("AgentSessionScanner", (it) => {
       }),
     );
 
-    it.effect("excludes sandboxes reached through a symlink into the worktrees dir", () =>
-      Effect.gen(function* () {
-        const path = yield* Path.Path;
-        const claudeHomePath = yield* makeTempDir("t3code-claude-home-");
-        const codexHomePath = yield* makeTempDir("t3code-codex-home-");
-        const configBaseDir = yield* makeTempDir("t3code-scanner-base-");
-        const linkParent = yield* makeTempDir("t3code-scanner-links-");
-        const fileSystem = yield* FileSystem.FileSystem;
+    it.effect.skipIf(!symlinksSupported)(
+      "excludes sandboxes reached through a symlink into the worktrees dir",
+      () =>
+        Effect.gen(function* () {
+          const path = yield* Path.Path;
+          const claudeHomePath = yield* makeTempDir("t3code-claude-home-");
+          const codexHomePath = yield* makeTempDir("t3code-codex-home-");
+          const configBaseDir = yield* makeTempDir("t3code-scanner-base-");
+          const linkParent = yield* makeTempDir("t3code-scanner-links-");
+          const fileSystem = yield* FileSystem.FileSystem;
 
-        // The recorded cwd is a symlink whose own spelling looks harmless;
-        // only its realpath reveals the managed sandbox.
-        const worktreeCwd = path.join(configBaseDir, "worktrees", "t3code", "wt-3");
-        yield* fileSystem.makeDirectory(worktreeCwd, { recursive: true });
-        const symlinkCwd = path.join(linkParent, "innocent-project");
-        yield* fileSystem.symlink(worktreeCwd, symlinkCwd);
-        yield* writeTranscript({
-          filePath: path.join(claudeHomePath, "projects", "-slug", "a.jsonl"),
-          contents: claudeSessionLine(symlinkCwd),
-          mtimeMs: Date.parse("2026-01-01T00:00:00.000Z"),
-        });
+          // The recorded cwd is a symlink whose own spelling looks harmless;
+          // only its realpath reveals the managed sandbox.
+          const worktreeCwd = path.join(configBaseDir, "worktrees", "t3code", "wt-3");
+          yield* fileSystem.makeDirectory(worktreeCwd, { recursive: true });
+          const symlinkCwd = path.join(linkParent, "innocent-project");
+          yield* fileSystem.symlink(worktreeCwd, symlinkCwd);
+          yield* writeTranscript({
+            filePath: path.join(claudeHomePath, "projects", "-slug", "a.jsonl"),
+            contents: claudeSessionLine(symlinkCwd),
+            mtimeMs: Date.parse("2026-01-01T00:00:00.000Z"),
+          });
 
-        const result = yield* runScan({ claudeHomePath, codexHomePath, configBaseDir });
+          const result = yield* runScan({ claudeHomePath, codexHomePath, configBaseDir });
 
-        expect(result.candidates).toEqual([]);
-      }),
+          expect(result.candidates).toEqual([]);
+        }),
     );
 
     it.effect("finds the cwd on a later line when the first records carry none", () =>

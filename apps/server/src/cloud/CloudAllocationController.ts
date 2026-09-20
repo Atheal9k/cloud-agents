@@ -948,7 +948,7 @@ export const make = Effect.fn("CloudAllocationController.make")(function* (input
                 return cloudEnvironmentBuildReference(activeBuild);
               });
         const launchCommand =
-          command.type === "allocation.launch"
+          command.type === "allocation.launch" && command.execution !== undefined
             ? {
                 ...command,
                 execution: {

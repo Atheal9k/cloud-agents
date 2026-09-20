@@ -6,6 +6,7 @@ import {
   CloudEnvironmentVersionId,
   type CloudEnvironmentVersion,
 } from "@t3tools/contracts";
+import { HostProcessPlatform } from "@t3tools/shared/hostProcess";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
 import * as Path from "effect/Path";
@@ -14,6 +15,7 @@ import * as TestClock from "effect/testing/TestClock";
 import { make } from "./CloudEnvironmentRuntimeBoot.ts";
 
 const TestLayer = NodeServices.layer;
+const windowsHost = HostProcessPlatform.defaultValue() === "win32";
 
 const version = (
   start: string,
@@ -66,38 +68,40 @@ const listenFreePort = Effect.callback<number>((resume) => {
   });
 });
 
-it.effect("runs start and named terminals on boot without re-running install", () =>
-  Effect.gen(function* () {
-    const fs = yield* FileSystem.FileSystem;
-    const path = yield* Path.Path;
-    const cwd = yield* fs.makeTempDirectoryScoped({ prefix: "t3-runtime-boot-" });
-    const port = yield* listenFreePort;
-    const boot = yield* make({ healthCheckMs: 800 });
-    const start = [
-      "node -e",
-      `"const http=require('node:http');console.log(process.env.SESSION_KEY);console.log(process.env.PUBLIC_FLAG);http.createServer((q,s)=>s.end('ok')).listen(${port},'127.0.0.1')"`,
-    ].join(" ");
-    const record = yield* boot.boot({
-      version: version(start, { ports: [{ name: "start", port }] }),
-      cwd,
-      occurredAt: "2026-09-19T12:00:01.000Z",
-      secretValues,
-    });
+it.effect.skipIf(windowsHost)(
+  "runs start and named terminals on boot without re-running install",
+  () =>
+    Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const path = yield* Path.Path;
+      const cwd = yield* fs.makeTempDirectoryScoped({ prefix: "t3-runtime-boot-" });
+      const port = yield* listenFreePort;
+      const boot = yield* make({ healthCheckMs: 800 });
+      const start = [
+        "node -e",
+        `"const http=require('node:http');console.log(process.env.SESSION_KEY);console.log(process.env.PUBLIC_FLAG);http.createServer((q,s)=>s.end('ok')).listen(${port},'127.0.0.1')"`,
+      ].join(" ");
+      const record = yield* boot.boot({
+        version: version(start, { ports: [{ name: "start", port }] }),
+        cwd,
+        occurredAt: "2026-09-19T12:00:01.000Z",
+        secretValues,
+      });
 
-    const startHealth = record.services.find((service) => service.name === "start");
-    const worker = record.services.find((service) => service.name === "worker");
-    assert(startHealth !== undefined && worker !== undefined);
-    expect(startHealth.status).toBe("healthy");
-    expect(startHealth.port).toBe(port);
-    expect(worker.status).toBe("healthy");
-    expect(startHealth.log.stdout).toContain("[redacted]");
-    expect(startHealth.log.stdout).not.toContain("session-secret-value");
-    expect(startHealth.log.stdout).toContain("public-flag-value");
-    expect(yield* fs.exists(path.join(cwd, "install.ok"))).toBe(false);
-  }).pipe(Effect.scoped, TestClock.withLive, Effect.provide(TestLayer)),
+      const startHealth = record.services.find((service) => service.name === "start");
+      const worker = record.services.find((service) => service.name === "worker");
+      assert(startHealth !== undefined && worker !== undefined);
+      expect(startHealth.status).toBe("healthy");
+      expect(startHealth.port).toBe(port);
+      expect(worker.status).toBe("healthy");
+      expect(startHealth.log.stdout).toContain("[redacted]");
+      expect(startHealth.log.stdout).not.toContain("session-secret-value");
+      expect(startHealth.log.stdout).toContain("public-flag-value");
+      expect(yield* fs.exists(path.join(cwd, "install.ok"))).toBe(false);
+    }).pipe(Effect.scoped, TestClock.withLive, Effect.provide(TestLayer)),
 );
 
-it.effect("records an unhealthy start that exits immediately", () =>
+it.effect.skipIf(windowsHost)("records an unhealthy start that exits immediately", () =>
   Effect.gen(function* () {
     const fs = yield* FileSystem.FileSystem;
     const cwd = yield* fs.makeTempDirectoryScoped({ prefix: "t3-runtime-boot-fail-" });

@@ -171,7 +171,9 @@ export async function captureHyprlandWindow(
     throw new Error(`${state.message} Open Settings → SnapShots to continue setup.`);
   const executable = hyprlandCaptureExecutable(paths);
   const directory = await NodeFSP.mkdtemp(NodePath.join(NodeOS.tmpdir(), "t3-hyprland-capture-"));
-  const cleanup = () => NodeFSP.rm(directory, { recursive: true, force: true });
+  let cleanupPromise: Promise<void> | undefined;
+  const cleanup = () =>
+    (cleanupPromise ??= NodeFSP.rm(directory, { recursive: true, force: true }));
   let retained = false;
   try {
     const result = decodeCapture(await run(executable, ["capture", directory]));

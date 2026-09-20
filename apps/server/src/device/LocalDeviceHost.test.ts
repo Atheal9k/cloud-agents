@@ -128,7 +128,9 @@ it.effect("puts detected Android tools on the helper PATH without losing existin
       "darwin",
       path,
     );
-    expect(environment.PATH).toBe("/sdk/platform-tools:/sdk/emulator:/usr/bin");
+    expect(environment.PATH).toBe(
+      [path.join("/sdk", "platform-tools"), path.join("/sdk", "emulator"), "/usr/bin"].join(":"),
+    );
     expect(environment.ANDROID_HOME).toBe("/sdk");
     expect(environment.HOME).toBe("/test/home");
   }).pipe(Effect.provide(NodePath.layer)),

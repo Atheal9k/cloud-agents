@@ -8,7 +8,7 @@ import { describe, expect, it } from "@effect/vitest";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import * as Stream from "effect/Stream";
-import type { Tool } from "effect/unstable/ai";
+import { Tool } from "effect/unstable/ai";
 
 import * as CloudDiagnosticsCatalog from "../../../cloud/CloudDiagnosticsCatalog.ts";
 import * as McpInvocationContext from "../../McpInvocationContext.ts";
@@ -46,6 +46,13 @@ const CatalogLive = Layer.mock(CloudDiagnosticsCatalog.CloudDiagnosticsCatalog)(
 const dependencies = CatalogLive;
 
 describe("cloud diagnostics MCP toolkit", () => {
+  it("publishes fleet diagnostics with an object input schema", () => {
+    expect(Tool.getJsonSchema(CloudDiagnosticsToolkit.tools["fleet-diagnostics"])).toEqual({
+      type: "object",
+      additionalProperties: false,
+    });
+  });
+
   it.effect("serves environment-info and the Cursor-prefixed alias", () =>
     Effect.gen(function* () {
       const tools = yield* CloudDiagnosticsToolkit;

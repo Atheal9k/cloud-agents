@@ -3,7 +3,10 @@ import * as NodeFSP from "node:fs/promises";
 import * as NodeNet from "node:net";
 import * as NodeOS from "node:os";
 import * as NodePath from "node:path";
-import { afterEach, beforeEach, expect, it, vi } from "vite-plus/test";
+import { HostProcessPlatform } from "@t3tools/shared/hostProcess";
+import { afterEach, beforeEach, expect, test, vi } from "vite-plus/test";
+
+const it = test.runIf(HostProcessPlatform.defaultValue() === "linux");
 
 vi.mock("electron", () => ({
   nativeImage: {
