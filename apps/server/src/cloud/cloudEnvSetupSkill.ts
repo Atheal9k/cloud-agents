@@ -14,11 +14,15 @@ import {
   selectCloudEnvSetupWorkflow,
 } from "@t3tools/contracts";
 
-import envSetupSkillMd from "../../../../.agents/skills/env-setup/SKILL.md?raw";
-import createEnvironmentMd from "../../../../.agents/skills/env-setup/references/create-environment.md?raw";
-import updateRepoManagedMd from "../../../../.agents/skills/env-setup/references/update-repo-managed-environment.md?raw";
-import updateDbManagedMd from "../../../../.agents/skills/env-setup/references/update-db-managed-environment.md?raw";
-import migrateToBuildsMd from "../../../../.agents/skills/env-setup/references/migrate-to-builds.md?raw";
+declare const __T3CODE_BUILD_ENV_SETUP_SKILL__:
+  | {
+      readonly skill: string;
+      readonly create: string;
+      readonly repoManaged: string;
+      readonly dbManaged: string;
+      readonly migrate: string;
+    }
+  | undefined;
 
 const SKILL_FILE = "SKILL.md";
 const OPENER_FENCE = /```text\n([\s\S]*?)\n```/;
@@ -154,27 +158,44 @@ function assembleCloudEnvSetupSkillPackage(input: {
   };
 }
 
+function loadBundledCloudEnvSetupSkillContents() {
+  if (typeof __T3CODE_BUILD_ENV_SETUP_SKILL__ !== "undefined") {
+    return __T3CODE_BUILD_ENV_SETUP_SKILL__;
+  }
+  const directory = findCloudEnvSetupSkillDirectory();
+  return {
+    skill: readFile(NodePath.join(directory, SKILL_FILE)),
+    create: readFile(NodePath.join(directory, CLOUD_ENV_SETUP_REFERENCE_FILES.create)),
+    repoManaged: readFile(
+      NodePath.join(directory, CLOUD_ENV_SETUP_REFERENCE_FILES["repo-managed"]),
+    ),
+    dbManaged: readFile(NodePath.join(directory, CLOUD_ENV_SETUP_REFERENCE_FILES["db-managed"])),
+    migrate: readFile(NodePath.join(directory, CLOUD_ENV_SETUP_REFERENCE_FILES.migrate)),
+  };
+}
+
 /** Inlined by the CLI pack so a published `t3` still has the skill without a git checkout. */
 export function loadBundledCloudEnvSetupSkillPackage(): CloudEnvSetupSkillPackage {
+  const contents = loadBundledCloudEnvSetupSkillContents();
   return assembleCloudEnvSetupSkillPackage({
     directory: CLOUD_ENV_SETUP_RELATIVE_DIR,
-    skillContents: envSetupSkillMd,
+    skillContents: contents.skill,
     references: {
       create: {
         relativePath: CLOUD_ENV_SETUP_REFERENCE_FILES.create,
-        contents: createEnvironmentMd.replaceAll("\r\n", "\n"),
+        contents: contents.create.replaceAll("\r\n", "\n"),
       },
       "repo-managed": {
         relativePath: CLOUD_ENV_SETUP_REFERENCE_FILES["repo-managed"],
-        contents: updateRepoManagedMd.replaceAll("\r\n", "\n"),
+        contents: contents.repoManaged.replaceAll("\r\n", "\n"),
       },
       "db-managed": {
         relativePath: CLOUD_ENV_SETUP_REFERENCE_FILES["db-managed"],
-        contents: updateDbManagedMd.replaceAll("\r\n", "\n"),
+        contents: contents.dbManaged.replaceAll("\r\n", "\n"),
       },
       migrate: {
         relativePath: CLOUD_ENV_SETUP_REFERENCE_FILES.migrate,
-        contents: migrateToBuildsMd.replaceAll("\r\n", "\n"),
+        contents: contents.migrate.replaceAll("\r\n", "\n"),
       },
     },
   });

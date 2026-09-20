@@ -1,4 +1,5 @@
 import "vite-plus/test/config";
+import * as NodeFS from "node:fs";
 import { defineConfig, mergeConfig } from "vite-plus";
 
 import baseConfig from "../../vite.config.ts";
@@ -21,6 +22,26 @@ import {
 export { shouldBundleCliDependency };
 
 const repoEnv = loadRepoEnv();
+const envSetupSkillRoot = new URL("../../.agents/skills/env-setup/", import.meta.url);
+const bundledEnvSetupSkill = {
+  skill: NodeFS.readFileSync(new URL("SKILL.md", envSetupSkillRoot), "utf8"),
+  create: NodeFS.readFileSync(
+    new URL("references/create-environment.md", envSetupSkillRoot),
+    "utf8",
+  ),
+  repoManaged: NodeFS.readFileSync(
+    new URL("references/update-repo-managed-environment.md", envSetupSkillRoot),
+    "utf8",
+  ),
+  dbManaged: NodeFS.readFileSync(
+    new URL("references/update-db-managed-environment.md", envSetupSkillRoot),
+    "utf8",
+  ),
+  migrate: NodeFS.readFileSync(
+    new URL("references/migrate-to-builds.md", envSetupSkillRoot),
+    "utf8",
+  ),
+};
 const cliBuildChannel = /^[^-+]+-(?:nightly|preview)\./.test(packageJson.version)
   ? "nightly"
   : "latest";
@@ -110,6 +131,7 @@ export default mergeConfig(
         js: "#!/usr/bin/env node\n",
       },
       define: {
+        __T3CODE_BUILD_ENV_SETUP_SKILL__: JSON.stringify(bundledEnvSetupSkill),
         __T3CODE_BUILD_CHANNEL__: JSON.stringify(cliBuildChannel),
         __T3CODE_BUILD_RELAY_URL__: JSON.stringify(repoEnv.T3CODE_RELAY_URL?.trim() ?? ""),
         __T3CODE_BUILD_CLERK_PUBLISHABLE_KEY__: JSON.stringify(
