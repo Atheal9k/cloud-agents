@@ -213,6 +213,7 @@ import { LinkPullRequestDialogHost } from "./pullRequest/LinkPullRequestDialog";
 import { ThreadPullRequestsPanel } from "./pullRequest/ThreadPullRequestsPanel";
 import { useDeviceState } from "~/state/device";
 import { DeviceSetup } from "./device/DeviceSetup";
+import { CloudEnvironmentSetupCard } from "./cloud/CloudEnvironmentSetupCard";
 import { Dialog } from "./ui/dialog";
 import { WizardPopup } from "./ui/wizard";
 import {
@@ -9477,6 +9478,9 @@ export default function ChatView(props: ChatViewProps) {
                 }}
               />
             </div>
+            {paintOnlyDisplayedTimeline ? null : (
+              <CloudEnvironmentSetupCard threadId={activeThread.id} />
+            )}
             {/* Messages Wrapper */}
             <div className="relative flex min-h-0 flex-1 flex-col bg-background">
               {/* Messages — LegendList handles virtualization and scrolling internally */}

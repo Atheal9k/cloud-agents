@@ -350,3 +350,12 @@ export function cloudControllerDefaultsFromDraft(draft: {
     selfHostedMode: draft.selfHostedMode,
   };
 }
+
+export function cloudControllerDefaultsWithModel(
+  defaults: CloudControllerDefaults,
+  value: string,
+): CloudControllerDefaults {
+  const model = value.trim();
+  const { model: _previousModel, ...withoutModel } = defaults;
+  return model.length === 0 ? withoutModel : { ...withoutModel, model };
+}

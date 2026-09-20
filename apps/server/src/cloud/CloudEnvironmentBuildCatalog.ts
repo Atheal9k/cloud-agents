@@ -22,6 +22,7 @@ import {
   type CloudRepositoryCommandResult,
   NonNegativeInt,
   PositiveInt,
+  type ThreadId,
 } from "@t3tools/contracts";
 import * as Context from "effect/Context";
 import * as Effect from "effect/Effect";
@@ -46,6 +47,7 @@ export interface CloudEnvironmentBuildStart {
   readonly version: CloudEnvironmentVersion;
   readonly trigger: CloudEnvironmentBuildTrigger;
   readonly draft: boolean;
+  readonly setupThreadId?: ThreadId | undefined;
   readonly base: CloudEnvironmentBase;
   readonly inputsFingerprint: string;
   readonly startedAt: string;
@@ -84,6 +86,10 @@ export class CloudEnvironmentBuildCatalog extends Context.Service<
     readonly save: (
       input: CloudEnvironmentBuildSaveInput,
     ) => Effect.Effect<CloudEnvironmentBuild, CloudEnvironmentBuildError>;
+    readonly markSetupReady: (input: {
+      readonly buildId: CloudEnvironmentBuildId;
+      readonly occurredAt: string;
+    }) => Effect.Effect<CloudEnvironmentBuild, CloudEnvironmentBuildError>;
     readonly activate: (
       input: CloudEnvironmentBuildActivateInput,
     ) => Effect.Effect<CloudEnvironmentBuild, CloudEnvironmentBuildError>;
@@ -297,6 +303,7 @@ export const make = Effect.fn("CloudEnvironmentBuildCatalog.make")(function* () 
           version: PositiveInt.make(input.version.version),
           trigger: input.trigger,
           draft: input.draft,
+          ...(input.setupThreadId === undefined ? {} : { setupThreadId: input.setupThreadId }),
           base: input.base,
           inputsFingerprint: input.inputsFingerprint,
           gitSetup: [],
@@ -395,6 +402,29 @@ export const make = Effect.fn("CloudEnvironmentBuildCatalog.make")(function* () 
       }),
     );
 
+  const markSetupReady: CloudEnvironmentBuildCatalog["Service"]["markSetupReady"] = (input) =>
+    mutex.withPermits(1)(
+      Effect.gen(function* () {
+        const existing = yield* requireBuild(input.buildId);
+        if (!existing.draft || existing.outcome.status !== "succeeded") {
+          return yield* buildError(
+            "build-unsuccessful",
+            `Build '${input.buildId}' must be a successful draft before setup can be saved.`,
+          );
+        }
+        const build: CloudEnvironmentBuild = {
+          ...existing,
+          readyToSaveAt: input.occurredAt,
+        };
+        yield* persist({
+          build,
+          expected: { status: "succeeded", draft: true },
+          updatedAt: input.occurredAt,
+        });
+        return build;
+      }),
+    );
+
   const activate: CloudEnvironmentBuildCatalog["Service"]["activate"] = (input) =>
     mutex.withPermits(1)(
       Effect.gen(function* () {
@@ -439,6 +469,7 @@ export const make = Effect.fn("CloudEnvironmentBuildCatalog.make")(function* () 
     complete,
     cancel,
     save,
+    markSetupReady,
     activate,
     setStaleThreshold,
   });

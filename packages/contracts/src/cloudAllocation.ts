@@ -301,12 +301,19 @@ export const RunPublicationIntent = Schema.Union([
 ]);
 export type RunPublicationIntent = typeof RunPublicationIntent.Type;
 
+export const CloudEnvironmentSetupIntent = Schema.Struct({
+  name: TrimmedNonEmptyString,
+  scope: Schema.Literals(["personal", "team"]),
+});
+export type CloudEnvironmentSetupIntent = typeof CloudEnvironmentSetupIntent.Type;
+
 export const RunExecutionIntent = Schema.Struct({
   threadId: ThreadId,
   title: TrimmedNonEmptyString,
   selectedRef: TrimmedNonEmptyString,
   unansweredRequestSeconds: CloudProviderUnansweredRequestSeconds,
   turn: CloudProviderTurnInput,
+  environmentSetup: Schema.optionalKey(CloudEnvironmentSetupIntent),
 });
 export type RunExecutionIntent = typeof RunExecutionIntent.Type;
 

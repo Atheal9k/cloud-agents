@@ -1,6 +1,5 @@
 import {
   CloudEnvironmentBuildId,
-  CloudEnvironmentId,
   CloudEnvironmentSaveInput,
   CLOUD_ENV_SETUP_TURN_HEADER,
   CLOUD_ENV_SETUP_USER_REQUEST,
@@ -166,8 +165,12 @@ it.effect(
         environmentId: saved.id,
         environmentJson: { snapshot: ready.snapshotId, install: "pnpm i", start: "pnpm dev" },
         buildId: successfulDraft.id,
+        occurredAt: "2026-09-19T12:06:30.000Z",
       });
       expect(proposed).toEqual({ proposed: true, buildId: successfulDraft.id });
+      expect((yield* builds.read(successfulDraft.id))?.readyToSaveAt).toBe(
+        "2026-09-19T12:06:30.000Z",
+      );
       expect(yield* diagnostics.readProposal(saved.id)).toMatchObject({
         buildId: successfulDraft.id,
       });

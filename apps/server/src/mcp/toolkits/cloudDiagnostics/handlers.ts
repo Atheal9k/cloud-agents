@@ -31,11 +31,12 @@ const make = Effect.gen(function* () {
     readonly refs?: unknown;
   }) =>
     requireDiagnostics.pipe(
-      Effect.andThen(() =>
+      Effect.flatMap((scope) =>
         Effect.gen(function* () {
           const occurredAt = DateTime.formatIso(yield* DateTime.now);
           return yield* catalog.triggerBuild({
             occurredAt,
+            setupThreadId: scope.threadId,
             ...(input.environmentId === undefined ? {} : { environmentId: input.environmentId }),
             ...(input.environmentJson === undefined
               ? {}
@@ -62,9 +63,13 @@ const make = Effect.gen(function* () {
   }) =>
     requireDiagnostics.pipe(
       Effect.andThen(() =>
-        catalog.proposeEnvironmentJson({
-          environmentJson: input.environmentJson,
-          ...(input.buildId === undefined ? {} : { buildId: input.buildId }),
+        Effect.gen(function* () {
+          const occurredAt = DateTime.formatIso(yield* DateTime.now);
+          return yield* catalog.proposeEnvironmentJson({
+            environmentJson: input.environmentJson,
+            occurredAt,
+            ...(input.buildId === undefined ? {} : { buildId: input.buildId }),
+          });
         }),
       ),
     );

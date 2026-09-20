@@ -159,6 +159,10 @@ export function buildCloudRunLaunchCommand(input: {
   readonly limits: CloudAllocationLimits;
   readonly now: Date;
   readonly requestId: string;
+  readonly environmentSetup?: {
+    readonly name: string;
+    readonly scope: "personal" | "team";
+  };
 }): CloudRunLaunchValidation {
   const task = input.draft.task.trim();
   const scratch = input.draft.repository.trim() === CLOUD_SCRATCH_WORKSPACE_REPOSITORY;
@@ -291,6 +295,9 @@ export function buildCloudRunLaunchCommand(input: {
         title,
         selectedRef,
         unansweredRequestSeconds: CloudProviderUnansweredRequestSeconds.make(inputWaitMinutes * 60),
+        ...(input.environmentSetup === undefined
+          ? {}
+          : { environmentSetup: input.environmentSetup }),
         turn: {
           commandId,
           messageId,

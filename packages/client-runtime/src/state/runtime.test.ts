@@ -924,6 +924,34 @@ describe("runtime command runner", () => {
     registry.dispose();
   });
 
+  it("keeps single-flight results scoped to each command", async () => {
+    const firstLatch = Latch.makeUnsafe();
+    const runtime = Atom.runtime(Layer.empty);
+    const scheduler = createAtomCommandScheduler();
+    const concurrency = { mode: "singleFlight" as const, key: () => "shared" };
+    const firstCommand = createRuntimeCommand(runtime, {
+      label: "test.single-flight.first",
+      scheduler,
+      concurrency,
+      execute: () => firstLatch.await.pipe(Effect.as("first")),
+    });
+    const secondCommand = createRuntimeCommand(runtime, {
+      label: "test.single-flight.second",
+      scheduler,
+      concurrency,
+      execute: () => Effect.succeed(2),
+    });
+    const registry = AtomRegistry.make();
+
+    const first = firstCommand.run(registry, undefined);
+    const second = secondCommand.run(registry, undefined);
+
+    expect(await second).toMatchObject({ _tag: "Success", value: 2, waiting: false });
+    firstLatch.openUnsafe();
+    expect(await first).toMatchObject({ _tag: "Success", value: "first", waiting: false });
+    registry.dispose();
+  });
+
   it("coalesces pending latest-value commands without interrupting the active call", async () => {
     const firstLatch = Latch.makeUnsafe();
     const executed: number[] = [];

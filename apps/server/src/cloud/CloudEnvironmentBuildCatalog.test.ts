@@ -1,6 +1,7 @@
 import {
   CloudEnvironmentBuildId,
   CloudEnvironmentSaveInput,
+  ThreadId,
   type CloudEnvironmentBuildSnapshot,
   type CloudEnvironmentVersion,
 } from "@t3tools/contracts";
@@ -152,6 +153,38 @@ it.effect("keeps an agent-requested draft out of the active slot until it is sav
     });
     expect(saved.draft).toBe(false);
     expect((yield* environments.list)[0]?.activeBuildId).toBe("build-draft");
+  }).pipe(Effect.provide(SqlitePersistenceMemory)),
+);
+
+it.effect("links agent setup Builds to their chat and unlocks Save only after proposal", () =>
+  Effect.gen(function* () {
+    const { builds, version } = yield* setup();
+    const setupThreadId = ThreadId.make("thread-environment-setup");
+    const started = yield* builds.start({
+      ...start(version, "build-setup", true),
+      trigger: "agent-requested",
+      setupThreadId,
+    });
+    expect(started.setupThreadId).toBe(setupThreadId);
+    expect(started.readyToSaveAt).toBeUndefined();
+
+    yield* builds.complete({
+      buildId: started.id,
+      gitSetup: [],
+      logs: [],
+      timings: {},
+      outcome: {
+        status: "succeeded",
+        snapshot: snapshot("build-setup"),
+        completedAt: "2026-09-19T02:09:00.000Z",
+      },
+    });
+    const ready = yield* builds.markSetupReady({
+      buildId: started.id,
+      occurredAt: "2026-09-19T02:10:00.000Z",
+    });
+    expect(ready.readyToSaveAt).toBe("2026-09-19T02:10:00.000Z");
+    expect(ready.draft).toBe(true);
   }).pipe(Effect.provide(SqlitePersistenceMemory)),
 );
 

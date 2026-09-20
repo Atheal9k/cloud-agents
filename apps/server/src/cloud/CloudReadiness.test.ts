@@ -338,6 +338,26 @@ it.layer(TestConfigLayer)("CloudReadiness", (it) => {
       }),
     );
 
+    it.effect("requires only the base worker profile on the EC2 fallback", () =>
+      Effect.gen(function* () {
+        const resolvedProfiles: Array<string> = [];
+        const { service } = yield* readiness({
+          resolveLaunchTemplate: (profileId) => {
+            resolvedProfiles.push(profileId);
+            return Effect.succeed({ id: `lt-${profileId}`, version: 1 });
+          },
+        });
+
+        const report = yield* service.check({ checks: ["image-access"] });
+
+        expect(resolvedProfiles).toEqual(["linux-web"]);
+        expect(report.checks.find((check) => check.id === "image-access")?.outcome).toMatchObject({
+          status: "passed",
+          detail: "Resolved launch templates for linux-web.",
+        });
+      }),
+    );
+
     it.effect("fails guest registration when a running guest lost its credential", () =>
       Effect.gen(function* () {
         const { service } = yield* readiness({

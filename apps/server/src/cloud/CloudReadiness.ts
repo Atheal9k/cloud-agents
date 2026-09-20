@@ -33,7 +33,6 @@ import { resolveAwsWorkerConfig, type ResolvedAwsWorkerConfig } from "./awsWorke
 import * as CloudAllocationController from "./CloudAllocationController.ts";
 import { buildCloudReadinessReport } from "./cloudReadinessModel.ts";
 import * as CloudWorkerProvider from "./CloudWorkerProvider.ts";
-import { DEFAULT_PROFILE_SLOTS } from "./firecrackerPlacement.ts";
 
 const CallerIdentity = Schema.Struct({
   Account: Schema.String,
@@ -69,10 +68,10 @@ function readinessError(
   return new CloudReadinessError({ reason, message });
 }
 
-/** Worker profiles the fleet advertises, falling back to the shipped set. */
+/** Worker profiles the fleet advertises, falling back to the required base profile. */
 function workerProfiles(config: ResolvedAwsWorkerConfig): ReadonlyArray<string> {
   const advertised = [...new Set(config.hypervisors.flatMap((host) => host.profiles))];
-  return advertised.length > 0 ? advertised : Object.keys(DEFAULT_PROFILE_SLOTS);
+  return advertised.length > 0 ? advertised : ["linux-web"];
 }
 
 export const make = Effect.fn("CloudReadiness.make")(function* (input: {

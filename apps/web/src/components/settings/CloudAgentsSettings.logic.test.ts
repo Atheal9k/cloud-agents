@@ -8,6 +8,7 @@ import * as Schema from "effect/Schema";
 
 import {
   cloudControllerDefaultsFromDraft,
+  cloudControllerDefaultsWithModel,
   cloudReadinessCheckRows,
   cloudReadinessHeadline,
   createCloudGuidedSetupDraft,
@@ -418,6 +419,25 @@ describe("cloudControllerDefaultsFromDraft", () => {
       artifactsToGit: false,
       collaboration: "disabled",
       selfHostedMode: "off",
+    });
+  });
+
+  it("changes only the persisted model", () => {
+    expect(
+      cloudControllerDefaultsWithModel(
+        {
+          model: "gpt-6-astra",
+          repository: "t3tools/t3code",
+          ref: "main",
+          longRunning: true,
+        },
+        " gpt-5.6-sol ",
+      ),
+    ).toEqual({
+      model: "gpt-5.6-sol",
+      repository: "t3tools/t3code",
+      ref: "main",
+      longRunning: true,
     });
   });
 });

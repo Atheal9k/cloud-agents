@@ -383,7 +383,14 @@ export function createRuntimeCommand<R, ER, W, A, E>(
   },
 ): AtomCommand<W, A, E | ER> {
   const scheduler = options.scheduler ?? createAtomCommandScheduler();
-  const concurrency = options.concurrency ?? { mode: "parallel" as const };
+  const configuredConcurrency = options.concurrency ?? { mode: "parallel" as const };
+  const concurrency: AtomCommandConcurrency<W> =
+    configuredConcurrency.mode === "singleFlight"
+      ? {
+          mode: "singleFlight",
+          key: (input) => JSON.stringify([options.label, configuredConcurrency.key(input)]),
+        }
+      : configuredConcurrency;
   return {
     label: options.label,
     run: (registry, input) =>

@@ -672,7 +672,10 @@ const RuntimeCoreDependenciesWithoutSchedulesLive = Layer.mergeAll(
   CloudCollaboration.layer,
   CloudSelfHosted.layer,
   cloudAgentsApiRateLimitsLayer,
-  CloudReadiness.layer.pipe(Layer.provide(CloudWorkerProviderLayerLive)),
+  CloudReadiness.layer.pipe(
+    Layer.provide(CloudWorkerProviderLayerLive),
+    Layer.provide(ProcessRunner.layer),
+  ),
 ).pipe(
   Layer.provideMerge(CloudEnvironmentCatalog.layer.pipe(Layer.provide(PersistenceLayerLive))),
   Layer.provideMerge(CloudEnvironmentBuildCatalog.layer.pipe(Layer.provide(PersistenceLayerLive))),

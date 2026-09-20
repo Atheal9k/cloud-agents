@@ -9,6 +9,7 @@ import {
   type CloudReadinessReport,
   type CloudScmConnection,
   type CloudScmHostKind,
+  isCloudProviderEnabled,
 } from "@t3tools/contracts";
 import { AsyncResult } from "effect/unstable/reactivity";
 import * as Option from "effect/Option";
@@ -19,13 +20,20 @@ import { randomUUID } from "../../lib/utils";
 import { cloudAllocations } from "../../state/cloudAllocations";
 import { usePrimaryEnvironmentId } from "../../state/environments";
 import { useServerConfigs } from "../../state/entities";
+import { primaryServerProvidersAtom } from "../../state/server";
 import { useAtomCommand } from "../../state/use-atom-command";
 import { openCloudLaunchDialog } from "../../cloud/cloudLaunchDialogBus";
+import {
+  deriveProviderInstanceEntries,
+  isProviderInstancePickerReady,
+} from "../../providerInstances";
+import { ProviderModelPicker } from "../chat/ProviderModelPicker";
 import { Button } from "../ui/button";
 import { Input } from "../ui/input";
 import { Textarea } from "../ui/textarea";
 import {
   cloudControllerDefaultsFromDraft,
+  cloudControllerDefaultsWithModel,
   cloudEnvironmentSourceLabel,
   cloudReadinessCheckRows,
   cloudReadinessHeadline,
@@ -73,6 +81,18 @@ function CloudAgentsSettingsForEnvironment({
 }: {
   readonly environmentId: NonNullable<ReturnType<typeof usePrimaryEnvironmentId>>;
 }) {
+  const serverProviders = useAtomValue(primaryServerProvidersAtom);
+  const providers = useMemo(
+    () =>
+      deriveProviderInstanceEntries(serverProviders).filter(
+        (provider) =>
+          isCloudProviderEnabled(provider.driverKind) &&
+          provider.isDefault &&
+          isProviderInstancePickerReady(provider) &&
+          provider.models.length > 0,
+      ),
+    [serverProviders],
+  );
   const snapshotResult = useAtomValue(cloudAllocations.snapshot({ environmentId, input: {} }));
   const snapshot = Option.getOrNull(AsyncResult.value(snapshotResult));
   const readReadiness = useAtomCommand(cloudAllocations.readiness, { reportFailure: false });
@@ -199,6 +219,16 @@ function CloudAgentsSettingsForEnvironment({
     () => (report === null ? null : cloudReadinessHeadline(report)),
     [report],
   );
+  const defaultProvider = providers[0] ?? null;
+  const selectedDefaultModel =
+    defaultProvider?.models.find((model) => model.slug === defaultsDraft.model) ??
+    defaultProvider?.models.find((model) => model.isDefault && !model.isCustom) ??
+    defaultProvider?.models[0] ??
+    null;
+  const defaultProviderModelOptions = useMemo(
+    () => new Map(providers.map((provider) => [provider.instanceId, provider.models])),
+    [providers],
+  );
   const admissionStopped = report?.health.controller.admission.status === "stopped";
   const fence =
     report?.health.controller.writability?.status === "fenced"
@@ -244,6 +274,31 @@ function CloudAgentsSettingsForEnvironment({
     ).then((result) => {
       if (result !== null) void refresh();
     });
+
+  const saveDefaultModel = (model: string) => {
+    const previousModel = report?.settings.defaults.model ?? "";
+    setDefaultsDraft((current) => ({ ...current, model }));
+    void run(
+      "default-model",
+      () =>
+        setDefaults({
+          environmentId,
+          input: {
+            defaults: cloudControllerDefaultsWithModel(report?.settings.defaults ?? {}, model),
+            occurredAt: new Date().toISOString(),
+          },
+        }),
+      "The controller could not save the default model.",
+    ).then((result) => {
+      if (result !== null) {
+        void refresh();
+        return;
+      }
+      setDefaultsDraft((current) =>
+        current.model === model ? { ...current, model: previousModel } : current,
+      );
+    });
+  };
 
   const saveSpendLimit = () => {
     const cap = spendDraft.capUsd.trim();
@@ -427,6 +482,12 @@ function CloudAgentsSettingsForEnvironment({
 
   return (
     <SettingsPageContainer>
+      <div className="order-first px-3 sm:px-4">
+        <h1 className="font-heading text-xl font-semibold">Cloud agents</h1>
+        <p className="mt-1 text-sm text-muted-foreground">
+          Create agents to edit and run code asynchronously.
+        </p>
+      </div>
       <SettingsSection
         id="cloud-readiness"
         title="Readiness"
@@ -634,25 +695,30 @@ function CloudAgentsSettingsForEnvironment({
 
       <SettingsSection
         id="cloud-environments"
-        title="Environments and Builds"
+        title="Environments"
+        className="order-first"
         headerAction={
           <Button
             size="xs"
-            variant="outline"
             disabled={busy !== null}
             onClick={() => openCloudLaunchDialog({ kind: "env-setup" })}
           >
-            Set up with agent
+            New environment
           </Button>
         }
       >
-        <p className="text-xs text-muted-foreground">
-          A repository-owned environment is created by the same env-setup skill from Settings, the
-          command palette, and the cloud setup keybinding. This form only edits an already-saved
-          personal, team, or default environment.
-        </p>
         {report.environments.length === 0 ? (
-          <p className="text-sm text-muted-foreground">No cloud environment is saved yet.</p>
+          <div className="flex flex-col items-center gap-2 px-4 py-8 text-center">
+            <p className="text-sm text-muted-foreground">No environments configured</p>
+            <Button
+              size="xs"
+              variant="outline"
+              disabled={busy !== null}
+              onClick={() => openCloudLaunchDialog({ kind: "env-setup" })}
+            >
+              Start setup
+            </Button>
+          </div>
         ) : (
           <ul className="flex flex-col gap-6">
             {report.environments.map((environment) => {
@@ -1249,15 +1315,27 @@ function CloudAgentsSettingsForEnvironment({
 
       <SettingsSection id="cloud-defaults" title="Defaults and policy">
         <div className="grid gap-3 sm:grid-cols-3">
-          <label className={fieldClassName}>
+          <div className={fieldClassName}>
             <span className={labelClassName}>Default model</span>
-            <Input
-              value={defaultsDraft.model}
-              onChange={(event) =>
-                setDefaultsDraft({ ...defaultsDraft, model: event.currentTarget.value })
-              }
-            />
-          </label>
+            {defaultProvider !== null && selectedDefaultModel !== null ? (
+              <ProviderModelPicker
+                activeInstanceId={defaultProvider.instanceId}
+                model={selectedDefaultModel.slug}
+                lockedProvider={defaultProvider.driverKind}
+                instanceEntries={[defaultProvider]}
+                modelOptionsByInstance={defaultProviderModelOptions}
+                triggerVariant="outline"
+                triggerClassName="h-8.5 w-full bg-background px-3 text-sm text-foreground shadow-xs/5 sm:h-7.5"
+                triggerAriaLabel="Default model"
+                disabled={busy !== null}
+                onInstanceModelChange={(_instanceId, model) => saveDefaultModel(model)}
+              />
+            ) : (
+              <span className="text-xs text-destructive">
+                No ready provider has a supported model.
+              </span>
+            )}
+          </div>
           <label className={fieldClassName}>
             <span className={labelClassName}>Context</span>
             <Input

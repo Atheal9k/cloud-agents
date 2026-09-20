@@ -10,6 +10,7 @@ import {
   type CloudEnvironmentBase,
   type CloudEnvironmentBuild,
   CloudEnvironmentBuildId,
+  CloudEnvironmentId,
   CloudAgentId,
   CLOUD_SCRATCH_WORKSPACE_REPOSITORY,
   type CloudEnvironmentVersion,
@@ -21,7 +22,14 @@ import {
 import { useNavigate } from "@tanstack/react-router";
 import { AsyncResult } from "effect/unstable/reactivity";
 import * as Option from "effect/Option";
-import { CloudIcon, ExternalLinkIcon, SquareIcon } from "lucide-react";
+import {
+  CheckIcon,
+  CloudIcon,
+  ExternalLinkIcon,
+  FolderGit2Icon,
+  SearchIcon,
+  SquareIcon,
+} from "lucide-react";
 import { type FormEvent, useEffect, useMemo, useState } from "react";
 
 import { environmentCatalog } from "../../connection/catalog";
@@ -36,8 +44,13 @@ import {
   type CloudRunLaunchDraft,
 } from "../../cloud/cloudRunLaunch";
 import { onOpenCloudLaunchDialog } from "../../cloud/cloudLaunchDialogBus";
+import {
+  canStopCloudEnvironmentSetup,
+  cloudEnvironmentSetupProgressLabel,
+  latestPendingCloudEnvironmentSetupAllocation,
+} from "../../cloud/cloudEnvironmentSetupPresentation";
 import { buildThreadRouteParams } from "../../threadRoutes";
-import { randomUUID } from "../../lib/utils";
+import { cn, randomUUID } from "../../lib/utils";
 import { usePrimaryEnvironmentId } from "../../state/environments";
 import { useProjects, useServerConfigs } from "../../state/entities";
 import { cloudAllocations } from "../../state/cloudAllocations";
@@ -80,6 +93,12 @@ function runtimeMode(value: string): CloudRunLaunchDraft["runtimeMode"] {
 
 function publicationMode(value: string): CloudRunLaunchDraft["publication"] {
   return value === "automatic-draft-pr" ? "automatic-draft-pr" : "review-only";
+}
+
+type EnvironmentSetupStep = "repositories" | "details" | "progress";
+
+function repositoryName(repository: string): string {
+  return repository.match(/[^/]+$/u)?.[0] ?? repository;
 }
 
 const DISPLAY_LABELS = {
@@ -448,12 +467,16 @@ function CloudRunDialogForEnvironment(props: {
   const fence = writability?.status === "fenced" ? writability : null;
   const projectOptions = useMemo(() => cloudRunProjectOptions(projects), [projects]);
   const dispatch = useAtomCommand(cloudAllocations.dispatch, { reportFailure: false });
+  const setAdmission = useAtomCommand(cloudAllocations.setAdmission, { reportFailure: false });
   const registerEnvironment = useAtomCommand(environmentCatalog.register, { reportFailure: false });
   const restoreEnvironment = useAtomCommand(cloudAllocations.restoreEnvironment, {
     reportFailure: false,
   });
   const startBuild = useAtomCommand(cloudAllocations.startBuild, { reportFailure: false });
   const saveBuild = useAtomCommand(cloudAllocations.saveBuild, { reportFailure: false });
+  const saveEnvironment = useAtomCommand(cloudAllocations.saveEnvironment, {
+    reportFailure: false,
+  });
   const cancelBuild = useAtomCommand(cloudAllocations.cancelBuild, { reportFailure: false });
   const [open, setOpen] = useState(false);
   const [draft, setDraft] = useState(() =>
@@ -464,6 +487,13 @@ function CloudRunDialogForEnvironment(props: {
   const [busyAllocationId, setBusyAllocationId] = useState<string | null>(null);
   const [busyEnvironmentId, setBusyEnvironmentId] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const [setupMode, setSetupMode] = useState(false);
+  const [setupStep, setSetupStep] = useState<EnvironmentSetupStep>("repositories");
+  const [setupSearch, setSetupSearch] = useState("");
+  const [setupName, setSetupName] = useState("");
+  const [setupScope, setSetupScope] = useState<"personal" | "team">("personal");
+  const [savingSkippedSetup, setSavingSkippedSetup] = useState(false);
+  const [resumingAdmission, setResumingAdmission] = useState(false);
 
   useEffect(() => {
     if (snapshot === null) return;
@@ -473,16 +503,36 @@ function CloudRunDialogForEnvironment(props: {
   useEffect(
     () =>
       onOpenCloudLaunchDialog((intent) => {
+        const existingSetup =
+          intent.kind === "env-setup"
+            ? latestPendingCloudEnvironmentSetupAllocation(
+                snapshot?.allocations ?? [],
+                intent.repository,
+              )
+            : null;
         const next = createInitialCloudRunDraft(
           snapshot,
           providers,
-          intent.kind === "env-setup" && intent.repository !== undefined
-            ? intent.repository
-            : projectOptions[0]?.repository,
+          existingSetup?.target.repository ??
+            (intent.kind === "env-setup" && intent.repository !== undefined
+              ? intent.repository
+              : projectOptions[0]?.repository),
         );
         setDraft(intent.kind === "env-setup" ? cloudEnvSetupLaunchDraft(next) : next);
-        setRequestId(randomUUID());
-        setLaunchedId(null);
+        setSetupMode(intent.kind === "env-setup");
+        setSetupStep(existingSetup === null ? "repositories" : "progress");
+        setSetupSearch("");
+        setSetupName(
+          existingSetup?.execution?.environmentSetup?.name ??
+            (intent.kind === "env-setup" && next.repository.length > 0
+              ? repositoryName(next.repository)
+              : ""),
+        );
+        setSetupScope(existingSetup?.execution?.environmentSetup?.scope ?? "personal");
+        setSavingSkippedSetup(false);
+        setResumingAdmission(false);
+        setRequestId(existingSetup?.id ?? randomUUID());
+        setLaunchedId(existingSetup?.id ?? null);
         setError(null);
         setOpen(true);
       }),
@@ -492,6 +542,7 @@ function CloudRunDialogForEnvironment(props: {
   const selectedProvider = providers.find(
     (provider) => provider.instanceId === draft.providerInstanceId,
   );
+  const admissionStopped = snapshot?.controller.admission.status === "stopped";
   const modelOptionsByInstance = useMemo(
     () => new Map(providers.map((provider) => [provider.instanceId, provider.models])),
     [providers],
@@ -508,13 +559,35 @@ function CloudRunDialogForEnvironment(props: {
   const launch = async (event: FormEvent) => {
     event.preventDefault();
     if (snapshot === null || launchedId !== null) return;
-    const launchDraft = reconcileCloudRunLaunchInstanceType(draft, snapshot.limits);
+    if (snapshot.controller.admission.status === "stopped") {
+      setError("New cloud runs are paused. Resume admission before starting setup.");
+      return;
+    }
+    if (snapshot.controller.writability?.status === "fenced") {
+      setError(`This cloud controller is fenced: ${snapshot.controller.writability.reason}`);
+      return;
+    }
+    const requestedDraft = setupMode
+      ? {
+          ...draft,
+          task: `Set up ${setupName.trim()} cloud environment.\n\n${CLOUD_ENV_SETUP_USER_REQUEST}\nScope: ${setupScope}.`,
+        }
+      : draft;
+    const launchDraft = reconcileCloudRunLaunchInstanceType(requestedDraft, snapshot.limits);
     if (launchDraft !== draft) setDraft(launchDraft);
     const built = buildCloudRunLaunchCommand({
       draft: launchDraft,
       limits: snapshot.limits,
       now: new Date(),
       requestId,
+      ...(setupMode
+        ? {
+            environmentSetup: {
+              name: setupName.trim(),
+              scope: setupScope,
+            },
+          }
+        : {}),
     });
     if (built.status === "invalid") {
       setError(built.message);
@@ -530,6 +603,82 @@ function CloudRunDialogForEnvironment(props: {
       return;
     }
     setLaunchedId(requestId);
+    if (setupMode) setSetupStep("progress");
+  };
+
+  const setupRepositories = [draft.repository, ...draft.additionalRepositories].filter(
+    (repository) => repository.length > 0,
+  );
+  const filteredSetupProjects = projectOptions.filter((project) => {
+    const query = setupSearch.trim().toLowerCase();
+    return (
+      query.length === 0 ||
+      project.title.toLowerCase().includes(query) ||
+      project.repository.toLowerCase().includes(query)
+    );
+  });
+  const setSetupRepositories = (repositories: ReadonlyArray<string>) => {
+    setDraft((current) => ({
+      ...current,
+      repository: repositories[0] ?? "",
+      additionalRepositories: repositories.slice(1),
+    }));
+    if (setupName.length === 0 && repositories[0] !== undefined) {
+      setSetupName(repositoryName(repositories[0]));
+    }
+  };
+  const toggleSetupRepository = (repository: string) => {
+    const selected = setupRepositories.includes(repository)
+      ? setupRepositories.filter((candidate) => candidate !== repository)
+      : [...setupRepositories, repository];
+    setSetupRepositories(selected);
+  };
+
+  const skipAndSaveSetup = async () => {
+    if (setupRepositories.length === 0 || setupName.trim().length === 0) return;
+    setSavingSkippedSetup(true);
+    const result = await saveEnvironment({
+      environmentId: props.environmentId,
+      input: {
+        environmentId: CloudEnvironmentId.make(`environment:${randomUUID()}`),
+        name: setupName.trim(),
+        source: {
+          type: "saved",
+          scope: setupScope,
+          owner: setupScope === "team" ? "team" : "local-operator",
+        },
+        repositories: setupRepositories.map((repository) => ({
+          repository,
+          defaultRef: draft.selectedRef.trim() || "main",
+        })),
+        config: { image: "ubuntu:24.04" },
+        secretReferences: [],
+        occurredAt: new Date().toISOString(),
+      },
+    });
+    setSavingSkippedSetup(false);
+    if (result._tag === "Failure") {
+      const cause = squashAtomCommandFailure(result);
+      setError(cause instanceof Error ? cause.message : "The environment could not be saved.");
+      return;
+    }
+    setError(null);
+    setOpen(false);
+  };
+
+  const resumeAdmission = async () => {
+    setResumingAdmission(true);
+    const result = await setAdmission({
+      environmentId: props.environmentId,
+      input: { admissionOpen: true, occurredAt: new Date().toISOString() },
+    });
+    setResumingAdmission(false);
+    if (result._tag === "Failure") {
+      const cause = squashAtomCommandFailure(result);
+      setError(cause instanceof Error ? cause.message : "Cloud admission could not be resumed.");
+      return;
+    }
+    setError(null);
   };
 
   const restore = async (environment: CloudEnvironment, restoreVersion: number) => {
@@ -659,6 +808,276 @@ function CloudRunDialogForEnvironment(props: {
       }),
     });
   };
+
+  if (setupMode) {
+    const setupAllocation = snapshot?.allocations.find((allocation) => allocation.id === requestId);
+    const canOpenSetup =
+      setupAllocation?.allocationState.status === "ready" &&
+      setupAllocation.allocationState.route !== undefined;
+    const canStopSetup =
+      setupAllocation !== undefined && canStopCloudEnvironmentSetup(setupAllocation);
+    const setupProgressLabel = cloudEnvironmentSetupProgressLabel(setupAllocation ?? null);
+
+    return (
+      <Dialog open={open} onOpenChange={setOpen}>
+        <DialogPopup className="w-[min(520px,calc(100vw-2rem))] overflow-hidden">
+          <form
+            className="flex max-h-[calc(100dvh-2rem)] min-h-0 flex-col max-sm:max-h-[calc(100dvh-3rem)]"
+            onSubmit={(event) => void launch(event)}
+          >
+            <DialogHeader>
+              <DialogTitle>Create a new environment</DialogTitle>
+              <DialogDescription>
+                {setupStep === "repositories"
+                  ? "Select one or more repositories."
+                  : setupStep === "details"
+                    ? "Name the environment and choose who can use it."
+                    : `Setting up ${setupName || "your environment"}.`}
+              </DialogDescription>
+            </DialogHeader>
+
+            <DialogPanel className="space-y-4" scrollAreaClassName="min-h-0 flex-1">
+              {setupStep === "repositories" ? (
+                <div className="overflow-hidden rounded-xl border border-border">
+                  <label className="flex items-center gap-2 border-b border-border px-3">
+                    <SearchIcon className="size-4 text-muted-foreground" />
+                    <Input
+                      autoFocus
+                      className="border-0 bg-transparent px-0 shadow-none focus-visible:ring-0"
+                      value={setupSearch}
+                      placeholder="Search repositories"
+                      onChange={(event) => setSetupSearch(event.currentTarget.value)}
+                    />
+                  </label>
+                  <div className="flex items-center justify-between px-3 py-2 text-xs text-muted-foreground">
+                    <span>Repositories</span>
+                    <span>Select multiple</span>
+                  </div>
+                  <div className="max-h-64 overflow-y-auto px-1 pb-1">
+                    {filteredSetupProjects.length === 0 ? (
+                      <p className="px-2 py-6 text-center text-sm text-muted-foreground">
+                        No linked repositories match this search.
+                      </p>
+                    ) : (
+                      filteredSetupProjects.map((project) => {
+                        const selected = setupRepositories.includes(project.repository);
+                        return (
+                          <button
+                            key={project.repository}
+                            type="button"
+                            className="flex w-full items-center gap-2 rounded-lg px-2 py-2 text-left text-sm hover:bg-accent"
+                            aria-pressed={selected}
+                            onClick={() => toggleSetupRepository(project.repository)}
+                          >
+                            <FolderGit2Icon className="size-4 text-muted-foreground" />
+                            <span className="min-w-0 flex-1 truncate">{project.repository}</span>
+                            <span
+                              className={cn(
+                                "flex size-4 items-center justify-center rounded-full border",
+                                selected
+                                  ? "border-primary bg-primary text-primary-foreground"
+                                  : "border-input",
+                              )}
+                            >
+                              {selected ? <CheckIcon className="size-3" /> : null}
+                            </span>
+                          </button>
+                        );
+                      })
+                    )}
+                  </div>
+                </div>
+              ) : setupStep === "details" ? (
+                <>
+                  <label className={fieldClassName}>
+                    <span className={labelClassName}>Name</span>
+                    <Input
+                      autoFocus
+                      value={setupName}
+                      onChange={(event) => setSetupName(event.currentTarget.value)}
+                    />
+                  </label>
+                  <div className={fieldClassName}>
+                    <div className="flex items-center justify-between">
+                      <span className={labelClassName}>
+                        {setupRepositories.length === 1 ? "Repository" : "Repositories"}
+                      </span>
+                      <Button
+                        type="button"
+                        size="micro"
+                        variant="ghost"
+                        onClick={() => setSetupStep("repositories")}
+                      >
+                        Edit
+                      </Button>
+                    </div>
+                    <div className="space-y-1 rounded-lg border border-border p-2">
+                      {setupRepositories.map((repository) => (
+                        <div key={repository} className="flex items-center gap-2 text-sm">
+                          <FolderGit2Icon className="size-4 text-muted-foreground" />
+                          <span className="truncate">{repository}</span>
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+                  <label className={fieldClassName}>
+                    <span className={labelClassName}>Scope</span>
+                    <select
+                      className={selectClassName}
+                      value={setupScope}
+                      onChange={(event) =>
+                        setSetupScope(event.currentTarget.value === "team" ? "team" : "personal")
+                      }
+                    >
+                      <option value="personal">Personal</option>
+                      <option value="team">Team</option>
+                    </select>
+                  </label>
+                  <p className="text-sm text-muted-foreground">
+                    An agent will explore the codebase, generate install scripts, and verify the
+                    application. Setup usually takes 5-20 minutes. Interrupt anytime to steer the
+                    agent or finish setup manually in its terminal.
+                  </p>
+                  {admissionStopped ? (
+                    <div className="flex items-center justify-between gap-3 rounded-lg border border-warning/32 bg-warning-surface p-3">
+                      <p className="text-sm text-warning-foreground">
+                        New cloud runs are paused. Resume admission before starting setup.
+                      </p>
+                      <Button
+                        type="button"
+                        size="sm"
+                        variant="warning-outline"
+                        disabled={resumingAdmission}
+                        onClick={() => void resumeAdmission()}
+                      >
+                        {resumingAdmission ? "Resuming..." : "Resume admission"}
+                      </Button>
+                    </div>
+                  ) : fence !== null ? (
+                    <p className="rounded-lg border border-destructive/24 bg-destructive/8 p-3 text-sm text-destructive">
+                      This cloud controller is fenced: {fence.reason}
+                    </p>
+                  ) : providers.length === 0 ? (
+                    <p className="rounded-lg border border-warning/32 bg-warning-surface p-3 text-sm text-warning-foreground">
+                      Configure a default cloud-capable provider and model before starting setup.
+                    </p>
+                  ) : null}
+                </>
+              ) : (
+                <div className="space-y-4">
+                  <div className="rounded-xl border border-border bg-muted/24 p-4">
+                    <div className="flex items-center gap-2">
+                      <div className="flex size-9 items-center justify-center rounded-lg bg-primary/10 text-primary">
+                        <CloudIcon className="size-5" />
+                      </div>
+                      <div>
+                        <h3 className="text-sm font-semibold">Set up a cloud environment</h3>
+                        <p className="text-xs text-muted-foreground">Agent-led setup</p>
+                      </div>
+                    </div>
+                    <p className="mt-3 text-sm text-muted-foreground">
+                      The agent can run, test, verify, and demo changes like an engineer.
+                    </p>
+                    <ol className="mt-3 space-y-2 text-sm">
+                      <li className="flex gap-3">
+                        <span className="text-muted-foreground">1</span>
+                        <span>Explore, install, and verify the application</span>
+                      </li>
+                      <li className="flex gap-3">
+                        <span className="text-muted-foreground">2</span>
+                        <span>Ask for secrets or network access as needed</span>
+                      </li>
+                      <li className="flex gap-3">
+                        <span className="text-muted-foreground">3</span>
+                        <span>Prompt you to review and save the configuration</span>
+                      </li>
+                    </ol>
+                  </div>
+                  <div className="flex items-center justify-between rounded-lg border border-border px-3 py-2 text-sm">
+                    <span className="text-muted-foreground">{setupProgressLabel}</span>
+                    {canOpenSetup && setupAllocation !== undefined ? (
+                      <Button type="button" size="sm" onClick={() => void openRun(setupAllocation)}>
+                        Open setup
+                      </Button>
+                    ) : null}
+                  </div>
+                </div>
+              )}
+
+              {error === null ? null : (
+                <p role="alert" className="text-sm text-destructive">
+                  {error}
+                </p>
+              )}
+            </DialogPanel>
+
+            {setupStep === "repositories" ? (
+              <DialogFooter>
+                <Button type="button" variant="outline" onClick={() => setOpen(false)}>
+                  Cancel
+                </Button>
+                <Button
+                  type="button"
+                  disabled={setupRepositories.length === 0}
+                  onClick={() => {
+                    setError(null);
+                    setSetupStep("details");
+                  }}
+                >
+                  Continue
+                </Button>
+              </DialogFooter>
+            ) : setupStep === "details" ? (
+              <DialogFooter className="sm:justify-between">
+                <Button
+                  type="button"
+                  variant="outline"
+                  disabled={savingSkippedSetup || setupName.trim().length === 0}
+                  onClick={() => void skipAndSaveSetup()}
+                >
+                  {savingSkippedSetup ? "Saving..." : "Skip and save"}
+                </Button>
+                <Button
+                  type="submit"
+                  disabled={
+                    snapshot === null ||
+                    admissionStopped ||
+                    fence !== null ||
+                    setupName.trim().length === 0 ||
+                    providers.length === 0 ||
+                    resumingAdmission ||
+                    busyAllocationId !== null
+                  }
+                >
+                  {busyAllocationId === requestId ? "Starting..." : "Set up with agent"}
+                </Button>
+              </DialogFooter>
+            ) : (
+              <DialogFooter className="sm:justify-between">
+                <Button type="button" variant="outline" onClick={() => setOpen(false)}>
+                  Close
+                </Button>
+                {canStopSetup && setupAllocation !== undefined ? (
+                  <Button
+                    type="button"
+                    variant="destructive"
+                    disabled={busyAllocationId === setupAllocation.id}
+                    onClick={() => void cancel(setupAllocation)}
+                  >
+                    {busyAllocationId === setupAllocation.id
+                      ? "Stopping..."
+                      : setupAllocation.cleanupState.status === "failed"
+                        ? "Retry stop"
+                        : "Stop setup"}
+                  </Button>
+                ) : null}
+              </DialogFooter>
+            )}
+          </form>
+        </DialogPopup>
+      </Dialog>
+    );
+  }
 
   return (
     <Dialog open={open} onOpenChange={setOpen}>

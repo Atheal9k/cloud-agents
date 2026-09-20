@@ -227,6 +227,7 @@ describe("cloud run launch", () => {
       limits,
       now: new Date("2026-09-17T10:00:00.000Z"),
       requestId: "request-setup",
+      environmentSetup: { name: "Cloud agents", scope: "team" },
     });
 
     expect(setup.task).toContain("env-setup");
@@ -239,6 +240,10 @@ describe("cloud run launch", () => {
       return;
     }
     expect(result.command.execution.turn.prompt).toBe(setup.task);
+    expect(result.command.execution.environmentSetup).toEqual({
+      name: "Cloud agents",
+      scope: "team",
+    });
   });
 
   it("promises a permanent controller outlives this computer, and a local one does not", () => {

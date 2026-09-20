@@ -7,6 +7,7 @@ import {
   IsoDateTime,
   NonNegativeInt,
   PositiveInt,
+  ThreadId,
   TrimmedNonEmptyString,
 } from "./baseSchemas.ts";
 import {
@@ -95,6 +96,10 @@ export const CloudEnvironmentBuild = Schema.Struct({
   trigger: CloudEnvironmentBuildTrigger,
   /** Agent-requested Builds stay draft until a person saves them. */
   draft: Schema.Boolean,
+  /** The setup chat that created this Build, when an agent requested it. */
+  setupThreadId: Schema.optionalKey(ThreadId),
+  /** Set only after the setup agent has proposed the tested configuration. */
+  readyToSaveAt: Schema.optionalKey(IsoDateTime),
   base: CloudEnvironmentBase,
   /**
    * Identifies the refs, config, and build-time secrets this Build was made

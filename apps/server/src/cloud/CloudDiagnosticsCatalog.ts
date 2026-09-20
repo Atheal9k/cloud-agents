@@ -21,6 +21,7 @@ import {
   type CloudSubagentUsageEvent,
   CloudEnvironmentVersion,
   CloudDiagnosticsError,
+  type ThreadId,
 } from "@t3tools/contracts";
 import * as Context from "effect/Context";
 import * as DateTime from "effect/DateTime";
@@ -83,6 +84,7 @@ export class CloudDiagnosticsCatalog extends Context.Service<
     readonly triggerBuild: (input: {
       readonly environmentId?: string | undefined;
       readonly environmentJson?: CloudEnvironmentConfig | undefined;
+      readonly setupThreadId?: ThreadId | undefined;
       readonly occurredAt: string;
     }) => Effect.Effect<CloudEnvironmentBuild, CloudDiagnosticsError>;
     readonly listBuilds: (input: {
@@ -95,6 +97,7 @@ export class CloudDiagnosticsCatalog extends Context.Service<
       readonly environmentId?: string | undefined;
       readonly environmentJson: CloudEnvironmentConfig;
       readonly buildId?: string | undefined;
+      readonly occurredAt?: string | undefined;
     }) => Effect.Effect<
       { readonly proposed: true; readonly buildId?: string },
       CloudDiagnosticsError
@@ -284,6 +287,14 @@ export const make = Effect.fn("CloudDiagnosticsCatalog.make")(function* () {
     Effect.gen(function* () {
       const environments = yield* environmentCatalog;
       const builds = yield* buildCatalog;
+      const allocationSnapshot =
+        input.setupThreadId === undefined
+          ? Option.none<CloudAllocationSnapshot>()
+          : yield* snapshot.pipe(Effect.option);
+      const setupAllocation = Option.getOrUndefined(allocationSnapshot)?.allocations.find(
+        (allocation) => allocation.execution?.threadId === input.setupThreadId,
+      );
+      const setupIntent = setupAllocation?.execution?.environmentSetup;
       let environment: CloudEnvironment | undefined;
       if (input.environmentId !== undefined) {
         const listed = yield* environments.list.pipe(
@@ -299,9 +310,25 @@ export const make = Effect.fn("CloudDiagnosticsCatalog.make")(function* () {
             environmentId: CloudEnvironmentId.make(
               `environment-draft-${input.occurredAt.replaceAll(/[^\d]/g, "").slice(0, 14)}`,
             ),
-            name: input.environmentJson.name ?? "Draft environment",
-            source: { type: "saved", scope: "personal", owner: "cloud-agent" },
-            repositories: [{ repository: "local/none", defaultRef: "main" }],
+            name: setupIntent?.name ?? input.environmentJson.name ?? "Draft environment",
+            source: {
+              type: "saved",
+              scope: setupIntent?.scope ?? "personal",
+              owner: setupIntent?.scope === "team" ? "team" : "cloud-agent",
+            },
+            repositories:
+              setupAllocation === undefined
+                ? [{ repository: "local/none", defaultRef: "main" }]
+                : [
+                    {
+                      repository: setupAllocation.target.repository,
+                      defaultRef: setupAllocation.target.baseCommit,
+                    },
+                    ...(setupAllocation.target.additionalRepositories ?? []).map((repository) => ({
+                      repository: repository.repository,
+                      defaultRef: repository.baseCommit,
+                    })),
+                  ],
             config: input.environmentJson,
             secretReferences: [],
             occurredAt: input.occurredAt,
@@ -331,6 +358,7 @@ export const make = Effect.fn("CloudDiagnosticsCatalog.make")(function* () {
           version,
           trigger: "agent-requested",
           draft: true,
+          ...(input.setupThreadId === undefined ? {} : { setupThreadId: input.setupThreadId }),
           base: cloudEnvironmentBase(version.config),
           inputsFingerprint: cloudEnvironmentBuildFingerprint({
             versionId: version.id,
@@ -387,6 +415,15 @@ export const make = Effect.fn("CloudDiagnosticsCatalog.make")(function* () {
         );
       }
       const key = input.environmentId ?? "greenfield";
+      if (input.buildId !== undefined && input.occurredAt !== undefined) {
+        const builds = yield* buildCatalog;
+        yield* builds
+          .markSetupReady({
+            buildId: CloudEnvironmentBuildId.make(input.buildId),
+            occurredAt: input.occurredAt,
+          })
+          .pipe(Effect.mapError((error) => diagnosticsError("invalid-request", error.message)));
+      }
       yield* Ref.update(state, (value) => ({
         ...value,
         proposals: new Map(value.proposals).set(key, {
@@ -394,6 +431,16 @@ export const make = Effect.fn("CloudDiagnosticsCatalog.make")(function* () {
           ...(input.buildId === undefined ? {} : { buildId: input.buildId }),
         }),
       }));
+      if (input.buildId !== undefined) {
+        yield* Effect.serviceOption(CloudAllocationController.CloudAllocationController).pipe(
+          Effect.flatMap(
+            Option.match({
+              onNone: () => Effect.void,
+              onSome: (controller) => controller.refresh.pipe(Effect.ignore),
+            }),
+          ),
+        );
+      }
       return {
         proposed: true as const,
         ...(input.buildId === undefined ? {} : { buildId: input.buildId }),
