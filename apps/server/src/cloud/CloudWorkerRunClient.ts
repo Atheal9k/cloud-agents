@@ -104,7 +104,10 @@ function taskPrompt(allocation: RunAllocation): string {
 }
 
 function requestUrl(baseUrl: string, pathname: string): string {
-  return new URL(pathname, baseUrl).toString();
+  const url = new URL(baseUrl);
+  url.pathname = pathname;
+  url.hash = "";
+  return url.toString();
 }
 
 export const make = Effect.fn("CloudWorkerRunClient.make")(function* () {
@@ -198,8 +201,10 @@ export const make = Effect.fn("CloudWorkerRunClient.make")(function* () {
       return yield* clientError("status", "The allocation has no ready worker execution route.");
     }
     const url = new URL(
-      `/api/orchestration/threads/${encodeURIComponent(run.execution.threadId)}`,
-      run.route.httpBaseUrl,
+      requestUrl(
+        run.route.httpBaseUrl,
+        `/api/orchestration/threads/${encodeURIComponent(run.execution.threadId)}`,
+      ),
     );
     if (window?.turnLimit !== undefined)
       url.searchParams.set("turnLimit", String(window.turnLimit));

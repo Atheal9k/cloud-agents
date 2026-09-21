@@ -9,6 +9,7 @@ import {
   type CloudEnvironmentVersion,
   type CloudManagedRuntime,
   type RunAllocation,
+  type RunAllocationProgressStage,
   type RunRuntimeFlush,
   type RunRuntimeSnapshot,
   emulatorWakeResumption,
@@ -50,6 +51,7 @@ import {
 import * as CloudWorkerRegistration from "./CloudWorkerRegistration.ts";
 import * as CloudWorkerProvider from "./CloudWorkerProvider.ts";
 import * as CloudWorkerRunClient from "./CloudWorkerRunClient.ts";
+import * as DaytonaWorkerBootstrap from "./DaytonaWorkerBootstrap.ts";
 import type { CloudWorkerResource } from "./CloudWorkerProvider.ts";
 
 const MAX_LAUNCH_FAILURES = 3;
@@ -183,6 +185,7 @@ function unflushed(
 export const make = Effect.fn("CloudAllocationReconciler.make")(function* (input?: {
   readonly idleReleaseSeconds?: number;
   readonly runClient?: CloudWorkerRunClient.CloudWorkerRunClient["Service"];
+  readonly daytonaWorker?: DaytonaWorkerBootstrap.DaytonaWorkerBootstrap;
 }) {
   const controller = yield* CloudAllocationController.CloudAllocationController;
   const registrations = yield* CloudWorkerRegistration.CloudWorkerRegistration;
@@ -203,6 +206,35 @@ export const make = Effect.fn("CloudAllocationReconciler.make")(function* (input
       ...command,
     });
     return yield* controller.dispatch(decoded);
+  });
+
+  const reportProgress = Effect.fn("CloudAllocationReconciler.reportProgress")(function* (input: {
+    readonly allocation: RunAllocation;
+    readonly occurredAt: string;
+    readonly operation: string;
+    readonly stage: RunAllocationProgressStage;
+    readonly status: "requested" | "running" | "succeeded" | "failed";
+    readonly message: string;
+  }) {
+    const startedAt =
+      input.allocation.progress?.stage === input.stage
+        ? input.allocation.progress.startedAt
+        : input.occurredAt;
+    yield* dispatch(input.allocation, input.occurredAt, {
+      type: "allocation.progress-reported",
+      commandId: commandId(
+        input.allocation,
+        "progress",
+        `${input.operation}:${input.stage}:${input.status}`,
+      ),
+      progress: {
+        stage: input.stage,
+        status: input.status,
+        message: input.message,
+        startedAt,
+        updatedAt: input.occurredAt,
+      },
+    });
   });
 
   const failLaunch = Effect.fn("CloudAllocationReconciler.failLaunch")(function* (
@@ -255,6 +287,24 @@ export const make = Effect.fn("CloudAllocationReconciler.make")(function* (input
     occurredAt: string,
   ) {
     if (allocation.cleanupState.status === "requested") {
+      yield* reportProgress({
+        allocation,
+        occurredAt,
+        operation: "cancellation-requested",
+        stage: "stop",
+        status: "requested",
+        message: "Cancellation requested. Interrupting the provider and stopping the sandbox.",
+      });
+      if (input?.daytonaWorker !== undefined && usesManagedRuntime(allocation)) {
+        const interrupted = yield* input.daytonaWorker.interrupt(allocation).pipe(Effect.result);
+        if (Result.isFailure(interrupted)) {
+          yield* Effect.logWarning("Could not interrupt the Daytona T3 worker before cleanup.", {
+            allocationId: allocation.id,
+            attempt: allocation.attempt,
+            error: interrupted.failure.message,
+          });
+        }
+      }
       if (allocation.previewState.status === "available") {
         yield* dispatch(allocation, occurredAt, {
           type: "allocation.preview-withdrawn",
@@ -293,17 +343,98 @@ export const make = Effect.fn("CloudAllocationReconciler.make")(function* (input
           });
           return;
         }
+        if (
+          managed.lifecycleState === "creating" ||
+          managed.lifecycleState === "starting" ||
+          managed.lifecycleState === "started" ||
+          managed.lifecycleState === "unknown" ||
+          managed.lifecycleState === "error"
+        ) {
+          yield* reportProgress({
+            allocation,
+            occurredAt,
+            operation: "sandbox-stop",
+            stage: "stop",
+            status: "running",
+            message: "Provider interrupted. Stopping the Daytona sandbox.",
+          });
+          const stopped = yield* runtimes.stop(managed.runtimeId).pipe(Effect.result);
+          if (Result.isFailure(stopped)) {
+            yield* Effect.logWarning("Could not stop the Daytona sandbox during cleanup.", {
+              allocationId: allocation.id,
+              attempt: allocation.attempt,
+              runtimeId: managed.runtimeId,
+              error: stopped.failure.message,
+            });
+          }
+          return;
+        }
+        if (managed.lifecycleState === "stopping" || managed.lifecycleState === "archiving") {
+          yield* reportProgress({
+            allocation,
+            occurredAt,
+            operation:
+              managed.lifecycleState === "stopping" ? "sandbox-stop-wait" : "sandbox-archive-wait",
+            stage: managed.lifecycleState === "stopping" ? "stop" : "archive",
+            status: "running",
+            message:
+              managed.lifecycleState === "stopping"
+                ? "Waiting for Daytona to confirm the sandbox stopped."
+                : "Archiving the stopped sandbox.",
+          });
+          return;
+        }
+        if (managed.lifecycleState === "stopped") {
+          yield* reportProgress({
+            allocation,
+            occurredAt,
+            operation: "sandbox-archive",
+            stage: "archive",
+            status: "running",
+            message: "Sandbox stopped. Archiving its resources.",
+          });
+          const archived = yield* runtimes.archive(managed.runtimeId).pipe(Effect.result);
+          if (Result.isFailure(archived)) {
+            yield* Effect.logWarning("Could not archive the Daytona sandbox during cleanup.", {
+              allocationId: allocation.id,
+              attempt: allocation.attempt,
+              runtimeId: managed.runtimeId,
+              error: archived.failure.message,
+            });
+          }
+          return;
+        }
+        yield* reportProgress({
+          allocation,
+          occurredAt,
+          operation: "sandbox-delete",
+          stage: "delete",
+          status: "running",
+          message:
+            managed.lifecycleState === "deleting"
+              ? "Waiting for Daytona to confirm the resource was released."
+              : "Archive confirmed. Releasing the Daytona resource.",
+        });
+        if (managed.lifecycleState === "deleting") return;
         const deleted = yield* runtimes.delete(managed.runtimeId).pipe(Effect.result);
         if (Result.isFailure(deleted)) {
-          yield* Effect.logWarning("Could not delete the Daytona sandbox.", {
+          yield* Effect.logWarning("Could not release the Daytona sandbox.", {
             allocationId: allocation.id,
             attempt: allocation.attempt,
             runtimeId: managed.runtimeId,
             error: deleted.failure.message,
           });
-          return;
         }
+        return;
       }
+      yield* reportProgress({
+        allocation,
+        occurredAt,
+        operation: "sandbox-delete-confirmed",
+        stage: "delete",
+        status: "succeeded",
+        message: "Daytona confirmed the resource was released.",
+      });
       yield* dispatch(allocation, occurredAt, {
         type: "allocation.cleanup-succeeded",
         commandId: commandId(allocation, "cleanup-succeeded", allocation.cleanupState.startedAt),
@@ -311,6 +442,14 @@ export const make = Effect.fn("CloudAllocationReconciler.make")(function* (input
       return;
     }
     if (Result.isSuccess(managedResult) && usesManagedRuntime(allocation)) {
+      yield* reportProgress({
+        allocation,
+        occurredAt,
+        operation: "sandbox-delete-confirmed",
+        stage: "delete",
+        status: "succeeded",
+        message: "Daytona confirmed the resource was released.",
+      });
       yield* dispatch(allocation, occurredAt, {
         type: "allocation.cleanup-succeeded",
         commandId: commandId(allocation, "cleanup-succeeded", allocation.cleanupState.startedAt),
@@ -687,6 +826,14 @@ export const make = Effect.fn("CloudAllocationReconciler.make")(function* (input
     switch (allocation.allocationState.status) {
       case "queued": {
         if (isSelfHostedWorkerProfile(allocation.profile)) return;
+        yield* reportProgress({
+          allocation,
+          occurredAt,
+          operation: "sandbox-allocation",
+          stage: "allocation",
+          status: "running",
+          message: "Allocating Daytona capacity.",
+        });
         if (hasPassed(now, allocation.deadlines.launchBy)) {
           yield* failLaunch(
             allocation,
@@ -715,6 +862,14 @@ export const make = Effect.fn("CloudAllocationReconciler.make")(function* (input
       case "launching": {
         if (isSelfHostedWorkerProfile(allocation.profile)) return;
         if (allocation.allocationState.managedProvider === "daytona") {
+          yield* reportProgress({
+            allocation,
+            occurredAt,
+            operation: "sandbox-start",
+            stage: "start",
+            status: "running",
+            message: "Starting the assigned Daytona sandbox.",
+          });
           if (
             allocation.allocationState.retry.status === "waiting" &&
             !hasPassed(now, allocation.allocationState.retry.retryAt)
@@ -1098,6 +1253,50 @@ export const make = Effect.fn("CloudAllocationReconciler.make")(function* (input
             return;
           }
           if (inspected.success?.lifecycleState === "started") {
+            if (input?.daytonaWorker !== undefined) {
+              const version = environmentVersionFor(allocation, environments);
+              const prepared = yield* input.daytonaWorker
+                .prepare({
+                  allocation,
+                  ...(version === undefined ? {} : { version }),
+                })
+                .pipe(Effect.result);
+              if (Result.isFailure(prepared)) {
+                yield* failLaunch(allocation, occurredAt, prepared.failure.message);
+                return;
+              }
+              if (prepared.success.status !== "ready") {
+                const stage: RunAllocationProgressStage = (() => {
+                  switch (prepared.success.stage) {
+                    case "checkout":
+                    case "setup":
+                    case "provider":
+                    case "terminal":
+                    case "preview":
+                      return prepared.success.stage;
+                    case "worker":
+                    case "registration":
+                      return "setup";
+                  }
+                })();
+                yield* reportProgress({
+                  allocation,
+                  occurredAt,
+                  operation: `worker-${prepared.success.stage}`,
+                  stage,
+                  status: "running",
+                  message:
+                    stage === "checkout"
+                      ? "Checking out the selected ref and output branch."
+                      : stage === "provider"
+                        ? "Checking the selected provider inside the sandbox."
+                        : stage === "terminal"
+                          ? "Starting the environment terminal."
+                          : "Starting the environment and T3 worker.",
+                });
+                return;
+              }
+            }
             yield* dispatch(allocation, occurredAt, {
               type: "allocation.worker-booted",
               commandId: commandId(allocation, "worker-booted"),
@@ -1190,7 +1389,39 @@ export const make = Effect.fn("CloudAllocationReconciler.make")(function* (input
         }
         return;
       }
-      case "registering":
+      case "registering": {
+        if (input?.daytonaWorker !== undefined && usesManagedRuntime(allocation)) {
+          yield* reportProgress({
+            allocation,
+            occurredAt,
+            operation: "worker-registration",
+            stage: "setup",
+            status: "running",
+            message: "Registering the attempt-bound T3 worker route.",
+          });
+          const registrationCredential = yield* registrations.issueCredential(allocation);
+          const prepared = yield* input.daytonaWorker
+            .registration({ allocation })
+            .pipe(Effect.result);
+          if (Result.isSuccess(prepared) && prepared.success !== undefined) {
+            const registered = yield* registrations
+              .register(registrationCredential, prepared.success)
+              .pipe(Effect.result);
+            if (Result.isSuccess(registered)) return;
+            yield* Effect.logWarning("Could not register the Daytona T3 worker yet.", {
+              allocationId: allocation.id,
+              attempt: allocation.attempt,
+              error: registered.failure.message,
+            });
+          } else if (Result.isFailure(prepared)) {
+            yield* Effect.logWarning("Could not prepare the Daytona T3 worker route yet.", {
+              allocationId: allocation.id,
+              attempt: allocation.attempt,
+              stage: prepared.failure.stage,
+              error: prepared.failure.message,
+            });
+          }
+        }
         if (hasPassed(now, allocation.deadlines.registerBy)) {
           yield* failLaunch(
             allocation,
@@ -1199,6 +1430,7 @@ export const make = Effect.fn("CloudAllocationReconciler.make")(function* (input
           );
         }
         return;
+      }
       case "failed":
         yield* dispatch(allocation, occurredAt, {
           type: "allocation.cancel",
@@ -1206,6 +1438,38 @@ export const make = Effect.fn("CloudAllocationReconciler.make")(function* (input
         });
         return;
       case "ready": {
+        if (
+          input?.daytonaWorker !== undefined &&
+          usesManagedRuntime(allocation) &&
+          allocation.previewState.status === "unavailable"
+        ) {
+          yield* reportProgress({
+            allocation,
+            occurredAt,
+            operation: "preview-publish",
+            stage: "preview",
+            status: "running",
+            message: "Publishing a short-lived signed Daytona preview.",
+          });
+          const version = environmentVersionFor(allocation, environments);
+          const preview = yield* input.daytonaWorker
+            .preview({ allocation, ...(version === undefined ? {} : { version }) })
+            .pipe(Effect.result);
+          if (Result.isFailure(preview)) {
+            yield* Effect.logWarning("Could not publish the Daytona development preview yet.", {
+              allocationId: allocation.id,
+              attempt: allocation.attempt,
+              error: preview.failure.message,
+            });
+          } else if (preview.success !== undefined) {
+            yield* dispatch(allocation, occurredAt, {
+              type: "allocation.preview-published",
+              commandId: commandId(allocation, "preview-published"),
+              url: preview.success,
+            });
+            return;
+          }
+        }
         if (allocation.idleState.status === "waking") {
           const snapshot = allocation.idleState.snapshot;
           const restoredInPlace = allocation.allocationState.instanceId === snapshot.instanceId;
@@ -1286,6 +1550,14 @@ export const make = Effect.fn("CloudAllocationReconciler.make")(function* (input
           return;
         }
         if (allocation.agentOutcome.status === "not-started") {
+          yield* reportProgress({
+            allocation,
+            occurredAt,
+            operation: "provider-turn",
+            stage: "provider",
+            status: "running",
+            message: "Starting the provider turn through the registered T3 worker.",
+          });
           const started = yield* runClient.start(allocation).pipe(Effect.result);
           if (Result.isFailure(started)) {
             yield* Effect.logWarning("Could not start the cloud thread on its worker.", {
@@ -1627,7 +1899,8 @@ export const layer = Layer.effectDiscard(
     const config = yield* ServerConfig.ServerConfig;
     if (config.cloudControllerEnabled !== true) return;
     const runClient = yield* CloudWorkerRunClient.CloudWorkerRunClient;
-    const reconciler = yield* make({ runClient });
+    const daytonaWorker = yield* DaytonaWorkerBootstrap.make();
+    const reconciler = yield* make({ runClient, daytonaWorker });
     yield* reconciler.reconcileOnce().pipe(
       Effect.catchCause((cause) =>
         Effect.logError("Cloud allocation reconciliation failed", { cause }),

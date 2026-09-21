@@ -151,6 +151,38 @@ describe("cloud allocation transitions", () => {
     );
   });
 
+  it("persists operation progress for reconnecting clients", () => {
+    const launched = applyAccepted(undefined, launch);
+    const reported = applyAccepted(
+      launched.allocation,
+      command({
+        type: "allocation.progress-reported",
+        commandId: "command-progress-checkout",
+        allocationId: "allocation-1",
+        attempt: 1,
+        occurredAt: "2026-09-17T03:00:01.000Z",
+        progress: {
+          stage: "checkout",
+          status: "running",
+          message: "Checking out the selected ref and output branch.",
+          startedAt: "2026-09-17T03:00:01.000Z",
+          updatedAt: "2026-09-17T03:00:01.000Z",
+        },
+      }),
+    );
+
+    expect(reported.allocation.progress).toEqual({
+      stage: "checkout",
+      status: "running",
+      message: "Checking out the selected ref and output branch.",
+      startedAt: "2026-09-17T03:00:01.000Z",
+      updatedAt: "2026-09-17T03:00:01.000Z",
+    });
+    expect(projectRunAllocationEvent(launched.allocation, reported.event)).toEqual(
+      reported.allocation,
+    );
+  });
+
   it("records warm-fork placement on launch", () => {
     const started = applyAccepted(undefined, launch);
     const launching = applyAccepted(

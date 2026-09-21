@@ -381,6 +381,39 @@ export function cloudRunDisplayState(allocation: CloudRunStateSource): CloudRunD
   return "provisioning";
 }
 
+const PROGRESS_LABELS = {
+  allocation: "Allocating sandbox",
+  start: "Starting sandbox",
+  checkout: "Checking out repository",
+  setup: "Setting up T3 worker",
+  provider: "Running provider",
+  terminal: "Starting terminal",
+  preview: "Publishing preview",
+  stop: "Stopping sandbox",
+  archive: "Archiving sandbox",
+  delete: "Releasing resource",
+} as const;
+
+export function cloudRunProgressPresentation(
+  allocation: Pick<RunAllocation, "progress">,
+  nowMs: number,
+): { readonly label: string; readonly detail: string; readonly elapsed: string } | null {
+  const progress = allocation.progress;
+  if (progress === undefined) return null;
+  const elapsedSeconds = Math.max(0, Math.floor((nowMs - Date.parse(progress.startedAt)) / 1_000));
+  const minutes = Math.floor(elapsedSeconds / 60);
+  const seconds = elapsedSeconds % 60;
+  const elapsed =
+    minutes === 0 ? `${seconds}s` : `${minutes}m ${String(seconds).padStart(2, "0")}s`;
+  const label =
+    progress.stage === "stop" && progress.status === "requested"
+      ? "Cancellation requested"
+      : progress.stage === "delete" && progress.status === "succeeded"
+        ? "Resource released"
+        : PROGRESS_LABELS[progress.stage];
+  return { label, detail: progress.message, elapsed };
+}
+
 /**
  * What the dialog promises about outliving the client. A local controller
  * outlives the browser but not its machine; a permanent one outlives both, so

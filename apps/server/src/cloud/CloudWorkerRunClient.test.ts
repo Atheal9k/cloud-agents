@@ -210,7 +210,23 @@ it.effect("reads live worker status through a bounded T3 thread cursor", () =>
       );
     });
     const runClient = yield* make().pipe(Effect.provideService(HttpClient.HttpClient, client));
-    expect(yield* runClient.status(allocation)).toBe("succeeded");
-    expect(urls[0]).toContain("/api/orchestration/threads/thread-allocation-1-1?turnLimit=1");
+    if (allocation.allocationState.status !== "ready") {
+      throw new Error("Expected a ready worker allocation fixture.");
+    }
+    const signedAllocation = decodeAllocation({
+      ...allocation,
+      allocationState: {
+        ...allocation.allocationState,
+        route: {
+          httpBaseUrl: "https://worker.example.test/?token=daytona-preview",
+          wsBaseUrl: "wss://worker.example.test/?token=daytona-preview",
+          accessToken: "worker-access-token",
+        },
+      },
+    });
+    expect(yield* runClient.status(signedAllocation)).toBe("succeeded");
+    expect(urls[0]).toBe(
+      "https://worker.example.test/api/orchestration/threads/thread-allocation-1-1?token=daytona-preview&turnLimit=1",
+    );
   }),
 );

@@ -37,6 +37,7 @@ import {
   buildCloudRunLaunchCommand,
   cloudEnvSetupLaunchDraft,
   cloudRunDisplayState,
+  cloudRunProgressPresentation,
   cloudRunProjectOptions,
   controllerSummary,
   createInitialCloudRunDraft,
@@ -152,6 +153,11 @@ function estimatedWorkerCost(
   return worker?.status === "estimated" ? `$${worker.usd.toFixed(2)} est.` : null;
 }
 
+function snapshotObservedAt(snapshot: CloudAllocationSnapshot, allocation: RunAllocation): number {
+  const usage = snapshot.usage.find((candidate) => candidate.allocationId === allocation.id);
+  return Date.parse(usage?.calculatedAt ?? allocation.updatedAt);
+}
+
 function CloudRunRow(props: {
   readonly allocation: RunAllocation;
   readonly snapshot: CloudAllocationSnapshot;
@@ -165,8 +171,14 @@ function CloudRunRow(props: {
   const cleanup = cleanupLabel(props.allocation);
   const minutes = elapsedMinutes(props.snapshot, props.allocation);
   const cost = estimatedWorkerCost(props.snapshot, props.allocation);
+  const progress = cloudRunProgressPresentation(
+    props.allocation,
+    snapshotObservedAt(props.snapshot, props.allocation),
+  );
   const canCancel =
-    props.allocation.cleanupState.status === "not-requested" && displayState !== "complete";
+    (props.allocation.cleanupState.status === "not-requested" ||
+      props.allocation.cleanupState.status === "failed") &&
+    displayState !== "complete";
   const canOpen =
     props.allocation.allocationState.status === "ready" &&
     props.allocation.allocationState.route !== undefined &&
@@ -187,6 +199,17 @@ function CloudRunRow(props: {
             {minutes === null ? null : <span>{minutes} min</span>}
             {cost === null ? null : <span>{cost}</span>}
           </div>
+          {progress === null ? null : (
+            <div className="mt-2 flex items-baseline gap-2 text-xs">
+              <span className="font-medium text-foreground">{progress.label}</span>
+              <span className="font-mono tabular-nums text-muted-foreground">
+                {progress.elapsed}
+              </span>
+            </div>
+          )}
+          {progress === null ? null : (
+            <p className="mt-0.5 text-xs text-muted-foreground">{progress.detail}</p>
+          )}
           {error === null ? null : <p className="mt-2 text-xs text-destructive">{error}</p>}
           {displayState === "hibernated" ? (
             <p className="mt-2 text-xs text-muted-foreground">
@@ -213,7 +236,7 @@ function CloudRunRow(props: {
               onClick={() => props.onCancel(props.allocation)}
             >
               <SquareIcon className="size-3" />
-              Stop
+              {props.allocation.cleanupState.status === "failed" ? "Retry cleanup" : "Stop"}
             </Button>
           ) : null}
         </div>

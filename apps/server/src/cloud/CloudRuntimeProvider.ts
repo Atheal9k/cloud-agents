@@ -60,6 +60,30 @@ export interface CloudRuntimeProviderReadiness {
   readonly detail: string;
 }
 
+export type CloudRuntimeProcess =
+  | { readonly status: "missing"; readonly sessionId: string }
+  | {
+      readonly status: "running";
+      readonly sessionId: string;
+      readonly commandId: string;
+      readonly command: string;
+      readonly output: string;
+    }
+  | {
+      readonly status: "succeeded" | "failed";
+      readonly sessionId: string;
+      readonly commandId: string;
+      readonly command: string;
+      readonly exitCode: number;
+      readonly output: string;
+    };
+
+export interface CloudRuntimeProcessInput {
+  readonly runtimeId: string;
+  readonly sessionId: string;
+  readonly command: string;
+}
+
 export class CloudRuntimeProvider extends Context.Service<
   CloudRuntimeProvider,
   {
@@ -95,6 +119,18 @@ export class CloudRuntimeProvider extends Context.Service<
       { readonly exitCode: number; readonly output: string },
       CloudRuntimeProviderError
     >;
+    /** Starts once, then observes the same provider-owned process after controller restarts. */
+    readonly ensureProcess: (
+      input: CloudRuntimeProcessInput,
+    ) => Effect.Effect<CloudRuntimeProcess, CloudRuntimeProviderError>;
+    readonly inspectProcess: (input: {
+      readonly runtimeId: string;
+      readonly sessionId: string;
+    }) => Effect.Effect<CloudRuntimeProcess, CloudRuntimeProviderError>;
+    readonly deleteProcess: (input: {
+      readonly runtimeId: string;
+      readonly sessionId: string;
+    }) => Effect.Effect<void, CloudRuntimeProviderError>;
     readonly preview: (
       input:
         | {
@@ -117,6 +153,10 @@ export class CloudRuntimeProvider extends Context.Service<
       readonly runtimeId: string;
       readonly name: string;
     }) => Effect.Effect<{ readonly name: string }, CloudRuntimeProviderError>;
+    readonly desktop: (input: {
+      readonly runtimeId: string;
+      readonly action: "start" | "stop" | "status";
+    }) => Effect.Effect<{ readonly status: string }, CloudRuntimeProviderError>;
     readonly resourceClass: string;
   }
 >()("t3/cloud/CloudRuntimeProvider") {}

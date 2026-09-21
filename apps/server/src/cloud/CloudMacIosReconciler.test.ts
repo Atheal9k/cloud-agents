@@ -132,8 +132,12 @@ it.effect("cleans a historical Mac allocation without releasing its Dedicated Ho
       archive: () => Effect.die("unused"),
       delete: () => Effect.die("unused"),
       execute: () => Effect.die("unused"),
+      ensureProcess: () => Effect.die("unused"),
+      inspectProcess: () => Effect.die("unused"),
+      deleteProcess: () => Effect.die("unused"),
       preview: () => Effect.die("unused"),
       snapshot: () => Effect.die("unused"),
+      desktop: () => Effect.die("unused"),
       resourceClass: "default",
     });
     const reconciler = yield* CloudAllocationReconciler.make().pipe(
