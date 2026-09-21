@@ -1168,7 +1168,8 @@ and [Sandbox SDK](https://www.daytona.io/docs/en/typescript-sdk/sandbox/).
 
 Dependencies: CA-09, CA-11, CA-15, CA-60, CA-61, CA-62.
 
-Status: Open.
+Status: Done on 21 September 2026 in
+[PR #69](https://github.com/Atheal9k/cloud-agents/pull/69).
 
 Description: Connect the controller's runtime provider to Daytona and run the
 existing T3 worker inside each assigned sandbox.
