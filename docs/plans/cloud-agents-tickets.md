@@ -1100,7 +1100,7 @@ Reference: [Daytona TypeScript SDK](https://www.daytona.io/docs/en/typescript-sd
 
 Dependencies: CA-60.
 
-Status: Open.
+Status: Done on 2026-09-21 in [PR #67](https://github.com/Atheal9k/cloud-agents/pull/67).
 
 Description: Run a bounded live proof before connecting production admission.
 Measure the real lifecycle and identify which persistence features the selected
