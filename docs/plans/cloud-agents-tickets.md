@@ -1070,7 +1070,7 @@ it. [Daytona sandboxes](https://www.daytona.io/docs/sandboxes),
 
 Dependencies: CA-05, CA-40, CA-44, CA-47.
 
-Status: Open. First priority.
+Status: Done on 21 September 2026 in [PR #66](https://github.com/Atheal9k/cloud-agents/pull/66).
 
 Description: Add Daytona as the managed execution provider and remove
 Firecracker readiness from the forward launch path without deleting historical
