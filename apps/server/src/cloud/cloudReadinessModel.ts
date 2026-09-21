@@ -23,6 +23,7 @@ import {
 } from "@t3tools/contracts";
 
 import type { CloudControllerSecurityConfig, ResolvedAwsWorkerConfig } from "./awsWorkerConfig.ts";
+import type { CloudRuntimeProviderReadiness } from "./CloudRuntimeProvider.ts";
 import { isCloudEnvironmentBuildStale } from "./cloudEnvironmentBuildPolicy.ts";
 import {
   cloudEgressExceptions,
@@ -45,42 +46,24 @@ interface CheckDescriptor {
  */
 export const CLOUD_READINESS_CHECK_DESCRIPTORS = [
   {
-    id: "execution-iam",
-    title: "Execution IAM",
-    description:
-      "The controller's AWS credentials resolve and belong to the configured execution account.",
+    id: "daytona-authentication",
+    title: "Daytona authentication",
+    description: "The controller has a valid Daytona API key.",
   },
   {
-    id: "hypervisor-kvm",
-    title: "KVM and Firecracker support",
-    description: "Every hypervisor in the fleet reports usable KVM for Firecracker guests.",
+    id: "daytona-api",
+    title: "Daytona API",
+    description: "The controller can reach the Daytona API with its server-side credential.",
   },
   {
-    id: "image-access",
-    title: "Image access",
-    description:
-      "Each worker profile resolves to exactly one launch template the controller can read.",
+    id: "daytona-capacity",
+    title: "Admission limits",
+    description: "Managed admission is enabled with a positive controller concurrency limit.",
   },
   {
-    id: "snapshot-access",
-    title: "Snapshot access",
-    description:
-      "Snapshots are readable and every active Build still points at a snapshot a run can boot.",
-  },
-  {
-    id: "artifact-storage",
-    title: "Artifact storage",
-    description: "The retained-results directory on the controller host exists and accepts writes.",
-  },
-  {
-    id: "guest-registration",
-    title: "Guest registration",
-    description: "Workers are enumerable and running guests still carry a registration credential.",
-  },
-  {
-    id: "ssm-diagnostics",
-    title: "SSM diagnostics",
-    description: "The optional recovery-diagnostics document is present for operational debugging.",
+    id: "daytona-sandbox-readiness",
+    title: "Observed sandbox readiness",
+    description: "Daytona reports the lifecycle state of every T3-owned sandbox.",
   },
 ] as const satisfies ReadonlyArray<CheckDescriptor>;
 
@@ -254,6 +237,7 @@ export interface CloudReadinessModelInput {
     readonly controller?: string;
     readonly execution?: string;
   };
+  readonly managedProvider?: CloudRuntimeProviderReadiness;
   readonly now: string;
 }
 
@@ -296,6 +280,22 @@ export function buildCloudReadinessReport(input: CloudReadinessModelInput): Clou
 
   return {
     generatedAt: input.now,
+    ...(input.managedProvider === undefined
+      ? {}
+      : {
+          managedProvider: {
+            provider: input.managedProvider.provider,
+            admission: input.managedProvider.admission,
+            authentication: input.managedProvider.authentication,
+            reachability: input.managedProvider.reachability,
+            region: input.managedProvider.region,
+            resourceClass: input.managedProvider.resourceClass,
+            maxConcurrentWorkers: snapshot.limits.maxConcurrentWorkers,
+            observedSandboxes: input.managedProvider.observedSandboxes,
+            readySandboxes: input.managedProvider.readySandboxes,
+            detail: input.managedProvider.detail,
+          },
+        }),
     accounts: [
       {
         role: "controller",

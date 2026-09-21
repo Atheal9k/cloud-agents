@@ -1,11 +1,9 @@
 /**
  * The readiness surface behind the cloud settings screen.
  *
- * Every probe is separate and every probe is optional to run: an operator with
- * a broken IAM policy still needs to see that KVM is fine, and re-running one
- * check must not re-run the six that cost an AWS call. Outcomes are kept in
- * memory for the life of the controller process, because they describe the
- * world outside this database and a stale one is worse than none.
+ * Every probe is separate, so an operator can retry authentication or API
+ * reachability without rerunning unrelated checks. Outcomes stay in memory
+ * for the controller process because they describe external provider state.
  */
 import {
   CLOUD_READINESS_CHECK_IDS,
@@ -31,6 +29,7 @@ import * as ServerConfig from "../config.ts";
 import * as ProcessRunner from "../processRunner.ts";
 import { resolveAwsWorkerConfig, type ResolvedAwsWorkerConfig } from "./awsWorkerConfig.ts";
 import * as CloudAllocationController from "./CloudAllocationController.ts";
+import * as CloudRuntimeProvider from "./CloudRuntimeProvider.ts";
 import { buildCloudReadinessReport } from "./cloudReadinessModel.ts";
 import * as CloudWorkerProvider from "./CloudWorkerProvider.ts";
 
@@ -78,6 +77,7 @@ export const make = Effect.fn("CloudReadiness.make")(function* (input: {
   readonly enabled: boolean;
 }) {
   const controller = yield* CloudAllocationController.CloudAllocationController;
+  const runtimes = yield* CloudRuntimeProvider.CloudRuntimeProvider;
   const provider = yield* CloudWorkerProvider.CloudWorkerProvider;
   const runner = yield* ProcessRunner.ProcessRunner;
   const serverConfig = yield* ServerConfig.ServerConfig;
@@ -94,7 +94,7 @@ export const make = Effect.fn("CloudReadiness.make")(function* (input: {
     : Effect.fail(
         readinessError(
           "controller-disabled",
-          "This environment does not host the cloud controller, so it has no AWS stack to report on.",
+          "This environment does not host the managed cloud controller.",
         ),
       );
 
@@ -148,6 +148,61 @@ export const make = Effect.fn("CloudReadiness.make")(function* (input: {
   const skipped = (detail: string, now: string): CheckResult => ({
     outcome: { status: "skipped", detail, checkedAt: now },
   });
+
+  const checkDaytonaAuthentication = (
+    readiness: CloudRuntimeProvider.CloudRuntimeProviderReadiness,
+    now: string,
+  ): CheckResult =>
+    readiness.authentication === "configured"
+      ? passed("The controller has a Daytona API key and the API accepted it.", now)
+      : failed(
+          readiness.detail,
+          "Set a valid DAYTONA_API_KEY on the controller host. The key is never sent to clients or sandboxes.",
+          now,
+        );
+
+  const checkDaytonaApi = (
+    readiness: CloudRuntimeProvider.CloudRuntimeProviderReadiness,
+    now: string,
+  ): CheckResult =>
+    readiness.reachability === "reachable"
+      ? passed(`The Daytona API is reachable in target '${readiness.region}'.`, now)
+      : failed(
+          readiness.detail,
+          "Check the controller's network path, DAYTONA_API_URL, and Daytona service status.",
+          now,
+        );
+
+  const checkDaytonaCapacity = (
+    readiness: CloudRuntimeProvider.CloudRuntimeProviderReadiness,
+    snapshot: CloudAllocationSnapshot,
+    now: string,
+  ): CheckResult =>
+    readiness.admission === "enabled" && snapshot.limits.maxConcurrentWorkers > 0
+      ? passed(
+          `Daytona admission uses resource class '${readiness.resourceClass}' with a controller limit of ${snapshot.limits.maxConcurrentWorkers} concurrent worker${snapshot.limits.maxConcurrentWorkers === 1 ? "" : "s"}.`,
+          now,
+        )
+      : failed(
+          "Managed runtime admission is disabled or its concurrency limit is zero.",
+          "Set T3CODE_CLOUD_MANAGED_PROVIDER=daytona and configure a positive T3CODE_CLOUD_MAX_CONCURRENT_WORKERS value.",
+          now,
+        );
+
+  const checkDaytonaSandboxReadiness = (
+    readiness: CloudRuntimeProvider.CloudRuntimeProviderReadiness,
+    now: string,
+  ): CheckResult =>
+    readiness.reachability !== "reachable"
+      ? failed(
+          readiness.detail,
+          "Restore Daytona API access before relying on observed sandbox state.",
+          now,
+        )
+      : passed(
+          `${readiness.readySandboxes} of ${readiness.observedSandboxes} observed T3 sandbox${readiness.observedSandboxes === 1 ? "" : "es"} are started.`,
+          now,
+        );
 
   const checkExecutionIam = Effect.fn("CloudReadiness.checkExecutionIam")(function* (
     config: ResolvedAwsWorkerConfig,
@@ -376,9 +431,18 @@ export const make = Effect.fn("CloudReadiness.make")(function* (input: {
     id: CloudReadinessCheckId,
     config: ResolvedAwsWorkerConfig,
     snapshot: CloudAllocationSnapshot,
+    managedProvider: CloudRuntimeProvider.CloudRuntimeProviderReadiness,
     now: string,
   ): Effect.Effect<CheckResult> => {
     switch (id) {
+      case "daytona-authentication":
+        return Effect.succeed(checkDaytonaAuthentication(managedProvider, now));
+      case "daytona-api":
+        return Effect.succeed(checkDaytonaApi(managedProvider, now));
+      case "daytona-capacity":
+        return Effect.succeed(checkDaytonaCapacity(managedProvider, snapshot, now));
+      case "daytona-sandbox-readiness":
+        return Effect.succeed(checkDaytonaSandboxReadiness(managedProvider, now));
       case "execution-iam":
         return checkExecutionIam(config, now);
       case "hypervisor-kvm":
@@ -399,6 +463,7 @@ export const make = Effect.fn("CloudReadiness.make")(function* (input: {
   const assemble = Effect.fn("CloudReadiness.assemble")(function* (
     config: ResolvedAwsWorkerConfig,
     snapshot: CloudAllocationSnapshot,
+    managedProvider: CloudRuntimeProvider.CloudRuntimeProviderReadiness,
   ) {
     const now = DateTime.formatIso(yield* DateTime.now);
     const recorded = yield* Ref.get(outcomes);
@@ -408,13 +473,15 @@ export const make = Effect.fn("CloudReadiness.make")(function* (input: {
       snapshot,
       outcomes: recorded,
       observedAccountIds: accounts,
+      managedProvider,
       now,
     });
   });
 
   const report = Effect.gen(function* () {
     yield* requireEnabled;
-    return yield* assemble(config, yield* readSnapshot);
+    const snapshot = yield* readSnapshot;
+    return yield* assemble(config, snapshot, yield* runtimes.readiness());
   });
 
   const check: CloudReadiness["Service"]["check"] = (checkInput) =>
@@ -431,18 +498,19 @@ export const make = Effect.fn("CloudReadiness.make")(function* (input: {
         );
       }
       const snapshot = yield* readSnapshot;
+      const managedProvider = yield* runtimes.readiness();
       const now = DateTime.formatIso(yield* DateTime.now);
       // Sequential: several probes shell out to the same CLI, and an operator
       // reading a settings page gains nothing from racing them.
       for (const id of requested) {
-        const result = yield* runCheck(id, config, snapshot, now);
+        const result = yield* runCheck(id, config, snapshot, managedProvider, now);
         yield* Ref.update(outcomes, (current) => new Map(current).set(id, result.outcome));
         const observed = result.observedAccountId;
         if (observed !== undefined) {
           yield* Ref.update(observedAccounts, (current) => ({ ...current, execution: observed }));
         }
       }
-      return yield* assemble(config, snapshot);
+      return yield* assemble(config, snapshot, managedProvider);
     });
 
   return CloudReadiness.of({ report, check });

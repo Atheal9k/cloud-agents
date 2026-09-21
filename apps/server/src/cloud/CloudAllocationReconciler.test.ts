@@ -1,10 +1,13 @@
 import {
+  CloudAgentId,
   CloudEnvironmentBuildId,
   CloudEnvironmentSaveInput,
+  CloudRunId,
   CloudWarmGuestId,
   DEFAULT_CONVERSATION_RETENTION_DAYS,
   RunAllocationAttempt,
   RunAllocationCommand,
+  RunAllocationId,
 } from "@t3tools/contracts";
 import { expect, it } from "@effect/vitest";
 import * as Effect from "effect/Effect";
@@ -14,6 +17,11 @@ import * as TestClock from "effect/testing/TestClock";
 import { SqlitePersistenceMemory } from "../persistence/Layers/Sqlite.ts";
 import * as CloudAllocationController from "./CloudAllocationController.ts";
 import * as CloudAllocationReconciler from "./CloudAllocationReconciler.ts";
+import {
+  CloudRuntimeProvider,
+  CloudRuntimeProviderError,
+  type CloudRuntimeCreateInput,
+} from "./CloudRuntimeProvider.ts";
 import { make as makeBuilds } from "./CloudEnvironmentBuildCatalog.ts";
 import { make as makeWarmPool } from "./CloudWarmPoolCatalog.ts";
 import * as ControllerSettings from "./controllerSettings.ts";
@@ -76,6 +84,7 @@ function launchCommand(allocationId: string, withExecution = false) {
 function fixture(
   input: {
     readonly launchFailure?: "capacity" | "lost-response";
+    readonly readinessFailure?: "disabled" | "missing" | "outage";
     readonly terminateFailure?: boolean;
     readonly hibernateFailure?: boolean;
     readonly restoreFailure?: boolean;
@@ -109,6 +118,7 @@ function fixture(
       hibernateCalls: 0,
       restoreCalls: 0,
     };
+    let assignment: CloudRuntimeCreateInput | undefined;
     const controller = yield* CloudAllocationController.make({ enabled: true });
     const provider = CloudWorkerProvider.of({
       resolveLaunchTemplate: () => Effect.succeed({ id: "lt-worker", version: 7 }),
@@ -224,6 +234,182 @@ function fixture(
         }),
       runtimeKind: "ec2-fallback",
     });
+    const managedRuntime = () => {
+      const instance = state.instance;
+      if (instance === undefined || instance.state === "terminated") {
+        return undefined;
+      }
+      const identity = instance.identity.status === "matched" ? instance.identity : undefined;
+      const current =
+        assignment ??
+        (identity === undefined
+          ? undefined
+          : {
+              allocationId: identity.allocationId,
+              attempt: identity.attempt,
+              agentId: CloudAgentId.make(`agent:${identity.allocationId}`),
+              runId: CloudRunId.make(`run:${identity.allocationId}:1`),
+              environmentVariables: {},
+            });
+      if (current === undefined) return undefined;
+      return {
+        provider: "daytona" as const,
+        runtimeId: instance.instanceId,
+        region: "us",
+        resourceClass: "t3.medium",
+        lifecycleState:
+          instance.state === "running"
+            ? ("started" as const)
+            : instance.state === "stopped"
+              ? ("stopped" as const)
+              : ("creating" as const),
+        allocationId: current.allocationId,
+        attempt: current.attempt,
+        agentId: current.agentId,
+        runId: current.runId,
+        ...(current.environmentId === undefined ? {} : { environmentId: current.environmentId }),
+        ...(current.buildId === undefined ? {} : { buildId: current.buildId }),
+        observedAt: "2026-09-17T03:00:00.000Z",
+      };
+    };
+    const runtimeProvider = CloudRuntimeProvider.of({
+      readiness: () =>
+        Effect.succeed({
+          provider: "daytona",
+          admission: input.readinessFailure === "disabled" ? "disabled" : "enabled",
+          authentication: input.readinessFailure === "missing" ? "missing" : "configured",
+          reachability:
+            input.readinessFailure === "outage"
+              ? "unreachable"
+              : input.readinessFailure === "missing" || input.readinessFailure === "disabled"
+                ? "unchecked"
+                : "reachable",
+          region: "us",
+          resourceClass: "t3.medium",
+          observedSandboxes: state.instance === undefined ? 0 : 1,
+          readySandboxes: state.instance?.state === "running" ? 1 : 0,
+          detail:
+            input.readinessFailure === "missing"
+              ? "DAYTONA_API_KEY is not configured."
+              : input.readinessFailure === "disabled"
+                ? "Daytona admission is disabled."
+                : input.readinessFailure === "outage"
+                  ? "Daytona is unreachable."
+                  : "Daytona is ready.",
+        }),
+      create: (createInput) =>
+        Effect.gen(function* () {
+          const existing = managedRuntime();
+          if (existing !== undefined && existing.allocationId === createInput.allocationId) {
+            return existing;
+          }
+          state.launchCalls += 1;
+          if (input.launchFailure === "capacity") {
+            return yield* new CloudRuntimeProviderError({
+              reason: "capacity",
+              message: "InsufficientInstanceCapacity",
+            });
+          }
+          assignment = createInput;
+          state.instance = {
+            instanceId: "i-worker",
+            state: "running",
+            identity: {
+              status: "matched",
+              allocationId: createInput.allocationId,
+              attempt: createInput.attempt,
+            },
+            registrationCredentialPresent: true,
+          };
+          if (input.launchFailure === "lost-response") {
+            return yield* new CloudRuntimeProviderError({
+              reason: "provider-outage",
+              message: "RequestTimeout",
+            });
+          }
+          return managedRuntime()!;
+        }),
+      inspect: (locator) =>
+        Effect.sync(() => {
+          state.findCalls += 1;
+          const runtime = managedRuntime();
+          if (runtime === undefined) return undefined;
+          return locator.kind === "id"
+            ? locator.runtimeId === runtime.runtimeId
+              ? runtime
+              : undefined
+            : locator.allocationId === runtime.allocationId && locator.attempt === runtime.attempt
+              ? runtime
+              : undefined;
+        }),
+      list: () => Effect.sync(() => (managedRuntime() === undefined ? [] : [managedRuntime()!])),
+      start: ({ assignment: nextAssignment }) =>
+        Effect.gen(function* () {
+          state.restoreCalls += 1;
+          if (input.restoreFailure === true) {
+            if (state.instance !== undefined) {
+              state.instance = { ...state.instance, state: "terminated" };
+            }
+            return yield* new CloudRuntimeProviderError({
+              reason: "not-found",
+              message: "Sandbox not found",
+            });
+          }
+          if (nextAssignment !== undefined) assignment = nextAssignment;
+          if (state.instance !== undefined) {
+            state.instance = {
+              ...state.instance,
+              state: "running",
+              identity:
+                assignment === undefined
+                  ? state.instance.identity
+                  : {
+                      status: "matched",
+                      allocationId: assignment.allocationId,
+                      attempt: assignment.attempt,
+                    },
+            };
+          }
+          return managedRuntime()!;
+        }),
+      stop: () =>
+        Effect.gen(function* () {
+          state.hibernateCalls += 1;
+          if (input.hibernateFailure === true) {
+            return yield* new CloudRuntimeProviderError({
+              reason: "provider-outage",
+              message: "RequestTimeout",
+            });
+          }
+          if (state.instance !== undefined)
+            state.instance = { ...state.instance, state: "stopped" };
+          return managedRuntime()!;
+        }),
+      archive: () =>
+        Effect.sync(() => {
+          if (state.instance !== undefined)
+            state.instance = { ...state.instance, state: "stopped" };
+          return managedRuntime()!;
+        }),
+      delete: () =>
+        Effect.gen(function* () {
+          state.terminateCalls += 1;
+          state.revokeCalls += 1;
+          if (input.terminateFailure === true) {
+            return yield* new CloudRuntimeProviderError({
+              reason: "provider-outage",
+              message: "RequestTimeout",
+            });
+          }
+          if (state.instance !== undefined) {
+            state.instance = { ...state.instance, state: "terminated" };
+          }
+        }),
+      execute: () => Effect.die("unused"),
+      preview: () => Effect.die("unused"),
+      snapshot: ({ name }) => Effect.succeed({ name }),
+      resourceClass: "t3.medium",
+    });
     const runClient = CloudWorkerRunClient.of({
       start: () =>
         Effect.sync(() => {
@@ -277,8 +463,9 @@ function fixture(
         }),
       ),
       Effect.provideService(CloudWorkerProvider, provider),
+      Effect.provideService(CloudRuntimeProvider, runtimeProvider),
     );
-    return { controller, provider, reconciler, state };
+    return { controller, provider, runtimeProvider, reconciler, state };
   });
 }
 
@@ -328,7 +515,7 @@ it.effect("starts and observes a registered cloud thread without a connected cli
 it.effect("recovers a lost launch response without creating another instance", () =>
   Effect.gen(function* () {
     yield* TestClock.setTime(startAt);
-    const { controller, provider, reconciler, state } = yield* fixture({
+    const { controller, provider, runtimeProvider, reconciler, state } = yield* fixture({
       launchFailure: "lost-response",
     });
     yield* controller.dispatch(launchCommand("allocation-1"));
@@ -351,11 +538,32 @@ it.effect("recovers a lost launch response without creating another instance", (
         }),
       ),
       Effect.provideService(CloudWorkerProvider, provider),
+      Effect.provideService(CloudRuntimeProvider, runtimeProvider),
     );
+    yield* TestClock.adjust("5 seconds");
     yield* restartedReconciler.reconcileOnce();
     const allocation = (yield* restartedController.snapshot).allocations[0];
     expect(allocation?.allocationState.status).toBe("booting");
     expect(state.launchCalls).toBe(1);
+  }).pipe(Effect.provide(SqlitePersistenceMemory)),
+);
+
+it.effect("fails launch before creating a sandbox when Daytona credentials are missing", () =>
+  Effect.gen(function* () {
+    yield* TestClock.setTime(startAt);
+    const { controller, reconciler, state } = yield* fixture({ readinessFailure: "missing" });
+    yield* controller.dispatch(launchCommand("allocation-1"));
+
+    yield* reconciler.reconcileOnce();
+
+    const allocation = (yield* controller.snapshot).allocations[0];
+    expect(allocation?.allocationState).toMatchObject({
+      status: "failed",
+      reason: "DAYTONA_API_KEY is not configured.",
+      managedProvider: "daytona",
+    });
+    expect(allocation?.cleanupState.status).toBe("requested");
+    expect(state.launchCalls).toBe(0);
   }).pipe(Effect.provide(SqlitePersistenceMemory)),
 );
 
@@ -461,7 +669,7 @@ it.effect("ends a preview when its lease expires and keeps the settled guest", (
   }).pipe(Effect.provide(SqlitePersistenceMemory)),
 );
 
-it.effect("removes abandoned workers but never a newer attempt", () =>
+it.effect("removes a stale Daytona sandbox but never a newer allocation attempt", () =>
   Effect.gen(function* () {
     yield* TestClock.setTime(startAt);
     const { controller, reconciler, state } = yield* fixture();
@@ -482,9 +690,13 @@ it.effect("removes abandoned workers but never a newer attempt", () =>
     expect(state.revokeCalls).toBe(0);
 
     state.instance = {
-      instanceId: "i-unmatched",
+      instanceId: "i-stale",
       state: "running",
-      identity: { status: "unmatched" },
+      identity: {
+        status: "matched",
+        allocationId: RunAllocationId.make("missing-allocation"),
+        attempt: RunAllocationAttempt.make(1),
+      },
       registrationCredentialPresent: true,
     };
     yield* reconciler.reconcileWorkersOnce();
@@ -510,7 +722,7 @@ it.effect("keeps failed cleanup visible and accepts an explicit retry", () =>
       }),
     );
     yield* reconciler.reconcileOnce();
-    yield* reconciler.reconcileOnce().pipe(Effect.flip);
+    yield* reconciler.reconcileOnce();
     yield* TestClock.setTime(Date.parse("2026-09-17T05:05:00.000Z"));
     yield* reconciler.reconcileOnce();
 
@@ -601,10 +813,7 @@ it.effect("finds and terminates an instance that appears after cancellation", ()
       },
       registrationCredentialPresent: true,
     };
-    yield* reconciler.reconcileOnce();
-    expect((yield* controller.snapshot).allocations[0]?.cleanupState.status).toBe("running");
-    yield* reconciler.reconcileOnce();
-
+    yield* reconciler.reconcileWorkersOnce();
     const allocation = (yield* controller.snapshot).allocations[0];
     expect(state.terminateCalls).toBe(1);
     expect(allocation?.cleanupState.status).toBe("succeeded");
@@ -809,7 +1018,7 @@ it.effect("flushes a settled guest, then releases it when the idle window ends",
 it.effect("records the snapshot after a crash between the stop and its receipt", () =>
   Effect.gen(function* () {
     yield* TestClock.setTime(startAt);
-    const { controller, provider, reconciler, state } = yield* settledFixture();
+    const { controller, provider, runtimeProvider, reconciler, state } = yield* settledFixture();
     yield* reconciler.reconcileOnce();
     yield* TestClock.setTime(Date.parse("2026-09-17T04:00:00.000Z"));
     yield* reconciler.reconcileOnce();
@@ -832,6 +1041,7 @@ it.effect("records the snapshot after a crash between the stop and its receipt",
         }),
       ),
       Effect.provideService(CloudWorkerProvider, provider),
+      Effect.provideService(CloudRuntimeProvider, runtimeProvider),
     );
     yield* restartedReconciler.reconcileOnce();
 
@@ -1081,6 +1291,46 @@ it.effect("packs two queued allocations when the controller has two worker slots
         Effect.succeed({ instanceId: "fc-restored", state: "pending", runtimeKind: "firecracker" }),
       terminate: () => Effect.void,
     });
+    const runtimeProvider = CloudRuntimeProvider.of({
+      readiness: () =>
+        Effect.succeed({
+          provider: "daytona",
+          admission: "enabled",
+          authentication: "configured",
+          reachability: "reachable",
+          region: "us",
+          resourceClass: "t3.medium",
+          observedSandboxes: launched.size,
+          readySandboxes: launched.size,
+          detail: "Daytona is ready.",
+        }),
+      create: (input) =>
+        Effect.sync(() => {
+          launched.add(input.allocationId);
+          return {
+            provider: "daytona",
+            runtimeId: `fc:${input.allocationId}`,
+            region: "us",
+            resourceClass: "t3.medium",
+            lifecycleState: "started",
+            allocationId: input.allocationId,
+            attempt: input.attempt,
+            agentId: input.agentId,
+            runId: input.runId,
+            observedAt: "2026-09-17T03:00:00.000Z",
+          };
+        }),
+      inspect: () => Effect.succeed(undefined),
+      list: () => Effect.succeed([]),
+      start: () => Effect.die("unused"),
+      stop: () => Effect.die("unused"),
+      archive: () => Effect.die("unused"),
+      delete: () => Effect.void,
+      execute: () => Effect.die("unused"),
+      preview: () => Effect.die("unused"),
+      snapshot: ({ name }) => Effect.succeed({ name }),
+      resourceClass: "t3.medium",
+    });
     const reconciler = yield* CloudAllocationReconciler.make().pipe(
       Effect.provideService(CloudAllocationController.CloudAllocationController, controller),
       Effect.provideService(
@@ -1091,6 +1341,7 @@ it.effect("packs two queued allocations when the controller has two worker slots
         }),
       ),
       Effect.provideService(CloudWorkerProvider, provider),
+      Effect.provideService(CloudRuntimeProvider, runtimeProvider),
     );
     yield* controller.dispatch(launchCommand("allocation-a"));
     yield* controller.dispatch(launchCommand("allocation-b"));
@@ -1100,7 +1351,7 @@ it.effect("packs two queued allocations when the controller has two worker slots
   }).pipe(Effect.provide(SqlitePersistenceMemory)),
 );
 
-it.effect("places a warm guest without calling RunInstances", () =>
+it.effect("uses the environment build snapshot without calling the AWS launcher", () =>
   Effect.gen(function* () {
     yield* TestClock.setTime(startAt);
     const { controller, reconciler, state } = yield* fixture();
@@ -1164,19 +1415,15 @@ it.effect("places a warm guest without calling RunInstances", () =>
     yield* reconciler.reconcileOnce();
 
     const booting = (yield* controller.snapshot).allocations[0];
-    expect(state.launchCalls).toBe(0);
+    expect(state.launchCalls).toBe(1);
     expect(booting?.allocationState.status).toBe("booting");
-    expect(booting?.placement).toMatchObject({
-      warmFork: "warm",
-      buildId: "build-1",
-      bootTimeMs: 90,
-    });
     if (booting?.allocationState.status === "booting") {
-      expect(booting.allocationState.instanceId).toBe("guest-warm-1");
+      expect(booting.allocationState.instanceId).toBe("i-worker");
+      expect(booting.allocationState.managedRuntime?.buildId).toBe("build-1");
     }
 
     yield* reconciler.reconcileOnce();
     expect((yield* controller.snapshot).allocations[0]?.allocationState.status).toBe("registering");
-    expect(state.launchCalls).toBe(0);
+    expect(state.launchCalls).toBe(1);
   }).pipe(Effect.provide(SqlitePersistenceMemory)),
 );

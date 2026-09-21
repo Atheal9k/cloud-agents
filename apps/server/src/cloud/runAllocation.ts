@@ -129,7 +129,16 @@ export function decideRunAllocationCommand(
       return allocation.allocationState.status === "queued" &&
         awaitingRuntime(allocation) &&
         allocation.cleanupState.status === "not-requested"
-        ? [{ ...base, type: command.type, launchTemplate: command.launchTemplate }]
+        ? [
+            {
+              ...base,
+              type: command.type,
+              launchTemplate: command.launchTemplate,
+              ...(command.managedProvider === undefined
+                ? {}
+                : { managedProvider: command.managedProvider }),
+            },
+          ]
         : [];
     case "allocation.launch-retry-scheduled":
       return allocation.allocationState.status === "launching" &&
@@ -155,6 +164,9 @@ export function decideRunAllocationCommand(
               ...base,
               type: command.type,
               instanceId: command.instanceId,
+              ...(command.managedRuntime === undefined
+                ? {}
+                : { managedRuntime: command.managedRuntime }),
               ...(command.placement === undefined ? {} : { placement: command.placement }),
             },
           ]
@@ -197,7 +209,16 @@ export function decideRunAllocationCommand(
         allocation.allocationState.status === "registering") &&
         awaitingRuntime(allocation) &&
         allocation.cleanupState.status === "not-requested"
-        ? [{ ...base, type: command.type, reason: command.reason }]
+        ? [
+            {
+              ...base,
+              type: command.type,
+              reason: command.reason,
+              ...(command.managedProvider === undefined
+                ? {}
+                : { managedProvider: command.managedProvider }),
+            },
+          ]
         : [];
     /**
      * The one gate a reopen must not pass. A reopened attempt keeps the
@@ -563,6 +584,9 @@ export function projectRunAllocationEvent(
           status: "launching",
           startedAt: event.occurredAt,
           launchTemplate: event.launchTemplate,
+          ...(event.managedProvider === undefined
+            ? {}
+            : { managedProvider: event.managedProvider }),
           retry: { status: "ready", failures: 0 },
         },
       });
@@ -586,6 +610,7 @@ export function projectRunAllocationEvent(
         allocationState: {
           status: "booting",
           instanceId: event.instanceId,
+          ...(event.managedRuntime === undefined ? {} : { managedRuntime: event.managedRuntime }),
           launchedAt: event.occurredAt,
         },
         ...(event.placement === undefined ? {} : { placement: event.placement }),
@@ -598,6 +623,9 @@ export function projectRunAllocationEvent(
         allocationState: {
           status: "registering",
           instanceId: allocation.allocationState.instanceId,
+          ...(allocation.allocationState.managedRuntime === undefined
+            ? {}
+            : { managedRuntime: allocation.allocationState.managedRuntime }),
           bootedAt: event.occurredAt,
         },
         ...(event.placement === undefined ? {} : { placement: event.placement }),
@@ -610,6 +638,9 @@ export function projectRunAllocationEvent(
         allocationState: {
           status: "ready",
           instanceId: allocation.allocationState.instanceId,
+          ...(allocation.allocationState.managedRuntime === undefined
+            ? {}
+            : { managedRuntime: allocation.allocationState.managedRuntime }),
           references: event.references,
           readyAt: event.occurredAt,
         },
@@ -622,6 +653,9 @@ export function projectRunAllocationEvent(
         allocationState: {
           status: "ready",
           instanceId: allocation.allocationState.instanceId,
+          ...(allocation.allocationState.managedRuntime === undefined
+            ? {}
+            : { managedRuntime: allocation.allocationState.managedRuntime }),
           references: event.references,
           route: event.route,
           readyAt: event.occurredAt,
@@ -634,12 +668,25 @@ export function projectRunAllocationEvent(
         allocation.allocationState.status === "ready"
           ? allocation.allocationState.instanceId
           : undefined;
+      const managedRuntime =
+        allocation.allocationState.status === "booting" ||
+        allocation.allocationState.status === "registering" ||
+        allocation.allocationState.status === "ready"
+          ? allocation.allocationState.managedRuntime
+          : undefined;
+      const managedProvider =
+        event.managedProvider ??
+        (allocation.allocationState.status === "launching"
+          ? allocation.allocationState.managedProvider
+          : managedRuntime?.provider);
       return projectUpdate(allocation, event, {
         allocationState: {
           status: "failed",
           reason: event.reason,
           failedAt: event.occurredAt,
           ...(instanceId === undefined ? {} : { instanceId }),
+          ...(managedRuntime === undefined ? {} : { managedRuntime }),
+          ...(managedProvider === undefined ? {} : { managedProvider }),
         },
       });
     case "allocation.agent-started":

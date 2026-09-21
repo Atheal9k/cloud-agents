@@ -537,32 +537,37 @@ function CloudAgentsSettingsForEnvironment({
       </SettingsSection>
 
       <SettingsSection id="cloud-accounts" title="Accounts and runtime">
-        <Facts
-          rows={report.accounts.map((account) => [
-            account.role === "controller" ? "Controller account" : "Execution account",
-            <>
-              {account.accountId ?? "not configured"} · {account.region} · {account.project}
-              {account.observedAccountId !== undefined &&
-              account.observedAccountId !== account.accountId ? (
-                <span className="text-destructive"> (observed {account.observedAccountId})</span>
-              ) : null}
-            </>,
-          ])}
-        />
-        <Facts
-          rows={[
-            ["Runtime", `${report.runtime.kind} · ${report.runtime.parity}`],
-            [
-              "Slot capacity",
-              `${report.runtime.slots.hosts} host(s) · ${report.runtime.slots.cpuMillis} mCPU · ${report.runtime.slots.memoryMib} MiB · ${report.runtime.slots.diskGib} GiB`,
-            ],
-            [
-              "Fleet",
-              `${report.runtime.desiredHosts} host(s) wanted · ${report.runtime.warmGuestsReady} warm guest(s) ready`,
-            ],
-          ]}
-        />
-        {report.runtime.hypervisors.length > 0 ? (
+        {report.managedProvider === undefined ? (
+          <Facts
+            rows={report.accounts.map((account) => [
+              account.role === "controller" ? "Controller account" : "Execution account",
+              <>
+                {account.accountId ?? "not configured"} · {account.region} · {account.project}
+                {account.observedAccountId !== undefined &&
+                account.observedAccountId !== account.accountId ? (
+                  <span className="text-destructive"> (observed {account.observedAccountId})</span>
+                ) : null}
+              </>,
+            ])}
+          />
+        ) : (
+          <Facts
+            rows={[
+              ["Provider", "Daytona"],
+              ["Admission", report.managedProvider.admission],
+              ["Authentication", report.managedProvider.authentication],
+              ["API", report.managedProvider.reachability],
+              ["Target", report.managedProvider.region],
+              ["Resource class", report.managedProvider.resourceClass],
+              [
+                "Observed sandboxes",
+                `${report.managedProvider.readySandboxes} started · ${report.managedProvider.observedSandboxes} total`,
+              ],
+              ["Concurrent worker limit", String(report.managedProvider.maxConcurrentWorkers)],
+            ]}
+          />
+        )}
+        {report.managedProvider === undefined && report.runtime.hypervisors.length > 0 ? (
           <ul className="flex flex-col gap-1.5 text-sm">
             {report.runtime.hypervisors.map((host) => (
               <li key={host.id} className="flex flex-wrap items-center gap-x-2 gap-y-0.5">
@@ -579,11 +584,11 @@ function CloudAgentsSettingsForEnvironment({
               </li>
             ))}
           </ul>
-        ) : (
+        ) : report.managedProvider === undefined ? (
           <p className="text-sm text-muted-foreground">
-            No hypervisor is configured, so runs use the EC2 migration fallback.
+            This retained report predates Daytona admission.
           </p>
-        )}
+        ) : null}
       </SettingsSection>
 
       <SettingsSection id="cloud-capacity" title="Agents and capacity">
@@ -617,6 +622,9 @@ function CloudAgentsSettingsForEnvironment({
               <li key={runtime.id}>
                 {runtime.id} · {runtime.status} · agent {runtime.agentId} · attempt{" "}
                 {runtime.attempt}
+                {runtime.managedRuntime === undefined
+                  ? ""
+                  : ` · Daytona ${runtime.managedRuntime.runtimeId} · ${runtime.managedRuntime.lifecycleState} · ${runtime.managedRuntime.region} · ${runtime.managedRuntime.resourceClass}`}
                 {runtime.status === "HIBERNATED"
                   ? ` · snapshot from ${runtime.snapshot.instanceId} at ${runtime.snapshot.capturedAt}`
                   : ""}
@@ -1592,8 +1600,7 @@ export function CloudAgentsSettingsPanel() {
       <SettingsPageContainer>
         <SettingsSection title="Cloud agents">
           <p className="text-sm text-muted-foreground">
-            This environment does not host the cloud controller, so it has no AWS stack to
-            administer.
+            This environment does not host the managed cloud controller.
           </p>
         </SettingsSection>
       </SettingsPageContainer>

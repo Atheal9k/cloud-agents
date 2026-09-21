@@ -162,6 +162,7 @@ import { cloudWorkerRegistrationHttpApiLayer } from "./cloud/CloudWorkerRegistra
 import * as CloudEnvironmentRuntimeBoot from "./cloud/CloudEnvironmentRuntimeBoot.ts";
 import * as CloudWorkerReopen from "./cloud/CloudWorkerReopen.ts";
 import * as CloudWorkerProvider from "./cloud/CloudWorkerProvider.ts";
+import * as DaytonaRuntimeProvider from "./cloud/DaytonaRuntimeProvider.ts";
 import * as CloudEnvironmentBuildCatalog from "./cloud/CloudEnvironmentBuildCatalog.ts";
 import * as CloudEnvironmentCatalog from "./cloud/CloudEnvironmentCatalog.ts";
 import * as CloudDiagnosticsCatalog from "./cloud/CloudDiagnosticsCatalog.ts";
@@ -337,6 +338,8 @@ const CloudWorkerProviderLayerLive = CloudWorkerProvider.layer.pipe(
   Layer.provide(ProcessRunner.layer),
 );
 
+const CloudRuntimeProviderLayerLive = DaytonaRuntimeProvider.layer;
+
 const CloudWorkerRegistrationLayerLive = CloudWorkerRegistration.layer.pipe(
   Layer.provide(ServerSecretStore.layer),
   Layer.provideMerge(CloudAllocationControllerLayerLive),
@@ -348,6 +351,7 @@ const CloudWorkerSessionLayerLive = CloudWorkerReopen.layer.pipe(
 
 const CloudAllocationRuntimeLayerLive = CloudAllocationReconciler.layer.pipe(
   Layer.provide(CloudWorkerProviderLayerLive),
+  Layer.provide(CloudRuntimeProviderLayerLive),
   Layer.provideMerge(CloudWorkerRunClient.layer),
   Layer.provideMerge(CloudWorkerRegistrationLayerLive),
 );
@@ -674,6 +678,7 @@ const RuntimeCoreDependenciesWithoutSchedulesLive = Layer.mergeAll(
   cloudAgentsApiRateLimitsLayer,
   CloudReadiness.layer.pipe(
     Layer.provide(CloudWorkerProviderLayerLive),
+    Layer.provide(CloudRuntimeProviderLayerLive),
     Layer.provide(ProcessRunner.layer),
   ),
 ).pipe(

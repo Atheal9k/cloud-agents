@@ -7,6 +7,7 @@ import * as TestClock from "effect/testing/TestClock";
 import { SqlitePersistenceMemory } from "../persistence/Layers/Sqlite.ts";
 import * as CloudAllocationController from "./CloudAllocationController.ts";
 import * as CloudAllocationReconciler from "./CloudAllocationReconciler.ts";
+import { CloudRuntimeProvider } from "./CloudRuntimeProvider.ts";
 import { CloudWorkerRegistration } from "./CloudWorkerRegistration.ts";
 import { CloudWorkerRunClient } from "./CloudWorkerRunClient.ts";
 import {
@@ -18,7 +19,7 @@ import {
 const decodeCommand = Schema.decodeSync(RunAllocationCommand);
 const startAt = Date.parse("2026-09-19T00:00:00.000Z");
 
-it.effect("reuses a Mac Dedicated Host after job cleanup without terminating it", () =>
+it.effect("cleans a historical Mac allocation without releasing its Dedicated Host", () =>
   Effect.gen(function* () {
     yield* TestClock.setTime(startAt);
     const state: {
@@ -110,6 +111,31 @@ it.effect("reuses a Mac Dedicated Host after job cleanup without terminating it"
           state.terminateCalls += 1;
         }),
     });
+    const runtimes = CloudRuntimeProvider.of({
+      readiness: () =>
+        Effect.succeed({
+          provider: "daytona",
+          admission: "disabled",
+          authentication: "missing",
+          reachability: "unchecked",
+          region: "us",
+          resourceClass: "default",
+          observedSandboxes: 0,
+          readySandboxes: 0,
+          detail: "Daytona admission is disabled.",
+        }),
+      create: () => Effect.die("unused"),
+      inspect: () => Effect.succeed(undefined),
+      list: () => Effect.succeed([]),
+      start: () => Effect.die("unused"),
+      stop: () => Effect.die("unused"),
+      archive: () => Effect.die("unused"),
+      delete: () => Effect.die("unused"),
+      execute: () => Effect.die("unused"),
+      preview: () => Effect.die("unused"),
+      snapshot: () => Effect.die("unused"),
+      resourceClass: "default",
+    });
     const reconciler = yield* CloudAllocationReconciler.make().pipe(
       Effect.provideService(CloudAllocationController.CloudAllocationController, controller),
       Effect.provideService(
@@ -120,6 +146,7 @@ it.effect("reuses a Mac Dedicated Host after job cleanup without terminating it"
         }),
       ),
       Effect.provideService(CloudWorkerProvider, provider),
+      Effect.provideService(CloudRuntimeProvider, runtimes),
       Effect.provideService(
         CloudWorkerRunClient,
         CloudWorkerRunClient.of({
@@ -139,7 +166,7 @@ it.effect("reuses a Mac Dedicated Host after job cleanup without terminating it"
       ),
     );
 
-    yield* controller.dispatch(
+    const allocation = yield* controller.dispatch(
       decodeCommand({
         type: "allocation.launch",
         commandId: "launch-ios-1",
@@ -167,8 +194,17 @@ it.effect("reuses a Mac Dedicated Host after job cleanup without terminating it"
         },
       }),
     );
+    yield* controller.dispatch(
+      decodeCommand({
+        type: "allocation.launch-started",
+        commandId: "launch-started-ios-1",
+        allocationId: allocation.id,
+        attempt: allocation.attempt,
+        occurredAt: "2026-09-19T00:00:00.000Z",
+        launchTemplate: { id: "lt-mac", version: 1 },
+      }),
+    );
 
-    yield* reconciler.reconcileOnce();
     yield* reconciler.reconcileOnce();
 
     const launched = (yield* controller.snapshot).allocations[0];
