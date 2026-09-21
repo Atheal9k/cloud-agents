@@ -1,57 +1,73 @@
 # Cloud agents for T3 Code: implementation tickets
 
-Revised 19 September 2026. Planning only. Completed tickets preserve the
-working T3-specific foundation. Open and new tickets now target product parity
-with Cursor Cloud Agents: durable agents and runs, versioned environments and
-Builds, isolated runtimes that hibernate when idle, API and integration
-surfaces, security controls, artifacts, computer use, and self-hosted pools.
-The intentional differences are the existing local-controller option, T3's
-worker-owned live thread state, direct app previews alongside shared desktop
-control, and the Android/iOS development-worker profiles. No application code,
-AWS deployment, app publication, or issue creation is authorized by this
-document.
+Revised 21 September 2026. This revision replaces the unfinished
+AWS/Firecracker runtime plan with Daytona-managed sandboxes. A local or hosted
+T3 server is the controller. Daytona is the execution plane for ordinary
+coding work and for Metro when an Expo development build runs on the owner's
+physical Android phone. CA-60 through CA-68 now cover that migration and its
+release proof.
+
+Completed ticket statuses and PR links remain as implementation history. They
+do not prove the new Daytona path or make the old EC2 and emulator work a
+release dependency. Do not launch new EC2 or KVM resources for CA-60 through
+CA-68. The controller may still run on infrastructure chosen by the owner, but
+the controller host does not run repository workloads.
 
 ## Agreed scope
 
-The existing local T3 environment serves the web application and coordinates cloud workers first. The local machine must stay online while it is the controller, but web and desktop clients may disconnect without stopping a worker. After that workflow passes end to end, the same controller can move to a permanent EC2 host with stable remote access and no dependency on the local machine.
+T3 may run locally or on a hosted server. It owns the user interface, durable
+agent state, policy, and Daytona allocation records. A local controller must
+stay online to accept prompts and reconcile work. A hosted controller removes
+that dependency. Both modes use the same controller contracts.
 
 The completed local-host release proves one workflow with one provider, one
 GitHub repository per run, and one worker at a time:
 
-1. Submit a coding task from the web or desktop.
-2. Let the worker continue after the initiating client disconnects, while the local T3 controller remains online.
+1. Submit a coding task from web, desktop, or the supported phone client.
+2. Let the Daytona sandbox continue after the initiating client disconnects,
+   while the selected T3 controller remains online.
 3. Open the frontend inside the thread and interact with it.
 4. Observe the agent's actual browser, take control, and return control.
 5. Receive a saved diff, test results, and a draft PR.
 6. Recover from a disconnect or restart and stop compute without losing acknowledged results.
 
-That release is the migration base, not the end state. The parity program adds
+That release is migration history, not the final runtime choice. The parity program adds
 parallel agents, multi-repository environments, agent and run APIs,
 integrations, subscriptions, fleet administration, and optional native-mobile
 surfaces without discarding the completed path.
 
-Your own mobile app development is a separate requirement. The next committed delivery adds Android emulators and iOS simulators on appropriate workers, with live display and input inside web/desktop threads. This does not depend on building or publishing the T3 mobile client.
+Android application development uses an installed Expo development build on the
+owner's physical phone. Metro runs inside that agent's Daytona sandbox and
+publishes an Expo tunnel URL that the development build opens. A separate,
+explicitly enrolled phone-side broker provides agent inspection and input. The
+Metro tunnel carries JavaScript bundles and Fast Refresh traffic. It does not
+grant device control.
 
 ## Architecture and efficiency decisions
 
-### Use local T3 first, then add one permanent entry point
+### Keep the controller portable and use Daytona for execution
 
-The controller serves the UI, authentication, a small worker-allocation catalog, infrastructure operations, and retained-result access. CA-04A runs that controller in the existing local T3 environment so the cloud workflow can be built and used before another always-on server exists. CA-04C packages that controller and its web application in Docker for local use. CA-04B later runs the same image on EC2 with stable DNS, TLS, durable storage, and service auto-start. Repository code executes on workers, not with either controller host's permissions.
+The controller serves the UI, authentication, allocation catalog, policy,
+retained results, and Daytona integration. CA-04A and CA-04C established the
+local packaged controller. CA-04B established the hosted mode. The hosting
+provider is not part of the execution contract. Repository code, provider
+processes, builds, and Metro run inside Daytona sandboxes, not with controller
+host permissions.
 
 CA-01 must prove the smallest extension of T3's existing environment model before fixing a new execution protocol. The starting candidate is an ordinary T3 environment on a worker, reached through existing typed RPC and subscriptions. Reuse its provider adapters, project/thread ownership, event store, terminal, checkpoints, and permissions.
 
-There must be one writable authority for each live thread. The active runtime
+There must be one writable authority for each live thread. The active Daytona sandbox
 owns T3's decider, projector, provider adapter, checkpoint reactor, workspace,
 and provider home. The controller owns the durable agent/run catalog,
 environment and Build records, placement, consistent snapshots, artifacts, and
 publication. It does not run a second live decider/projector. Hibernate first
 flushes a consistent restorable snapshot and fences the old writer; wake
-creates exactly one new writer.
+starts or resumes exactly one new writer.
 
 This remains a single-controller deployment. Multi-controller consensus and
 transparent migration of arbitrary in-flight processes are out of scope.
-Firecracker-based packing is the managed-runtime target; Kubernetes is
-optional only for self-hosted pools.
+Daytona owns sandbox placement and isolation. T3 must not depend on Daytona's
+internal scheduler or hypervisor implementation.
 
 ### Match Cursor's object model, not its branding
 
@@ -74,60 +90,80 @@ The [Cursor-parity architecture](./cursor-parity-cloud-architecture.md)
 contains the rationale and migration topology. This file is the authoritative
 implementation backlog.
 
-### SSM is not the agent transport
+### Daytona is the execution API, not the thread protocol
 
-| Mechanism                                             | Responsibility                                                                                    |
-| ----------------------------------------------------- | ------------------------------------------------------------------------------------------------- |
-| AWS API/SDK                                           | Allocate, inspect, and terminate worker infrastructure.                                           |
-| Versioned image and cloud-init/systemd or launchd     | Start the worker's services automatically.                                                        |
-| Existing T3 RPC, subscriptions, and provider adapters | Conversation, tool activity, questions, approvals, terminals, and agent control.                  |
-| Authenticated HTTP/WebSocket preview route            | Serve a thread's dev application, including HMR and app WebSockets.                               |
-| DCV or another validated display transport            | Show and control the actual worker browser/desktop when requested.                                |
-| SSM                                                   | Optional diagnostics, provisioning troubleshooting, and recovery when the normal route is broken. |
+| Mechanism                                             | Responsibility                                                                                         |
+| ----------------------------------------------------- | ------------------------------------------------------------------------------------------------------ |
+| Daytona SDK/API                                       | Create, start, stop, archive, inspect, snapshot, and delete sandboxes.                                 |
+| Daytona image or snapshot                             | Supply repeatable system tools and stable dependencies.                                                |
+| Existing T3 RPC, subscriptions, and provider adapters | Conversation, tool activity, questions, approvals, terminals, and agent control.                       |
+| Signed Daytona preview URL or T3 authenticated proxy  | Expose a sandbox HTTP service to an authorized viewer.                                                 |
+| Expo tunnel                                           | Connect an installed Expo development build to Metro in its Daytona sandbox.                           |
+| Enrolled Android device broker                        | Carry narrowly scoped device observations and control commands over an outbound authenticated channel. |
 
-Normal agent turns must not call SSM Run Command or poll SSM output. A healthy worker should start from its image and register with T3 without an SSM command launching every session. Installing an SSM agent for recovery does not make it a runtime dependency.
+The Daytona sandbox is a remote machine, not a replacement for T3's provider
+protocol. T3 records the sandbox ID and lifecycle receipts, while the worker's
+T3 runtime remains the only live thread writer. Do not give a browser a Daytona
+API key or sandbox-wide preview token. Daytona documents signed preview URLs as
+port-bound, expiring, and revocable, unlike its sandbox-wide preview token.
+[Daytona preview](https://www.daytona.io/docs/en/preview/).
 
 ### Use the cheapest suitable preview path
 
 Ordinary frontend previews use an authenticated web proxy. Clicking and typing in that preview does not require a streamed desktop. The direct preview has the viewer's browser state; the remote desktop shows the agent's actual browser state. Make that distinction visible.
 
-DCV is the preferred candidate for shared-session viewing and takeover, subject to CA-34. Start or attach streaming only when a visible viewer or an agent task needs it. Hidden threads disconnect or suspend viewers; no background frame decoding for every open thread. Closing the viewer must not kill an agent that still uses the browser.
+Daytona VNC and Computer Use are the preferred sandbox desktop path. Daytona
+VNC provides the human view; Computer Use provides mouse, keyboard, screenshot,
+recording, display, and accessibility operations to the agent. Start the
+desktop stack only when a viewer or task needs it. Hidden threads disconnect or
+suspend viewers, and closing the viewer does not stop the agent.
+[Daytona Computer Use](https://www.daytona.io/docs/en/computer-use/),
+[VNC access](https://www.daytona.io/docs/en/vnc-access/).
 
-A minimal base image preinstalls the selected runtime/provider. Environment
-Builds install repository dependencies once and snapshot the disk. Warm copies
-of active Builds and shared package-download caches are added only after cold
-boot, restore, and claim timings are measured.
+A minimal Daytona image or snapshot preinstalls the selected runtime/provider.
+Environment Builds install repository dependencies once and create a tested
+snapshot. Daytona preserves a sandbox filesystem across stop/start and archive,
+while process state depends on the selected pause or snapshot capability.
+[Daytona persistence](https://www.daytona.io/docs/en/persistence/). Warm
+sandboxes are added only after cold start and restore timings are measured.
 
-### Mobile development needs separate worker profiles
+### Physical Android development has two independent connections
 
-| Profile              | Workload                                                        | Allocation policy                                                                              |
-| -------------------- | --------------------------------------------------------------- | ---------------------------------------------------------------------------------------------- |
-| Linux web worker     | Coding, builds, web preview, browser automation                 | Firecracker guest on a packed host; stop/snapshot EC2 fallback during migration.               |
-| Linux Android worker | Android SDK, accelerated emulator, native or React Native build | A verified virtualization-capable EC2 type with sufficient memory/storage; allocate on demand. |
-| macOS iOS worker     | Xcode, iOS Simulator, Apple-platform builds                     | Compatible EC2 Mac Dedicated Host with bounded queued jobs and a host-level allocation policy. |
+| Path            | Purpose                                                                                   | Trust boundary                                                                                     |
+| --------------- | ----------------------------------------------------------------------------------------- | -------------------------------------------------------------------------------------------------- |
+| Daytona sandbox | Repository, Codex or Claude, backend services, Android tooling, and Metro                 | Controller creates and scopes the sandbox through the Daytona API.                                 |
+| Expo tunnel     | JavaScript bundle, assets, development-client deep link, and Fast Refresh                 | The installed development build connects outbound to the tunnel URL.                               |
+| Device broker   | Screenshot, UI inspection, tap, type, swipe, launch, log, and approved install operations | The enrolled phone connects outbound to T3 and accepts only consented, capability-scoped commands. |
 
-The prototype's t3.medium must not be assumed to run an accelerated Android emulator. AWS now supports nested virtualization on selected virtual instance families; CA-37 checks the exact type, region, launch settings, and KVM readiness. [AWS nested virtualization](https://docs.aws.amazon.com/AWSEC2/latest/UserGuide/amazon-ec2-nested-virtualization.html). Android acceleration also depends on the guest image and host architecture. [Android emulator acceleration](https://developer.android.com/studio/run/emulator-acceleration).
+Expo CLI automatically targets a development build when `expo-dev-client` is
+installed, and `--dev-client` can force that target. `--tunnel` publishes Metro
+through Expo's ngrok-backed tunnel. Expo warns that tunnel connections can be
+slower and can fail intermittently, so the UI must show tunnel health and offer
+a restart instead of leaving an indefinite spinner.
+[Expo CLI](https://docs.expo.dev/more/expo-cli/),
+[development-build workflows](https://docs.expo.dev/develop/development-builds/development-workflows/).
 
-iOS Simulator requires macOS and Xcode. Use an appropriate Apple Silicon Mac worker and compatible simulator runtime; it cannot run on the Linux worker. [Apple simulator installation](https://developer.apple.com/documentation/safari-developer-tools/installing-xcode-and-simulators), [Xcode requirements](https://developer.apple.com/xcode/system-requirements).
-
-EC2 Mac bills the Dedicated Host, has a 24-hour minimum allocation, and permits one Mac instance per host. Reuse an allocated Mac for serial, isolated jobs instead of allocating a host per short task. Task cancellation stops the job; it does not imply the host has been released or billing has ended. [EC2 Mac considerations](https://docs.aws.amazon.com/AWSEC2/latest/UserGuide/ec2-mac-instances.html).
-
-Simulator workers do not change the controller's role or require CA-04B. Each profile has explicit capability checks and region selection. If a required Mac or Android type is unavailable in us-west-1, report it and configure a supported region; do not silently provision elsewhere or substitute a web build.
+Android wireless debugging is a possible local privilege bridge, but Android
+requires explicit device pairing and lets the owner forget a paired workstation
+or revoke all debugging authorizations. Never expose its ADB endpoint to the
+Internet. Prefer a phone-side broker that keeps the pairing credential on the
+device and exports a narrow command API over an authenticated outbound channel.
+[Android hardware-device debugging](https://developer.android.com/studio/run/device).
 
 ## Existing work to reuse
 
-The reference repo is [Company/cloud-agents](C:/Users/Victor/Desktop/Crypto-Programming/Company/cloud-agents/README.md). Its source provides an OpenTofu EC2 launch template, a local PowerShell orchestrator, SSM execution, temporary Git credentials, and controlled publication. State files, saved plans, secret values, and the live AWS account were not inspected.
+The reference repo is [Company/cloud-agents](C:/Users/Victor/Desktop/Crypto-Programming/Company/cloud-agents/README.md). Its source provides an older OpenTofu EC2 launch template, local PowerShell orchestration, temporary Git credentials, and controlled publication. Reuse its publication and cleanup lessons, not its compute provider. State files, saved plans, and secret values were not inspected.
 
-| Prototype detail                                                     | Treatment                                                                                                                           |
-| -------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------- |
-| us-west-1, Amazon Linux 2023 x86_64, t3.medium, encrypted 30 GiB gp3 | Initial web-worker references, not universal sizing or OS choices. Benchmark the selected workload.                                 |
-| Dedicated VPC and public subnet; no worker ingress; outbound TCP 443 | Keep the initial worker boundary. Validate authenticated outbound routes for application and display traffic.                       |
-| Existing secret cloud-agent-victor-key                               | Support as a configurable SSH secret reference. Never commit its value or read it during planning.                                  |
-| Temporary secrets under /cloud-agents-mvp/jobs/                      | Scope access to a run; the current shared prefix permissions are insufficient for parallel workers.                                 |
-| Root-owned SSH agent and controlled Git push                         | Reuse the boundary; repository code must not obtain Git publication credentials.                                                    |
-| Local gh login for PR creation                                       | Replace with explicit server-owned GitHub API authentication so the laptop can be offline.                                          |
-| Local finally cleanup and 120-minute worker TTL                      | Replace orchestration with cloud-side ownership and cleanup. Keep a bounded web-worker deadline; use a distinct Mac host lifecycle. |
-| Local OpenTofu state                                                 | Use encrypted, locked remote state. Do not import state or plan files into source control.                                          |
+| Prototype detail                                                     | Treatment                                                                                           |
+| -------------------------------------------------------------------- | --------------------------------------------------------------------------------------------------- |
+| us-west-1, Amazon Linux 2023 x86_64, t3.medium, encrypted 30 GiB gp3 | Historical worker sizing only. Daytona resource classes and regions replace it.                     |
+| Dedicated VPC and public subnet; no worker ingress; outbound TCP 443 | Preserve the outbound-only principle in the Daytona and phone-broker connections.                   |
+| Existing secret cloud-agent-victor-key                               | Support as a configurable SSH secret reference. Never commit its value or read it during planning.  |
+| Temporary secrets under /cloud-agents-mvp/jobs/                      | Scope access to a run; the current shared prefix permissions are insufficient for parallel workers. |
+| Root-owned SSH agent and controlled Git push                         | Reuse the boundary; repository code must not obtain Git publication credentials.                    |
+| Local gh login for PR creation                                       | Replace with explicit server-owned GitHub API authentication so the laptop can be offline.          |
+| Local finally cleanup and 120-minute worker TTL                      | Replace it with Daytona auto-stop/archive/delete policy plus controller reconciliation.             |
+| Local OpenTofu state                                                 | Historical only. Daytona sandbox IDs and lifecycle receipts belong in T3's durable catalog.         |
 
 T3 already has [event-sourced orchestration and checkpoints](C:/Users/Victor/Desktop/Crypto-Programming/Vite/cloud-agents/docs/internals/overview.md), [remote environments](C:/Users/Victor/Desktop/Crypto-Programming/Vite/cloud-agents/docs/internals/remote.md), and [provider adapters](C:/Users/Victor/Desktop/Crypto-Programming/Vite/cloud-agents/docs/internals/providers.md). Cloud placement must respect environment-local project/thread ownership; it is not just another checkout/worktree mode.
 
@@ -142,23 +178,27 @@ rewritten around the parity model. CA-40 onward adds the missing Cursor
 surfaces. Order below is intentional; ticket numbering does not indicate
 priority.
 
-| Delivery                           | Tickets                                                                                                                                                    | Required result                                                                                                       |
-| ---------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------- |
-| Architecture proof                 | CA-01                                                                                                                                                      | Select one provider and prove T3 reuse, ownership, offline execution, and the basic worker route.                     |
-| Local-hosted web/desktop release   | CA-02, CA-03, CA-04A, CA-04C, CA-06, CA-07, CA-08, CA-09, CA-10, CA-11, CA-14, CA-15, CA-16, CA-17, CA-18, CA-19, CA-23, CA-24, CA-25, CA-27, CA-34, CA-35 | Run the complete single-worker workflow from the local Docker controller. The controller machine must remain online.  |
-| Agent/runtime foundation           | CA-40, CA-41, CA-42, CA-59, CA-43, CA-44, CA-45, CA-46                                                                                                     | Split agents/runs from runtimes, create environments with Cursor's setup skills, then pack and hibernate guests.      |
-| Permanent controller deployment    | CA-04B                                                                                                                                                     | Move the controller and new catalogs to an always-on host with safe single-writer cutover.                            |
-| Review and operations improvements | CA-05, CA-12, CA-13, CA-21, CA-33, CA-36                                                                                                                   | Administer environments, Builds, retained agents, review, and preview restore.                                        |
-| Product/API parity                 | CA-47, CA-48, CA-49, CA-50, CA-51, CA-52, CA-53, CA-54, CA-55, CA-56, CA-57, CA-58                                                                         | Match Cursor's API, integrations, collaboration, security, automation, diagnostics, and self-hosted runtime choices.  |
-| Mobile development workers         | CA-37, CA-38, CA-39                                                                                                                                        | Build, boot, view, control, and test your Android/iOS app from web/desktop; no T3 native-app publication.             |
-| Existing product expansion         | CA-26, CA-28, CA-29, CA-30, CA-32                                                                                                                          | Align handoff, triggers, durable assistants, and private dependencies with the new agent model.                       |
-| Deferred work                      | ~~CA-31~~, CA-20, CA-22                                                                                                                                    | Qualify further providers, and add the native T3 iOS/Android client and push integration, only when you pick them up. |
+| Delivery                           | Tickets                                                                                                                                                    | Required result                                                                                                                       |
+| ---------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------- |
+| Architecture proof                 | CA-01                                                                                                                                                      | Select one provider and prove T3 reuse, ownership, offline execution, and the basic worker route.                                     |
+| Local-hosted web/desktop release   | CA-02, CA-03, CA-04A, CA-04C, CA-06, CA-07, CA-08, CA-09, CA-10, CA-11, CA-14, CA-15, CA-16, CA-17, CA-18, CA-19, CA-23, CA-24, CA-25, CA-27, CA-34, CA-35 | Run the complete single-worker workflow from the local Docker controller. The controller machine must remain online.                  |
+| Agent/runtime foundation           | CA-40, CA-41, CA-42, CA-59, CA-43, CA-44, CA-45, CA-46                                                                                                     | Split agents/runs from runtimes, create environments with Cursor's setup skills, then pack and hibernate guests.                      |
+| Daytona execution migration        | CA-60, CA-61, CA-62, CA-63, CA-64, CA-65                                                                                                                   | Replace AWS/Firecracker admission with managed Daytona sandboxes and prove lifecycle, auth, recovery, and cost controls.              |
+| Permanent controller deployment    | CA-04B                                                                                                                                                     | Move the controller and new catalogs to an always-on host with safe single-writer cutover.                                            |
+| Review and operations improvements | CA-05, CA-12, CA-13, CA-21, CA-33, CA-36                                                                                                                   | Administer environments, Builds, retained agents, review, and preview restore.                                                        |
+| Product/API parity                 | CA-47, CA-48, CA-49, CA-50, CA-51, CA-52, CA-53, CA-54, CA-55, CA-56, CA-57, CA-58                                                                         | Match Cursor's API, integrations, collaboration, security, automation, diagnostics, and self-hosted runtime choices.                  |
+| Physical Android development       | CA-20, CA-66, CA-67                                                                                                                                        | Run Metro in Daytona, connect the installed Expo development build, and let an explicitly enrolled phone accept scoped agent control. |
+| Daytona release gate               | CA-68                                                                                                                                                      | Prove backend work and physical-device Android work from local and hosted controller modes.                                           |
+| Historical simulator work          | ~~CA-37~~, ~~CA-38~~, ~~CA-39~~                                                                                                                            | Preserve prior emulator/simulator work without making KVM or EC2 Mac part of the Daytona release.                                     |
+| Existing product expansion         | CA-26, CA-28, CA-29, CA-30, CA-32                                                                                                                          | Align handoff, triggers, durable assistants, and private dependencies with the new agent model.                                       |
+| Deferred work                      | ~~CA-31~~, CA-22                                                                                                                                           | Add native push integration only when it is needed.                                                                                   |
 
 ### Dependency-safe implementation waves
 
-The delivery table above groups product outcomes. The table below is the
-implementation order for the unfinished tickets. Every dependency for a wave
-is completed in an earlier wave. Tickets in the same row may run in parallel
+The delivery table above groups product outcomes. The table below preserves
+the original implementation waves. Daytona completion takes priority now;
+use the sequence following this table before returning to CA-33 or deferred
+push work. Tickets in the same row may run in parallel
 because their primary ownership areas do not overlap. Later waves may be
 logically ready sooner, but they stay separate to avoid competing changes to
 the agent model, public contracts, server composition, preview state, or the
@@ -187,8 +227,22 @@ stay last until you choose to pick them up.
 | 17   | ~~CA-52~~                                  | Subscription wake and CI autofix.                                                          |
 | 18   | ~~CA-53~~                                  | Generalized automations.                                                                   |
 | 19   | ~~CA-54~~                                  | Outbound webhooks and typed SDKs.                                                          |
-| 20   | ~~CA-31~~, CA-20                           | Deferred: provider adapters; native T3 mobile controls.                                    |
+| 20   | ~~CA-31~~                                  | Historical provider-adapter qualification.                                                 |
 | 21   | CA-22                                      | Deferred: native push and mobile activity integration.                                     |
+
+Current Daytona completion order:
+
+| Step | Tickets      | Required result                                                                               |
+| ---- | ------------ | --------------------------------------------------------------------------------------------- |
+| D1   | CA-60        | Replace AWS/Firecracker selection with an explicit Daytona provider boundary.                 |
+| D2   | CA-61        | Prove Daytona create, execute, preview, stop, archive, resume, and delete behavior.           |
+| D3   | CA-62        | Create repeatable Daytona images/snapshots and connect environment Builds.                    |
+| D4   | CA-63        | Run T3 workers inside Daytona with progress, previews, and reliable cancellation.             |
+| D5   | CA-64        | Provide Codex/Claude auth and repository-scoped GitHub SSH without snapshotting private keys. |
+| D6   | CA-65        | Reconcile failures, idle lifecycle, retention, and measured Daytona cost.                     |
+| D7   | CA-66, CA-20 | Connect an Expo development build to Daytona Metro and add Android device-host enrollment.    |
+| D8   | CA-67        | Give the agent secure, consented control of the enrolled physical Android phone.              |
+| D9   | CA-68        | Verify the complete backend and physical-device Android workflows from both controller modes. |
 
 Within a parallel wave, each ticket owns only the area named in the third
 column. Before the wave starts, assign any shared schema, migration,
@@ -204,7 +258,10 @@ CA-28 provides the base scheduler that CA-53 generalizes. CA-29 provides the
 GitHub trigger behavior that CA-52 uses for subscription wake and CI autofix.
 These directions avoid the previous circular dependencies.
 
-Mobile development is committed follow-on scope, not dependent on the optional product expansion or the deferred work. Run platform feasibility checks early before spending time on simulator UI. Android and iOS can be implemented independently; CA-39 passes separately for each and both must pass before claiming support for both platforms.
+Physical Android development is committed scope. It does not require KVM or a
+cloud emulator. iOS Simulator work and the earlier remote emulator path remain
+separate, optional capabilities. Do not claim that CA-66 provides device control
+or that CA-67 provides Metro connectivity. Each path has its own status.
 
 Completed tickets are not reopened merely because their original acceptance
 criteria described the old one-EC2-per-thread limit. New parity tickets
@@ -998,6 +1055,330 @@ Acceptance criteria:
 - Cleanup cannot remove hypervisors, active guests, current Builds, PRs, or
   another agent's data.
 
+## Daytona execution and physical Android development
+
+The earlier Firecracker audit remains useful history, but Firecracker is no
+longer the intended managed runtime. These tickets replace the nine open
+Firecracker tickets in place. They use Daytona's current sandbox lifecycle:
+started, stopped, paused where supported, archived, and deleted. Stopping keeps
+the filesystem but clears running process state. Archive moves a stopped
+filesystem to object storage. Starting a stopped or archived sandbox restores
+it. [Daytona sandboxes](https://www.daytona.io/docs/sandboxes),
+[persistence](https://www.daytona.io/docs/en/persistence/).
+
+### CA-60: Replace AWS and Firecracker admission with a Daytona provider
+
+Dependencies: CA-05, CA-40, CA-44, CA-47.
+
+Status: Open. First priority.
+
+Description: Add Daytona as the managed execution provider and remove
+Firecracker readiness from the forward launch path without deleting historical
+AWS records or test fixtures.
+
+Acceptance criteria:
+
+- Define a provider-neutral runtime interface for create, inspect, start, stop,
+  archive, delete, execute, preview, and snapshot operations. The Daytona
+  adapter implements it through the official SDK/API.
+- Persist Daytona sandbox ID, region, resource class, lifecycle state,
+  environment/Build ID, agent ID, run ID, and allocation attempt. Never infer
+  readiness from a generated ID or requested state.
+- Settings and launch entry points report Daytona authentication, API
+  reachability, configured limits, and observed sandbox readiness. Missing or
+  invalid credentials fail before a run enters an endless working state.
+- Disable AWS/Firecracker admission by default. Existing retained AWS runs stay
+  readable and cleanable, but new runs never fall back to EC2 silently.
+- The controller keeps the Daytona API key server-side. Web, desktop, mobile,
+  worker code, repository commands, and preview URLs never receive it.
+- Focused tests cover disabled, unauthenticated, quota/capacity failure, lost
+  create response, stale sandbox, and provider outage cases.
+
+Reference: [Daytona TypeScript SDK](https://www.daytona.io/docs/en/typescript-sdk/).
+
+### CA-61: Prove the Daytona sandbox lifecycle and security boundary
+
+Dependencies: CA-60.
+
+Status: Open.
+
+Description: Run a bounded live proof before connecting production admission.
+Measure the real lifecycle and identify which persistence features the selected
+Daytona sandbox class supports.
+
+Acceptance criteria:
+
+- Create one private sandbox in the selected Daytona region and resource class.
+  Record observed create/start latency, CPU, memory, disk, and current provider
+  pricing or quota without hard-coding those values into product logic.
+- Execute a command, create a long-running process session, stream its logs, and
+  connect through a short-lived Daytona SSH access token. Revoke the token and
+  prove reuse fails. Daytona SSH access is access into the sandbox, not GitHub
+  repository authentication.
+- Serve a test HTTP/WebSocket application through a port-bound signed preview
+  URL. Expiry and explicit revocation must remove access. Do not expose the
+  sandbox-wide preview token because it also authenticates sensitive toolbox
+  ports.
+- Stop and start the sandbox and prove that files remain while processes do not.
+  Archive and restore it, then delete it. Record the actual state transitions
+  and bounded failure results.
+- Run an isolation probe that cannot read the controller's Daytona key, another
+  sandbox, or controller-local state. Repository code has no Daytona management
+  authority.
+- Delete every proof resource after collecting redacted evidence, including on
+  failure. Report any retained or billable resource rather than hiding it.
+
+References: [Daytona lifecycle](https://www.daytona.io/docs/sandboxes),
+[process sessions](https://www.daytona.io/docs/process-code-execution),
+[SSH access](https://www.daytona.io/docs/en/ssh-access/), and
+[preview URLs](https://www.daytona.io/docs/en/preview/).
+
+### CA-62: Back environment Builds with Daytona images and snapshots
+
+Dependencies: CA-61.
+
+Status: Open.
+
+Description: Map T3's versioned environment and explicit Save workflow onto
+tested Daytona image, snapshot, and sandbox operations.
+
+Acceptance criteria:
+
+- Create a minimal versioned Daytona image or snapshot with the selected T3
+  worker runtime, Node, Git, provider CLIs, and repository-independent tools.
+  Pin versions and exclude secrets, source-control credentials, provider homes,
+  and mutable repository state.
+- Build preparation creates an isolated sandbox, checks out the requested ref,
+  runs the terminating idempotent `install` phase, and stores logs and immutable
+  provenance. Per-start services and named terminals do not run during install.
+- Verify a draft Build in a fresh sandbox. Only explicit Save activates it;
+  failed or cancelled verification leaves the prior active Build unchanged.
+- State exactly what each artifact retains. Cold snapshots retain filesystem
+  state, while pause or hot-snapshot behavior is available only when the chosen
+  sandbox class supports it. Never claim arbitrary process migration.
+- Keep reusable Build content separate from each durable agent's workspace,
+  T3 event state, provider session, runtime secrets, and phone pairing state.
+- Retention, archive, delete, corrupt/missing snapshot, and concurrent Save
+  tests use the real adapter plus focused fakes for deterministic fault cases.
+
+References: [Daytona persistence](https://www.daytona.io/docs/en/persistence/)
+and [Sandbox SDK](https://www.daytona.io/docs/en/typescript-sdk/sandbox/).
+
+### CA-63: Run T3 agents inside Daytona with visible progress and cancellation
+
+Dependencies: CA-09, CA-11, CA-15, CA-60, CA-61, CA-62.
+
+Status: Open.
+
+Description: Connect the controller's runtime provider to Daytona and run the
+existing T3 worker inside each assigned sandbox.
+
+Acceptance criteria:
+
+- Replace simulated launch and stop effects with idempotent Daytona operations.
+  Persist command IDs and receipts so a lost response cannot create a second
+  sandbox or attach the wrong agent to a reused sandbox.
+- Bootstrap the worker with attempt-bound T3 registration and selected
+  environment metadata. Successful T3 registration and provider readiness,
+  not sandbox creation alone, transition the run to ready.
+- Stream allocation, start, checkout, setup, provider, terminal, preview, stop,
+  archive, and delete progress with elapsed time and actionable errors. The UI
+  always offers cancel while the operation is cancellable.
+- Stop works during creation, start, setup, execution, reconnect, and archive.
+  The UI distinguishes requested cancellation, provider interruption, sandbox
+  stop, and confirmed resource release.
+- Use Daytona process sessions for long-running worker and development
+  processes. Reconcile observed status rather than assuming a controller-side
+  command is still alive.
+- Ordinary previews use a short-lived signed Daytona URL or protected T3 proxy.
+  Desktop automation uses Daytona VNC and Computer Use on demand.
+- A live proof covers a provider turn, terminal, preview, reconnect,
+  cancellation, controller restart, and sandbox cleanup.
+
+References: [Daytona process execution](https://www.daytona.io/docs/process-code-execution),
+[preview](https://www.daytona.io/docs/en/preview/), and
+[Computer Use](https://www.daytona.io/docs/en/computer-use/).
+
+### CA-64: Provide provider login and repository-scoped GitHub SSH
+
+Dependencies: CA-06, CA-49, CA-61, CA-63.
+
+Status: Open.
+
+Description: Let Codex and Claude authenticate in a Daytona sandbox and let Git
+use the owner's required SSH remote without confusing Daytona's inbound SSH
+feature with source-control authentication.
+
+Acceptance criteria:
+
+- Codex and Claude each have a documented remote-safe login flow. T3 stores
+  protected credentials outside reusable snapshots and injects only the
+  minimum per-sandbox state. Logout, expiry, and reauthentication are explicit.
+- Provision a per-user or per-sandbox Git SSH identity, or forward a short-lived
+  signing/auth agent. Scope it to approved repositories and operations. Never
+  bake private keys, sockets, or decrypted credentials into Daytona snapshots.
+- Pin and verify GitHub's SSH host keys. Support `git@github.com:` and
+  `ssh://git@github.com/` clone, fetch, pull, and push without rewriting to HTTPS.
+- Revoke Git credentials and remove transient agent material when the sandbox
+  is released. Restored or reassigned sandboxes cannot reuse another identity.
+- Tests prove private clone/fetch/push, wrong repository rejection, host-key
+  mismatch, expiry during a run, sandbox restore, and cleanup.
+
+Daytona's SSH token grants inbound access to a sandbox. Its documented private
+Git helper uses HTTPS username and PAT fields. Neither feature provisions T3's
+GitHub SSH identity. [Daytona SSH access](https://www.daytona.io/docs/en/ssh-access/),
+[Git operations](https://www.daytona.io/docs/en/git-operations/).
+
+### CA-65: Reconcile Daytona lifecycle, idle cost, and failures
+
+Dependencies: CA-43, CA-45, CA-46, CA-55, CA-63, CA-64.
+
+Status: Open.
+
+Description: Make durable agents survive controller and Daytona failures while
+inactive sandboxes stop consuming running compute.
+
+Acceptance criteria:
+
+- Reconcile controller intent with Daytona's sandbox list after controller
+  restart, timeout, duplicate command, and provider outage. Fence stale writers
+  and never start a cancelled run during recovery.
+- Apply explicit auto-stop or auto-pause, auto-archive, auto-delete, and maximum
+  TTL policy per environment. Activity, agent idle, viewer idle, and retention
+  timers are different clocks and are displayed accurately.
+- Before stop or archive, checkpoint T3 state and provider continuation data.
+  After start, recreate per-boot processes, preview links, and expiring
+  credentials. Metro, provider CLIs, and terminals do not survive stop.
+- Show sandbox running time, storage/retention, transfer, model use, and Daytona
+  quota separately. Measure cold create, stop/start, archive/start, and Build
+  restore latency before enabling warm sandboxes.
+- Cancellation and cleanup can affect only the sandbox owned by that allocation
+  attempt. Lost resources appear in an operator queue with a retry.
+- Fault tests interrupt create, registration, checkpoint, stop, archive,
+  restore, preview renewal, and delete. A live proof confirms retained work,
+  one writer, and no orphaned paid sandbox.
+
+Reference: [Daytona sandbox lifecycle](https://www.daytona.io/docs/sandboxes).
+
+### CA-66: Connect an Expo development build to Metro in Daytona
+
+Dependencies: CA-10, CA-14, CA-62, CA-63, CA-65.
+
+Status: Open.
+
+Description: Run Expo CLI and Metro in the agent's Daytona sandbox, then let an
+installed Expo development build on the owner's physical phone connect through
+an Expo tunnel.
+
+Acceptance criteria:
+
+- Detect `expo-dev-client` and repository package-manager conventions. Start a
+  named Daytona process session with `npx expo start --dev-client --tunnel` or
+  the repository's equivalent. Never substitute Expo Go.
+- Read the development-client deep link through Expo CLI's supported endpoint
+  or structured output, bind it to the run, and present a phone-safe Open button
+  plus QR fallback. Do not depend only on terminal decoration parsing.
+- Show Metro, tunnel, and development-build compatibility as separate states.
+  Display logs, startup time, last client connection, reconnect, restart, and
+  stop controls. A failed ngrok tunnel reaches an error with retry.
+- JavaScript, TypeScript, and asset changes demonstrate Fast Refresh. Native
+  dependency, app config, Gradle, Kotlin, or Java changes report that a new
+  development build is required.
+- Stopping or archiving the sandbox terminates Metro and invalidates the prior
+  link. Wake creates a new process and link, then reconnects the phone.
+- The Expo tunnel carries Metro traffic only. It does not expose ADB, capture
+  the screen, return UI hierarchy, or permit taps and typing.
+- Tests cover stale links, tunnel timeout, port conflict, phone reconnect,
+  incompatible development build, Metro restart, sandbox wake, and cancellation.
+
+References: [Expo CLI](https://docs.expo.dev/more/expo-cli/),
+[development-build workflows](https://docs.expo.dev/develop/development-builds/development-workflows/),
+and [using development builds](https://docs.expo.dev/develop/development-builds/use-development-builds/).
+
+### CA-67: Qualify and implement physical Android device control
+
+Dependencies: CA-20, CA-35, CA-47, CA-49, CA-66.
+
+Status: Open.
+
+Description: Select and implement a phone-side control path that is honest about
+Android permissions. A normal companion app does not gain arbitrary ADB, silent
+install, logcat, or system-wide automation privileges merely by being enrolled.
+
+Acceptance criteria:
+
+- Prototype and compare three explicit modes before claiming support. Prefer an
+  app-scoped test bridge inside the development build when it can expose the
+  needed UI tree, screenshots, app actions, and logs. A companion using
+  AccessibilityService and MediaProjection needs visible user grants and a
+  foreground-service lifecycle. Wireless Debugging/ADB needs one-time Android
+  pairing and a private route, and grants much broader shell authority.
+- Record which operations each mode can actually perform. Do not promise silent
+  APK install, full logcat, secure-window capture, cross-app control, or file
+  access unless the selected mode proves the required Android privilege.
+- Review Google Play policy and distribution constraints for accessibility,
+  screen capture, VPN, and debugging use. If the required broker cannot ship in
+  the normal T3 app, use a separately signed developer companion and label it.
+- The phone or companion opens an outbound authenticated channel to T3. Raw ADB
+  is never public and is never forwarded into Daytona. Any VPN-mediated ADB
+  route is private, device-bound, revocable, and unavailable to repository code.
+- Bind every command to user, device, app/package, agent, run, expiry, nonce,
+  and capability. Require visible session consent and an ongoing Stop control.
+  CA-35's exclusive input lease arbitrates human and agent input.
+- Support stop, per-controller revocation, forget-all, individual capability
+  disablement, and Android's debugging-authorization revocation. Reboot, Wi-Fi
+  change, random wireless-debugging port, phone sleep, foreground-service stop,
+  controller outage, and permission removal enter explicit disconnected states.
+- Reject queued input after lock, app switch, lease expiry, broker restart,
+  sandbox replacement, or revocation. Never capture or type into secure fields.
+- Tests cover pairing replay, wrong controller, permission denial, network loss,
+  duplicate input, revocation, reboot, app switch, and reconnection. An
+  authorized real-phone proof must demonstrate the selected mode's supported
+  screenshot, inspection, tap, type, reload, and log operations before the UI
+  advertises agent control.
+
+Android 11 and later supports wireless debugging after explicit pairing and
+lets the owner forget a workstation or revoke debugging authorizations.
+[Android hardware-device debugging](https://developer.android.com/studio/run/device).
+
+### CA-68: Prove the complete Daytona and physical-device workflow
+
+Dependencies: CA-60, CA-61, CA-62, CA-63, CA-64, CA-65, CA-66, CA-67.
+
+Status: Open. Release gate for Daytona cloud agents and physical Android control.
+
+Description: Verify the stack from the user's point of view with the same T3
+contracts in local-controller and hosted-controller modes.
+
+Acceptance criteria:
+
+- Complete repository selection, Continue, setup with the saved model, visible
+  progress, required-secret pause/resume, draft Build, fresh Daytona sandbox
+  verification, review, explicit Save, and follow-up from the phone.
+- Clone and push a private GitHub repository through its SSH remote. Run Codex
+  and Claude login and reauthentication without exposing their session material
+  to a reusable snapshot or another sandbox.
+- For backend work, run tests, inspect logs, stop, resume, reconnect, cancel,
+  retain results, and publish a draft PR. Controller restart and Daytona outage
+  produce bounded recovery with no ghost Working state.
+- For Android work, start Metro in Daytona, open the development-client link on
+  the physical phone, make a visible JavaScript change, observe Fast Refresh,
+  then use only the device-control capabilities proven in CA-67. The owner can
+  take control back and revoke the session immediately.
+- Repeat stop and wake after at least six hours of inactivity. Restore the
+  workspace, start new processes and credentials, reconnect the development
+  build, and state which on-device app state did not persist.
+- Verify cancellation during Daytona creation, setup, provider execution,
+  Metro/tunnel startup, device connection, and active control. Reload shows a
+  terminal or idle state and a usable composer. Long review pages scroll on
+  phone, web, and desktop.
+- Retain redacted receipts, sandbox IDs, timings, logs, tests, and usage evidence.
+  Delete temporary resources and revoke device, preview, SSH, Git, provider,
+  and tunnel access after the proof.
+- Do not label the stack ready from mocks, generated IDs, configured flags, or
+  Metro connectivity alone. Both ordinary and physical Android workflows must
+  pass against live services.
+
 ## Cursor-parity product, API, and security
 
 ### CA-47: Expose the Cloud Agents API and event stream
@@ -1290,9 +1671,13 @@ Acceptance criteria:
 - Admins can allow or require self-hosting. Pool and machine permission,
   billing, network, artifact, and secret differences are visible before launch.
 
-## Mobile development workers
+## Historical emulator and simulator work
 
-These tickets concern the mobile apps you develop. They do not require modifying or publishing the native T3 control app.
+CA-37 through CA-39 record the earlier AWS worker implementation and its merged
+PRs. They remain useful as optional remote-emulator work, but they are not the
+Android path for the Daytona release. CA-66 and CA-67 replace that everyday
+path with a physical Expo development build, Metro in Daytona, and separately
+authorized device control.
 
 ### CA-37: Build and launch Android apps in accelerated emulator workers
 
@@ -1466,12 +1851,11 @@ Acceptance criteria:
   profiles expose cost, trust, and routing changes.
 - Report the failing dependency/destination and support disabling the profile without stranding runs.
 
-## Deferred work
+## Remaining provider and mobile work
 
-These are lowest-priority optional tickets. They are not prerequisites for any
-web, desktop, Android-worker, or iOS-worker ticket. Cloud execution admits
-Codex and Claude; remaining providers stay classified until a later enablement.
-No native T3 app publication is included in the current implementation scope.
+Cloud execution admits Codex and Claude; remaining providers stay classified
+until a later enablement. CA-20 is now required for the phone-only workflow.
+Push integration remains optional.
 
 ### CA-31: Qualify additional providers
 
@@ -1493,27 +1877,34 @@ Acceptance criteria:
 - Accounts/instances cannot share mutable credentials or sessions accidentally.
 - Unsupported options are rejected before allocation and switching provider does not pretend native history transferred.
 
-### CA-20: Add cloud controls to the native T3 mobile client
+### CA-20: Add phone cloud controls and Android device-host enrollment
 
-Dependencies: CA-19, CA-21, CA-25, CA-34, CA-35, CA-36, CA-40, CA-47.
+Dependencies: CA-19, CA-21, CA-25, CA-34, CA-35, CA-36, CA-40, CA-47, CA-49.
 
-Status: Deferred. Responsive web remains the supported phone/tablet route.
+Status: Open. Required by CA-67 and CA-68.
 
-Description: Match Cursor's mobile agent-management surface when the owner
-chooses to distribute a compatible T3 iOS app. Android may remain an installable
-responsive PWA until a native build is intentionally supported.
+Description: Make the native T3 Android client the phone control center and the
+enrollment shell for the device broker selected in CA-67. Keep ordinary cloud
+agent management usable when device-host permissions are disabled.
 
 Acceptance criteria:
 
-- iOS exposes create, plan/agent mode, follow-up, questions, approval, cancel,
-  run status, PR review, artifacts, and remote desktop through shared runtime
-  logic. Android PWA covers the supported subset.
-- Backgrounding the app does not affect worker execution; reconnect targets the correct environment/thread.
-- Live Activities show a bounded number of active agents and deep-link to the
-  correct run without leaking prompt or secret content.
-- Preview and takeover work through separately verified WebViews/native embedding rather than assuming browser support is sufficient.
-- Native distribution, signing, and store access are explicit prerequisites for this optional delivery.
-- Until this ticket is selected, responsive web remains the supported phone/tablet route and existing native clients retain compatibility through capability checks.
+- Android exposes create, follow-up, questions, approval, cancel, run status,
+  PR review, artifacts, Daytona preview, Metro link, and device-control status
+  through shared client-runtime logic.
+- The user can enroll, rename, inspect, pause, and revoke this phone as a device
+  host. Enrollment never turns on screen capture, AccessibilityService, VPN, or
+  wireless debugging without the corresponding Android consent flow.
+- Backgrounding T3 does not stop a Daytona run. Device control reports Android
+  foreground-service and battery restrictions honestly and reconnects to the
+  correct controller, environment, thread, and lease.
+- Switching between T3 and the development build keeps both app identities
+  clear. Metro connection, device online state, permission state, and agent
+  input lease use separate indicators and controls.
+- The client has an always-visible Stop control during agent input or screen
+  capture. Revocation works even when the Daytona sandbox is unreachable.
+- Distribution, signing, Google Play policy review, and any separate developer
+  companion are explicit prerequisites. iOS control stays out of this ticket.
 
 ### CA-22: Add native push and mobile activity integration
 
@@ -1543,6 +1934,15 @@ T3 keeps the intentional differences listed at the top of this plan.
 
 Primary references:
 
+- [Daytona documentation](https://www.daytona.io/docs/)
+- [Daytona sandboxes](https://www.daytona.io/docs/sandboxes)
+- [Daytona persistence](https://www.daytona.io/docs/en/persistence/)
+- [Daytona preview](https://www.daytona.io/docs/en/preview/)
+- [Daytona SSH access](https://www.daytona.io/docs/en/ssh-access/)
+- [Daytona Git operations](https://www.daytona.io/docs/en/git-operations/)
+- [Expo CLI](https://docs.expo.dev/more/expo-cli/)
+- [Expo development-build workflows](https://docs.expo.dev/develop/development-builds/development-workflows/)
+- [Android hardware-device debugging](https://developer.android.com/studio/run/device)
 - [Cloud Agents overview](https://cursor.com/docs/cloud-agent)
 - [Capabilities](https://cursor.com/docs/cloud-agent/capabilities)
 - [Environment setup](https://cursor.com/docs/cloud-agent/setup)
@@ -1555,10 +1955,24 @@ Primary references:
 - [Cloud Agents API](https://cursor.com/docs/cloud-agent/api/endpoints)
 - [API overview](https://cursor.com/docs/api)
 
-DCV supports embedded interactive display, while its SDK release notes include mobile-browser support. Those capabilities still need validation for the chosen worker OS, image, tunnel, and client. [DCV SDK](https://docs.aws.amazon.com/dcv/latest/websdkguide/what-is.html), [SDK release notes](https://docs.aws.amazon.com/dcv/latest/websdkguide/doc-history-release-notes.html).
+The earlier DCV work remains historical evidence for remote desktop behavior. New
+Daytona runs use Daytona VNC and Computer Use where a sandbox desktop is needed;
+physical-phone control follows CA-67 instead of a desktop-stream assumption.
 
-Implementation tickets need focused tests for changed backend behavior and scoped lint/type checks. Reuse real T3 components and wait on receipts/worker drains rather than test sleeps. Use disposable state and authorized isolated AWS resources; never run against the live T3 database.
+Implementation tickets need focused tests for changed backend behavior and
+scoped lint/type checks. Reuse real T3 components and wait on receipts/worker
+drains rather than test sleeps. Use disposable Daytona sandboxes, test phone
+enrollments, and isolated controller state; never run against the live T3
+database.
 
-Web and desktop are the active client targets. Preserve native T3 mobile compatibility at shared contract boundaries, but native UI changes, app-store publication, native push, and full T3 mobile verification are deferred to CA-20/CA-22. This explicit scope takes precedence over generic instructions to build every new UI on every client.
+Web and desktop remain supported. CA-20 adds the native Android control surface
+needed for the phone-only workflow. iOS control and native push remain deferred
+to CA-22 or a later ticket. Shared contract changes must keep every client on an
+explicit capability path.
 
-Android/iOS worker verification tests the owner's application inside the remote device. It must prove actual native build, launch, display, input, and cleanup. It is not a substitute for, or dependency on, native T3 app delivery. Run integrated browser/device checks only when authorized during implementation. Do not run repo-wide checks by default or commit this planning document as permanent implementation documentation.
+Physical Android verification tests the owner's development build on a real
+phone. Metro connectivity is not device-control proof. CA-67 needs explicit
+authorization and a real-phone test before T3 advertises agent control. Run
+integrated browser/device checks only when authorized during implementation.
+Do not run repo-wide checks by default or commit this planning document as
+permanent implementation documentation.

@@ -10,15 +10,22 @@ function CloudAgentReviewRoute() {
   const { agentId } = Route.useParams();
   const environmentId = usePrimaryEnvironmentId();
   return (
-    <SidebarInset>
+    <SidebarInset className="h-dvh min-h-0 overflow-hidden overscroll-y-none">
       <WorkspacePageHeader>
         <h1 className="text-sm font-medium">Cloud agent review</h1>
       </WorkspacePageHeader>
-      {environmentId === null ? (
-        <p className="p-6 text-sm text-muted-foreground">Connect an environment to review agents.</p>
-      ) : (
-        <CloudAgentReviewView environmentId={environmentId} agentId={CloudAgentId.make(agentId)} />
-      )}
+      <div className="min-h-0 flex-1 overflow-y-auto">
+        {environmentId === null ? (
+          <p className="p-6 text-sm text-muted-foreground">
+            Connect an environment to review agents.
+          </p>
+        ) : (
+          <CloudAgentReviewView
+            environmentId={environmentId}
+            agentId={CloudAgentId.make(agentId)}
+          />
+        )}
+      </div>
     </SidebarInset>
   );
 }
