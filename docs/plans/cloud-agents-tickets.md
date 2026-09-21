@@ -1265,7 +1265,7 @@ Reference: [Daytona sandbox lifecycle](https://www.daytona.io/docs/sandboxes).
 
 Dependencies: CA-10, CA-14, CA-62, CA-63, CA-65.
 
-Status: Open.
+Status: Done on 21 September 2026 in [PR #72](https://github.com/Atheal9k/cloud-agents/pull/72).
 
 Description: Run Expo CLI and Metro in the agent's Daytona sandbox, then let an
 installed Expo development build on the owner's physical phone connect through
