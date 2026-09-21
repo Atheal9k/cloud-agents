@@ -134,6 +134,20 @@ it.effect("registers a verified route and makes duplicate registration idempoten
   }).pipe(Effect.provide(SqlitePersistenceMemory)),
 );
 
+it("keeps a Daytona preview grant on normalized worker routes", () => {
+  expect(
+    CloudWorkerRegistration.normalizeWorkerRoute({
+      httpBaseUrl: "https://worker.example.test/path?token=daytona-preview#ignored",
+      wsBaseUrl: "wss://worker.example.test/socket?token=daytona-preview#ignored",
+      accessToken: "worker-access-token",
+    }),
+  ).toEqual({
+    httpBaseUrl: "https://worker.example.test/?token=daytona-preview",
+    wsBaseUrl: "wss://worker.example.test/?token=daytona-preview",
+    accessToken: "worker-access-token",
+  });
+});
+
 it.effect("probes the advertised T3 descriptor and bearer session before accepting the route", () =>
   Effect.gen(function* () {
     yield* TestClock.setTime(Date.parse("2026-09-17T03:04:00.000Z"));

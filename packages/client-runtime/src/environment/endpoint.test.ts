@@ -4,6 +4,7 @@ import {
   classifyHostedHttpsCompatibility,
   createAdvertisedEndpoint,
   deriveWsBaseUrl,
+  environmentEndpointUrl,
   normalizeHttpBaseUrl,
 } from "./endpoint.ts";
 
@@ -15,6 +16,14 @@ const coreProvider = {
 } as const;
 
 describe("advertised endpoint helpers", () => {
+  it("preserves provider access parameters when selecting an environment endpoint", () => {
+    expect(
+      environmentEndpointUrl(
+        "https://worker.example.test/?token=daytona-preview",
+        "/api/auth/session",
+      ),
+    ).toBe("https://worker.example.test/api/auth/session?token=daytona-preview");
+  });
   it("normalizes HTTP and WebSocket base URLs", () => {
     expect(normalizeHttpBaseUrl("https://example.com/path?x=1#hash")).toBe("https://example.com/");
     expect(normalizeHttpBaseUrl("wss://example.com/socket")).toBe("https://example.com/");

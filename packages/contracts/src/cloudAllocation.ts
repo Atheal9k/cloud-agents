@@ -592,6 +592,29 @@ export const RunCleanupState = Schema.Union([
 ]);
 export type RunCleanupState = typeof RunCleanupState.Type;
 
+export const RunAllocationProgressStage = Schema.Literals([
+  "allocation",
+  "start",
+  "checkout",
+  "setup",
+  "provider",
+  "terminal",
+  "preview",
+  "stop",
+  "archive",
+  "delete",
+]);
+export type RunAllocationProgressStage = typeof RunAllocationProgressStage.Type;
+
+export const RunAllocationProgress = Schema.Struct({
+  stage: RunAllocationProgressStage,
+  status: Schema.Literals(["requested", "running", "succeeded", "failed"]),
+  message: TrimmedNonEmptyString,
+  startedAt: IsoDateTime,
+  updatedAt: IsoDateTime,
+});
+export type RunAllocationProgress = typeof RunAllocationProgress.Type;
+
 /**
  * Why this runtime attempt exists. A `reopen` attempt restores a snapshot and
  * runs the environment's `start` so a person can look at the app again; it
@@ -641,6 +664,8 @@ export const RunAllocation = Schema.Struct({
    */
   stopRequestedAt: Schema.optionalKey(IsoDateTime),
   cleanupState: RunCleanupState,
+  /** Latest provider-observed operation, used for reconnect-safe launch and cleanup progress. */
+  progress: Schema.optionalKey(RunAllocationProgress),
   /** Absent until the agent has started or resumed at least once. */
   snapshotRetention: Schema.optionalKey(RunSnapshotRetention),
   retry: Schema.optionalKey(RunRetryRecord),
@@ -722,6 +747,11 @@ export const RunAllocationCommand = Schema.Union([
     managedProvider: Schema.optionalKey(Schema.Literal("daytona")),
   }),
   Schema.Struct({ ...AttemptCommandBase, type: Schema.Literal("allocation.agent-started") }),
+  Schema.Struct({
+    ...AttemptCommandBase,
+    type: Schema.Literal("allocation.progress-reported"),
+    progress: RunAllocationProgress,
+  }),
   Schema.Struct({
     ...AttemptCommandBase,
     type: Schema.Literal("allocation.agent-succeeded"),
@@ -898,6 +928,11 @@ export const RunAllocationEvent = Schema.Union([
     managedProvider: Schema.optionalKey(Schema.Literal("daytona")),
   }),
   Schema.Struct({ ...EventBase, type: Schema.Literal("allocation.agent-started") }),
+  Schema.Struct({
+    ...EventBase,
+    type: Schema.Literal("allocation.progress-reported"),
+    progress: RunAllocationProgress,
+  }),
   Schema.Struct({
     ...EventBase,
     type: Schema.Literal("allocation.agent-succeeded"),

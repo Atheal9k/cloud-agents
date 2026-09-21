@@ -231,6 +231,8 @@ export function decideRunAllocationCommand(
         allocation.cleanupState.status === "not-requested"
         ? [{ ...base, type: command.type }]
         : [];
+    case "allocation.progress-reported":
+      return [{ ...base, type: command.type, progress: command.progress }];
     case "allocation.agent-succeeded":
       return allocation.agentOutcome.status === "running"
         ? [{ ...base, type: command.type, resultLocation: command.resultLocation }]
@@ -694,6 +696,8 @@ export function projectRunAllocationEvent(
         agentOutcome: { status: "running", startedAt: event.occurredAt },
         snapshotRetention: snapshotRetentionFrom({ lastActiveAt: event.occurredAt }),
       });
+    case "allocation.progress-reported":
+      return projectUpdate(allocation, event, { progress: event.progress });
     case "allocation.agent-succeeded":
       return projectUpdate(allocation, event, {
         agentOutcome: {

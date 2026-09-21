@@ -7,6 +7,7 @@ import {
   DaytonaConflictError,
   DaytonaConnectionError,
   DaytonaForbiddenError,
+  DaytonaGoneError,
   DaytonaInternalServerError,
   DaytonaInvalidArgumentError,
   DaytonaNotFoundError,
@@ -14,6 +15,7 @@ import {
   DaytonaServiceUnavailableError,
   DaytonaTimeoutError,
   DaytonaUnprocessableEntityError,
+  type Image,
 } from "@daytona/sdk";
 import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
@@ -24,13 +26,14 @@ import {
   CloudRuntimeProvider,
   CloudRuntimeProviderError,
   type CloudRuntimeCreateInput,
-  type CloudRuntimeLocator,
+  type CloudRuntimeProcess,
 } from "./CloudRuntimeProvider.ts";
 import {
   DaytonaConfigError,
   resolveDaytonaConfig,
   type ResolvedDaytonaConfig,
 } from "./daytonaConfig.ts";
+import { daytonaWorkerImage } from "./daytonaWorkerImage.ts";
 
 const LABEL = {
   project: "t3-project",
@@ -55,6 +58,33 @@ interface DaytonaSandboxClient {
       environment?: Record<string, string>,
       timeoutSeconds?: number,
     ) => Promise<{ readonly exitCode: number; readonly result: string }>;
+    readonly createSession: (sessionId: string) => Promise<void>;
+    readonly getSession: (sessionId: string) => Promise<{
+      readonly sessionId: string;
+      readonly commands: ReadonlyArray<{
+        readonly id: string;
+        readonly command: string;
+        readonly exitCode?: number;
+      }>;
+    }>;
+    readonly executeSessionCommand: (
+      sessionId: string,
+      request: {
+        readonly command: string;
+        readonly runAsync: true;
+        readonly suppressInputEcho: true;
+      },
+    ) => Promise<{ readonly cmdId: string }>;
+    readonly getSessionCommandLogs: (
+      sessionId: string,
+      commandId: string,
+    ) => Promise<{ readonly output?: string; readonly stdout?: string; readonly stderr?: string }>;
+    readonly deleteSession: (sessionId: string) => Promise<void>;
+  };
+  readonly computerUse: {
+    readonly start: () => Promise<{ readonly status?: unknown; readonly message?: string }>;
+    readonly stop: () => Promise<{ readonly status?: unknown; readonly message?: string }>;
+    readonly getStatus: () => Promise<{ readonly status?: unknown }>;
   };
   readonly start: (timeoutSeconds?: number) => Promise<void>;
   readonly stop: (timeoutSeconds?: number, force?: boolean) => Promise<void>;
@@ -73,7 +103,9 @@ interface DaytonaSandboxClient {
 interface DaytonaClient {
   readonly create: (
     params: {
+      readonly image?: string | Image;
       readonly snapshot?: string;
+      readonly user: "root";
       readonly envVars: Record<string, string>;
       readonly labels: Record<string, string>;
       readonly public: false;
@@ -98,6 +130,19 @@ function providerError(
   return new CloudRuntimeProviderError({ reason, message });
 }
 
+function shellQuote(value: string): string {
+  return `'${value.replaceAll("'", `'"'"'`)}'`;
+}
+
+function processExitPath(sessionId: string): string {
+  return `/tmp/t3-process-${encodeURIComponent(sessionId)}.exit`;
+}
+
+function wrappedProcessCommand(sessionId: string, command: string): string {
+  const status = shellQuote(processExitPath(sessionId));
+  return `status=${status}; rm -f "$status"; set +e; ( ${command} ); code=$?; printf %s "$code" > "$status"; exit "$code"`;
+}
+
 function safeMessage(error: unknown, config: ResolvedDaytonaConfig): string {
   const message = error instanceof Error ? error.message : "Daytona returned an unknown error.";
   return config.apiKey === undefined ? message : message.replaceAll(config.apiKey, "[redacted]");
@@ -114,7 +159,8 @@ function classifyError(error: unknown, config: ResolvedDaytonaConfig): CloudRunt
   if (/capacity|no runner|insufficient resource/i.test(message)) {
     return providerError("capacity", message);
   }
-  if (error instanceof DaytonaNotFoundError) return providerError("not-found", message);
+  if (error instanceof DaytonaNotFoundError || error instanceof DaytonaGoneError)
+    return providerError("not-found", message);
   if (error instanceof DaytonaConflictError) return providerError("conflict", message);
   if (
     error instanceof DaytonaConnectionError ||
@@ -190,7 +236,18 @@ function labelsFor(config: ResolvedDaytonaConfig, input: CloudRuntimeCreateInput
   };
 }
 
-export const make = Effect.fn("DaytonaRuntimeProvider.make")(function* (input: {
+function assignmentMatches(runtime: CloudManagedRuntime, input: CloudRuntimeCreateInput): boolean {
+  return (
+    runtime.allocationId === input.allocationId &&
+    runtime.attempt === input.attempt &&
+    runtime.agentId === input.agentId &&
+    runtime.runId === input.runId &&
+    runtime.environmentId === input.environmentId &&
+    runtime.buildId === input.buildId
+  );
+}
+
+export const make = Effect.fn("DaytonaRuntimeProvider.make")(function (input: {
   readonly config: ResolvedDaytonaConfig;
   readonly client?: DaytonaClient;
 }) {
@@ -222,14 +279,16 @@ export const make = Effect.fn("DaytonaRuntimeProvider.make")(function* (input: {
     sandbox: DaytonaSandboxClient,
   ) {
     const observedAt = DateTime.formatIso(yield* DateTime.now);
+    const environmentId = sandbox.labels[LABEL.environmentId];
+    const buildId = sandbox.labels[LABEL.buildId];
     return yield* decodeRuntime({
       provider: "daytona",
       runtimeId: sandbox.id,
       region: sandbox.target || config.target,
       resourceClass: sandbox.labels[LABEL.resourceClass],
       lifecycleState: lifecycle(sandbox.state),
-      environmentId: sandbox.labels[LABEL.environmentId],
-      buildId: sandbox.labels[LABEL.buildId],
+      ...(environmentId === undefined ? {} : { environmentId }),
+      ...(buildId === undefined ? {} : { buildId }),
       agentId: sandbox.labels[LABEL.agentId],
       runId: sandbox.labels[LABEL.runId],
       allocationId: sandbox.labels[LABEL.allocationId],
@@ -267,7 +326,7 @@ export const make = Effect.fn("DaytonaRuntimeProvider.make")(function* (input: {
         const sandbox = yield* get(locator.runtimeId).pipe(
           Effect.catchIf(
             (error) => error.reason === "not-found",
-            () => Effect.succeed(undefined),
+            () => Effect.void,
           ),
         );
         return sandbox === undefined ? undefined : yield* runtimeFromSandbox(sandbox);
@@ -293,6 +352,76 @@ export const make = Effect.fn("DaytonaRuntimeProvider.make")(function* (input: {
       return yield* Effect.forEach(sandboxes, runtimeFromSandbox);
     });
 
+  const inspectProcess = Effect.fn("DaytonaRuntimeProvider.inspectProcess")(
+    function* (processInput: {
+      readonly runtimeId: string;
+      readonly sessionId: string;
+    }): Effect.fn.Return<CloudRuntimeProcess, CloudRuntimeProviderError> {
+      const sandbox = yield* get(processInput.runtimeId);
+      const session = yield* sdk(() => sandbox.process.getSession(processInput.sessionId)).pipe(
+        Effect.catchIf(
+          (error) => error.reason === "not-found",
+          () => Effect.void,
+        ),
+      );
+      if (session === undefined) {
+        return { status: "missing", sessionId: processInput.sessionId };
+      }
+      if (session.commands.length > 1) {
+        return yield* providerError(
+          "conflict",
+          `Daytona process session '${processInput.sessionId}' contains more than one command.`,
+        );
+      }
+      const command = session.commands[0];
+      if (command === undefined) {
+        return { status: "missing", sessionId: processInput.sessionId };
+      }
+      const logs = yield* sdk(() =>
+        sandbox.process.getSessionCommandLogs(processInput.sessionId, command.id),
+      );
+      const output = logs.output ?? [logs.stdout, logs.stderr].filter(Boolean).join("\n");
+      const exitCode =
+        command.exitCode ??
+        (yield* sdk(() =>
+          sandbox.process.executeCommand(
+            `test ! -f ${shellQuote(processExitPath(processInput.sessionId))} || cat ${shellQuote(processExitPath(processInput.sessionId))}`,
+          ),
+        ).pipe(
+          Effect.flatMap((result) => {
+            const value = result.result.trim();
+            if (value.length === 0) return Effect.succeed(undefined);
+            const parsed = Number(value);
+            return Number.isInteger(parsed)
+              ? Effect.succeed(parsed)
+              : Effect.fail(
+                  providerError(
+                    "fatal",
+                    `Daytona process session '${processInput.sessionId}' returned an invalid exit status.`,
+                  ),
+                );
+          }),
+        ));
+      if (exitCode === undefined) {
+        return {
+          status: "running",
+          sessionId: processInput.sessionId,
+          commandId: command.id,
+          command: command.command,
+          output,
+        };
+      }
+      return {
+        status: exitCode === 0 ? "succeeded" : "failed",
+        sessionId: processInput.sessionId,
+        commandId: command.id,
+        command: command.command,
+        exitCode,
+        output,
+      };
+    },
+  );
+
   const create: CloudRuntimeProvider["Service"]["create"] = (createInput) =>
     Effect.gen(function* () {
       const existing = yield* inspect({
@@ -300,12 +429,21 @@ export const make = Effect.fn("DaytonaRuntimeProvider.make")(function* (input: {
         allocationId: createInput.allocationId,
         attempt: createInput.attempt,
       });
-      if (existing !== undefined) return existing;
+      if (existing !== undefined) {
+        if (assignmentMatches(existing, createInput)) return existing;
+        return yield* providerError(
+          "conflict",
+          `Daytona sandbox '${existing.runtimeId}' belongs to a different T3 agent assignment.`,
+        );
+      }
       const client = yield* requireClient();
       const sandbox = yield* sdk(() =>
         client.create(
           {
-            ...(createInput.snapshotId === undefined ? {} : { snapshot: createInput.snapshotId }),
+            ...(createInput.snapshotId === undefined
+              ? { image: daytonaWorkerImage() }
+              : { snapshot: createInput.snapshotId }),
+            user: "root",
             envVars: { ...createInput.environmentVariables },
             labels: labelsFor(config, createInput),
             public: false,
@@ -316,20 +454,10 @@ export const make = Effect.fn("DaytonaRuntimeProvider.make")(function* (input: {
           { timeout: 60 },
         ),
       );
-      return yield* runtimeFromSandbox(sandbox);
+      // Daytona's create response can omit labels even though the persisted sandbox has them.
+      // Re-read before decoding ownership so we never reject a sandbox we just created.
+      return yield* runtimeFromSandbox(yield* get(sandbox.id));
     });
-
-  const mutate = (
-    name: string,
-    runtimeId: string,
-    operation: (sandbox: DaytonaSandboxClient) => Promise<void>,
-  ) =>
-    Effect.gen(function* () {
-      const sandbox = yield* get(runtimeId);
-      yield* sdk(() => operation(sandbox));
-      const observed = yield* get(runtimeId);
-      return yield* runtimeFromSandbox(observed);
-    }).pipe(Effect.withSpan(name));
 
   const readiness: CloudRuntimeProvider["Service"]["readiness"] = () =>
     Effect.gen(function* () {
@@ -387,69 +515,176 @@ export const make = Effect.fn("DaytonaRuntimeProvider.make")(function* (input: {
       } as const;
     });
 
-  return CloudRuntimeProvider.of({
-    readiness,
-    create,
-    inspect,
-    list,
-    start: (startInput) =>
-      Effect.gen(function* () {
-        const sandbox = yield* get(startInput.runtimeId);
-        const assignment = startInput.assignment;
-        if (assignment !== undefined) {
-          yield* sdk(() => sandbox.setLabels(labelsFor(config, assignment)));
-          yield* sdk(() => sandbox.updateEnv({ ...assignment.environmentVariables }));
-        }
-        yield* sdk(() => sandbox.start());
-        return yield* runtimeFromSandbox(yield* get(startInput.runtimeId));
-      }),
-    stop: (runtimeId) =>
-      mutate("DaytonaRuntimeProvider.stop", runtimeId, (sandbox) => sandbox.stop()),
-    archive: (runtimeId) =>
-      mutate("DaytonaRuntimeProvider.archive", runtimeId, (sandbox) => sandbox.archive()),
-    delete: (runtimeId) =>
-      Effect.gen(function* () {
-        const sandbox = yield* get(runtimeId).pipe(
-          Effect.catchIf(
-            (error) => error.reason === "not-found",
-            () => Effect.succeed(undefined),
-          ),
-        );
-        if (sandbox === undefined) return;
-        yield* sdk(() => sandbox.delete(60, true));
-      }),
-    execute: (executeInput) =>
-      Effect.gen(function* () {
-        const sandbox = yield* get(executeInput.runtimeId);
-        const response = yield* sdk(() =>
-          sandbox.process.executeCommand(
-            executeInput.command,
-            executeInput.cwd,
-            executeInput.environment === undefined ? undefined : { ...executeInput.environment },
-            executeInput.timeoutSeconds,
-          ),
-        );
-        return { exitCode: response.exitCode, output: response.result };
-      }),
-    preview: (previewInput) =>
-      Effect.gen(function* () {
-        const sandbox = yield* get(previewInput.runtimeId);
-        if (previewInput.action === "revoke") {
-          yield* sdk(() => sandbox.expireSignedPreviewUrl(previewInput.port, previewInput.token));
-          return undefined;
-        }
-        return yield* sdk(() =>
-          sandbox.getSignedPreviewUrl(previewInput.port, previewInput.expiresInSeconds),
-        );
-      }),
-    snapshot: (snapshotInput) =>
-      Effect.gen(function* () {
-        const sandbox = yield* get(snapshotInput.runtimeId);
-        yield* sdk(() => sandbox.createSnapshot(snapshotInput.name));
-        return { name: snapshotInput.name };
-      }),
-    resourceClass: config.resourceClass,
-  });
+  return Effect.succeed(
+    CloudRuntimeProvider.of({
+      readiness,
+      create,
+      inspect,
+      list,
+      start: (startInput) =>
+        Effect.gen(function* () {
+          const sandbox = yield* get(startInput.runtimeId);
+          const assignment = startInput.assignment;
+          if (assignment !== undefined) {
+            yield* sdk(() => sandbox.setLabels(labelsFor(config, assignment)));
+            yield* sdk(() => sandbox.updateEnv({ ...assignment.environmentVariables }));
+          }
+          const state = lifecycle(sandbox.state);
+          if (state !== "starting" && state !== "started") yield* sdk(() => sandbox.start());
+          return yield* runtimeFromSandbox(yield* get(startInput.runtimeId));
+        }),
+      stop: (runtimeId) =>
+        Effect.gen(function* () {
+          const sandbox = yield* get(runtimeId);
+          const state = lifecycle(sandbox.state);
+          if (
+            state !== "stopping" &&
+            state !== "stopped" &&
+            state !== "archiving" &&
+            state !== "archived" &&
+            state !== "deleting" &&
+            state !== "deleted"
+          ) {
+            yield* sdk(() => sandbox.stop());
+          }
+          return yield* runtimeFromSandbox(yield* get(runtimeId));
+        }).pipe(Effect.withSpan("DaytonaRuntimeProvider.stop")),
+      archive: (runtimeId) =>
+        Effect.gen(function* () {
+          const sandbox = yield* get(runtimeId);
+          const state = lifecycle(sandbox.state);
+          if (
+            state !== "archiving" &&
+            state !== "archived" &&
+            state !== "deleting" &&
+            state !== "deleted"
+          ) {
+            yield* sdk(() => sandbox.archive());
+          }
+          return yield* runtimeFromSandbox(yield* get(runtimeId));
+        }).pipe(Effect.withSpan("DaytonaRuntimeProvider.archive")),
+      delete: (runtimeId) =>
+        Effect.gen(function* () {
+          const sandbox = yield* get(runtimeId).pipe(
+            Effect.catchIf(
+              (error) => error.reason === "not-found",
+              () => Effect.void,
+            ),
+          );
+          if (sandbox === undefined) return;
+          const state = lifecycle(sandbox.state);
+          if (state === "deleting" || state === "deleted") return;
+          yield* sdk(() => sandbox.delete(60, true));
+        }),
+      execute: (executeInput) =>
+        Effect.gen(function* () {
+          const sandbox = yield* get(executeInput.runtimeId);
+          const response = yield* sdk(() =>
+            sandbox.process.executeCommand(
+              executeInput.command,
+              executeInput.cwd,
+              executeInput.environment === undefined ? undefined : { ...executeInput.environment },
+              executeInput.timeoutSeconds,
+            ),
+          );
+          return { exitCode: response.exitCode, output: response.result };
+        }),
+      ensureProcess: (processInput) =>
+        Effect.gen(function* () {
+          const command = wrappedProcessCommand(processInput.sessionId, processInput.command);
+          const observed = yield* inspectProcess(processInput);
+          if (observed.status !== "missing") {
+            if (observed.command !== command) {
+              return yield* providerError(
+                "conflict",
+                `Daytona process session '${processInput.sessionId}' contains an unexpected command.`,
+              );
+            }
+            return { ...observed, command: processInput.command };
+          }
+          const sandbox = yield* get(processInput.runtimeId);
+          yield* sdk(() => sandbox.process.createSession(processInput.sessionId)).pipe(
+            Effect.catchIf(
+              (error) => error.reason === "conflict",
+              () => Effect.void,
+            ),
+          );
+          const started = yield* sdk(() =>
+            sandbox.process.executeSessionCommand(processInput.sessionId, {
+              command,
+              runAsync: true,
+              suppressInputEcho: true,
+            }),
+          ).pipe(Effect.result);
+          const recovered = yield* inspectProcess(processInput);
+          if (recovered.status !== "missing") {
+            if (recovered.command !== command) {
+              return yield* providerError(
+                "conflict",
+                `Daytona process session '${processInput.sessionId}' contains an unexpected command.`,
+              );
+            }
+            return { ...recovered, command: processInput.command };
+          }
+          if (started._tag === "Failure") return yield* started.failure;
+          return {
+            status: "running",
+            sessionId: processInput.sessionId,
+            commandId: started.success.cmdId,
+            command: processInput.command,
+            output: "",
+          } as const;
+        }),
+      inspectProcess,
+      deleteProcess: (processInput) =>
+        Effect.gen(function* () {
+          const sandbox = yield* get(processInput.runtimeId);
+          yield* sdk(() => sandbox.process.deleteSession(processInput.sessionId)).pipe(
+            Effect.catchIf(
+              (error) => error.reason === "not-found",
+              () => Effect.void,
+            ),
+          );
+        }),
+      preview: (previewInput) =>
+        Effect.gen(function* () {
+          const sandbox = yield* get(previewInput.runtimeId);
+          if (previewInput.action === "revoke") {
+            yield* sdk(() => sandbox.expireSignedPreviewUrl(previewInput.port, previewInput.token));
+            return undefined;
+          }
+          return yield* sdk(() =>
+            sandbox.getSignedPreviewUrl(previewInput.port, previewInput.expiresInSeconds),
+          );
+        }),
+      snapshot: (snapshotInput) =>
+        Effect.gen(function* () {
+          const sandbox = yield* get(snapshotInput.runtimeId);
+          yield* sdk(() => sandbox.createSnapshot(snapshotInput.name));
+          return { name: snapshotInput.name };
+        }),
+      desktop: (desktopInput) =>
+        Effect.gen(function* () {
+          const sandbox = yield* get(desktopInput.runtimeId);
+          if (desktopInput.action === "status") {
+            const result = yield* sdk(() => sandbox.computerUse.getStatus());
+            return { status: typeof result.status === "string" ? result.status : "running" };
+          }
+          const result = yield* sdk(() =>
+            desktopInput.action === "start"
+              ? sandbox.computerUse.start()
+              : sandbox.computerUse.stop(),
+          );
+          return {
+            status:
+              typeof result.status === "string"
+                ? result.status
+                : (result.message ?? desktopInput.action),
+          };
+        }),
+      resourceClass: config.resourceClass,
+    }),
+  );
 });
 
 function makeSdkClient(config: ResolvedDaytonaConfig): DaytonaClient | undefined {
@@ -460,7 +695,10 @@ function makeSdkClient(config: ResolvedDaytonaConfig): DaytonaClient | undefined
     target: config.target,
   });
   return {
-    create: (params, options) => daytona.create(params, options),
+    create: (params, options) =>
+      params.image === undefined
+        ? daytona.create(params, options)
+        : daytona.create({ ...params, image: params.image }, options),
     get: (runtimeId) => daytona.get(runtimeId),
     list: (query) => daytona.list(query),
   };

@@ -11,6 +11,7 @@ import {
 } from "@t3tools/contracts";
 import * as Clock from "effect/Clock";
 import * as Context from "effect/Context";
+import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
@@ -117,10 +118,8 @@ export function normalizeWorkerRoute(route: RunWorkerRoute): RunWorkerRoute | nu
       return null;
     }
     http.pathname = "/";
-    http.search = "";
     http.hash = "";
     ws.pathname = "/";
-    ws.search = "";
     ws.hash = "";
     return {
       httpBaseUrl: http.toString(),
@@ -133,7 +132,10 @@ export function normalizeWorkerRoute(route: RunWorkerRoute): RunWorkerRoute | nu
 }
 
 function environmentUrl(httpBaseUrl: string, pathname: string): string {
-  return new URL(pathname, httpBaseUrl).toString();
+  const url = new URL(httpBaseUrl);
+  url.pathname = pathname;
+  url.hash = "";
+  return url.toString();
 }
 
 function registrationMatches(
@@ -316,7 +318,7 @@ export const make = Effect.fn("CloudWorkerRegistration.make")(function* (input?:
       );
     }
 
-    const occurredAt = new Date(yield* Clock.currentTimeMillis).toISOString();
+    const occurredAt = DateTime.formatIso(yield* DateTime.now);
     const command = yield* decodeCommand({
       type: "allocation.worker-registered",
       commandId: `ca09:${allocation.id}:${allocation.attempt}:worker-registered`,
@@ -325,7 +327,11 @@ export const make = Effect.fn("CloudWorkerRegistration.make")(function* (input?:
       occurredAt,
       references: input.references,
       route,
-    });
+    }).pipe(
+      Effect.mapError(() =>
+        registrationError("persistence-failed", "The worker registration command was invalid."),
+      ),
+    );
     const registered = yield* controller
       .dispatch(command)
       .pipe(

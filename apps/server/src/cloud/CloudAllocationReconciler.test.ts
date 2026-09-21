@@ -103,7 +103,9 @@ function fixture(
       reopenCalls: number;
       sessionEditsCalls: number;
       hibernateCalls: number;
+      archiveCalls: number;
       restoreCalls: number;
+      runtimeArchived: boolean;
     } = {
       instance: undefined,
       launchCalls: 0,
@@ -116,7 +118,9 @@ function fixture(
       reopenCalls: 0,
       sessionEditsCalls: 0,
       hibernateCalls: 0,
+      archiveCalls: 0,
       restoreCalls: 0,
+      runtimeArchived: false,
     };
     let assignment: CloudRuntimeCreateInput | undefined;
     const controller = yield* CloudAllocationController.make({ enabled: true });
@@ -257,8 +261,9 @@ function fixture(
         runtimeId: instance.instanceId,
         region: "us",
         resourceClass: "t3.medium",
-        lifecycleState:
-          instance.state === "running"
+        lifecycleState: state.runtimeArchived
+          ? ("archived" as const)
+          : instance.state === "running"
             ? ("started" as const)
             : instance.state === "stopped"
               ? ("stopped" as const)
@@ -311,6 +316,7 @@ function fixture(
             });
           }
           assignment = createInput;
+          state.runtimeArchived = false;
           state.instance = {
             instanceId: "i-worker",
             state: "running",
@@ -357,6 +363,7 @@ function fixture(
           }
           if (nextAssignment !== undefined) assignment = nextAssignment;
           if (state.instance !== undefined) {
+            state.runtimeArchived = false;
             state.instance = {
               ...state.instance,
               state: "running",
@@ -383,12 +390,13 @@ function fixture(
           }
           if (state.instance !== undefined)
             state.instance = { ...state.instance, state: "stopped" };
+          state.runtimeArchived = false;
           return managedRuntime()!;
         }),
       archive: () =>
         Effect.sync(() => {
-          if (state.instance !== undefined)
-            state.instance = { ...state.instance, state: "stopped" };
+          state.archiveCalls += 1;
+          state.runtimeArchived = true;
           return managedRuntime()!;
         }),
       delete: () =>
@@ -406,8 +414,12 @@ function fixture(
           }
         }),
       execute: () => Effect.die("unused"),
+      ensureProcess: () => Effect.die("unused"),
+      inspectProcess: () => Effect.die("unused"),
+      deleteProcess: () => Effect.die("unused"),
       preview: () => Effect.die("unused"),
       snapshot: ({ name }) => Effect.succeed({ name }),
+      desktop: () => Effect.die("unused"),
       resourceClass: "t3.medium",
     });
     const runClient = CloudWorkerRunClient.of({
@@ -741,6 +753,42 @@ it.effect("keeps failed cleanup visible and accepts an explicit retry", () =>
     expect(retried.cleanupState.status).toBe("requested");
     yield* reconciler.reconcileOnce();
     expect((yield* controller.snapshot).allocations[0]?.cleanupState.status).toBe("running");
+  }).pipe(Effect.provide(SqlitePersistenceMemory)),
+);
+
+it.effect("stops, archives, and confirms Daytona resource release after cancellation", () =>
+  Effect.gen(function* () {
+    yield* TestClock.setTime(startAt);
+    const { controller, reconciler, state } = yield* fixture();
+    const allocation = yield* controller.dispatch(launchCommand("allocation-1"));
+    yield* reconciler.reconcileOnce();
+    yield* reconciler.reconcileOnce();
+    yield* controller.dispatch(
+      decodeCommand({
+        type: "allocation.cancel",
+        commandId: "cancel-daytona-allocation-1",
+        allocationId: allocation.id,
+        attempt: allocation.attempt,
+        occurredAt: "2026-09-17T03:00:01.000Z",
+      }),
+    );
+
+    yield* reconciler.reconcileOnce();
+    yield* reconciler.reconcileOnce();
+    yield* reconciler.reconcileOnce();
+    yield* reconciler.reconcileOnce();
+    yield* reconciler.reconcileOnce();
+
+    const released = (yield* controller.snapshot).allocations[0];
+    expect(state.hibernateCalls).toBe(1);
+    expect(state.archiveCalls).toBe(1);
+    expect(state.terminateCalls).toBe(1);
+    expect(released?.cleanupState.status).toBe("succeeded");
+    expect(released?.progress).toMatchObject({
+      stage: "delete",
+      status: "succeeded",
+      message: "Daytona confirmed the resource was released.",
+    });
   }).pipe(Effect.provide(SqlitePersistenceMemory)),
 );
 
@@ -1327,8 +1375,12 @@ it.effect("packs two queued allocations when the controller has two worker slots
       archive: () => Effect.die("unused"),
       delete: () => Effect.void,
       execute: () => Effect.die("unused"),
+      ensureProcess: () => Effect.die("unused"),
+      inspectProcess: () => Effect.die("unused"),
+      deleteProcess: () => Effect.die("unused"),
       preview: () => Effect.die("unused"),
       snapshot: ({ name }) => Effect.succeed({ name }),
+      desktop: () => Effect.die("unused"),
       resourceClass: "t3.medium",
     });
     const reconciler = yield* CloudAllocationReconciler.make().pipe(

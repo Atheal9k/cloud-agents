@@ -9,6 +9,7 @@ import {
   buildCloudRunLaunchCommand,
   cloudEnvSetupLaunchDraft,
   cloudRunDisplayState,
+  cloudRunProgressPresentation,
   cloudRunProjectOptions,
   controllerSummary,
   createInitialCloudRunDraft,
@@ -469,5 +470,26 @@ describe("cloud run launch", () => {
         idleState: { status: "hibernated" },
       }),
     ).toBe("cleanup");
+  });
+
+  it("presents durable operation progress with elapsed time", () => {
+    expect(
+      cloudRunProgressPresentation(
+        {
+          progress: {
+            stage: "delete",
+            status: "succeeded",
+            message: "Daytona confirmed the resource was released.",
+            startedAt: "2026-09-17T10:00:00.000Z",
+            updatedAt: "2026-09-17T10:01:04.000Z",
+          },
+        },
+        Date.parse("2026-09-17T10:01:04.000Z"),
+      ),
+    ).toEqual({
+      label: "Resource released",
+      detail: "Daytona confirmed the resource was released.",
+      elapsed: "1m 04s",
+    });
   });
 });

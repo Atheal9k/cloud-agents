@@ -122,6 +122,7 @@ export function projectCloudControlPlane(
           }
           break;
         case "allocation.worker-booted":
+        case "allocation.progress-reported":
         case "allocation.preview-published":
         case "allocation.preview-withdrawn":
         // Leases, stops, reopen receipts, and hand edits are viewing state.
