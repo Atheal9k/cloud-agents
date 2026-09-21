@@ -44,6 +44,7 @@ import {
   CloudWarmGuest,
   CloudWarmPoolCapacityPlan,
 } from "./cloudWarmPool.ts";
+import { CloudManagedRuntime } from "./cloudRuntime.ts";
 
 export const RunWorkerDevice = Schema.Literals(["android", "ios"]);
 export type RunWorkerDevice = typeof RunWorkerDevice.Type;
@@ -429,6 +430,8 @@ const CloudRuntimeAttemptBase = {
   allocationId: RunAllocationId,
   attempt: RunAllocationAttempt,
   runIds: Schema.Array(CloudRunId),
+  /** Missing on retained AWS and Firecracker attempts created before CA-60. */
+  managedRuntime: Schema.optionalKey(CloudManagedRuntime),
   createdAt: IsoDateTime,
   updatedAt: IsoDateTime,
 };
@@ -512,21 +515,25 @@ export const RunAllocationState = Schema.Union([
     status: Schema.Literal("launching"),
     startedAt: IsoDateTime,
     launchTemplate: RunLaunchTemplate,
+    managedProvider: Schema.optionalKey(Schema.Literal("daytona")),
     retry: RunLaunchRetry,
   }),
   Schema.Struct({
     status: Schema.Literal("booting"),
     instanceId: TrimmedNonEmptyString,
+    managedRuntime: Schema.optionalKey(CloudManagedRuntime),
     launchedAt: IsoDateTime,
   }),
   Schema.Struct({
     status: Schema.Literal("registering"),
     instanceId: TrimmedNonEmptyString,
+    managedRuntime: Schema.optionalKey(CloudManagedRuntime),
     bootedAt: IsoDateTime,
   }),
   Schema.Struct({
     status: Schema.Literal("ready"),
     instanceId: TrimmedNonEmptyString,
+    managedRuntime: Schema.optionalKey(CloudManagedRuntime),
     references: RunWorkerReferences,
     /** Absent on CA-08 events written before worker routing was introduced. */
     route: Schema.optionalKey(RunWorkerRoute),
@@ -537,6 +544,8 @@ export const RunAllocationState = Schema.Union([
     reason: TrimmedNonEmptyString,
     failedAt: IsoDateTime,
     instanceId: Schema.optionalKey(TrimmedNonEmptyString),
+    managedRuntime: Schema.optionalKey(CloudManagedRuntime),
+    managedProvider: Schema.optionalKey(Schema.Literal("daytona")),
   }),
 ]);
 export type RunAllocationState = typeof RunAllocationState.Type;
@@ -673,6 +682,7 @@ export const RunAllocationCommand = Schema.Union([
     ...AttemptCommandBase,
     type: Schema.Literal("allocation.launch-started"),
     launchTemplate: RunLaunchTemplate,
+    managedProvider: Schema.optionalKey(Schema.Literal("daytona")),
   }),
   Schema.Struct({
     ...AttemptCommandBase,
@@ -685,6 +695,7 @@ export const RunAllocationCommand = Schema.Union([
     ...AttemptCommandBase,
     type: Schema.Literal("allocation.instance-launched"),
     instanceId: TrimmedNonEmptyString,
+    managedRuntime: Schema.optionalKey(CloudManagedRuntime),
     /** Missing on launch commands written before CA-45. */
     placement: Schema.optionalKey(CloudRuntimePlacement),
   }),
@@ -708,6 +719,7 @@ export const RunAllocationCommand = Schema.Union([
     ...AttemptCommandBase,
     type: Schema.Literal("allocation.launch-failed"),
     reason: TrimmedNonEmptyString,
+    managedProvider: Schema.optionalKey(Schema.Literal("daytona")),
   }),
   Schema.Struct({ ...AttemptCommandBase, type: Schema.Literal("allocation.agent-started") }),
   Schema.Struct({
@@ -844,6 +856,8 @@ export const RunAllocationEvent = Schema.Union([
     ...EventBase,
     type: Schema.Literal("allocation.launch-started"),
     launchTemplate: RunLaunchTemplate,
+    /** Missing on AWS and Firecracker admission events written before CA-60. */
+    managedProvider: Schema.optionalKey(Schema.Literal("daytona")),
   }),
   Schema.Struct({
     ...EventBase,
@@ -856,6 +870,8 @@ export const RunAllocationEvent = Schema.Union([
     ...EventBase,
     type: Schema.Literal("allocation.instance-launched"),
     instanceId: TrimmedNonEmptyString,
+    /** Missing on retained AWS and Firecracker events written before CA-60. */
+    managedRuntime: Schema.optionalKey(CloudManagedRuntime),
     /** Missing on launch events written before CA-45. */
     placement: Schema.optionalKey(CloudRuntimePlacement),
   }),
@@ -879,6 +895,7 @@ export const RunAllocationEvent = Schema.Union([
     ...EventBase,
     type: Schema.Literal("allocation.launch-failed"),
     reason: TrimmedNonEmptyString,
+    managedProvider: Schema.optionalKey(Schema.Literal("daytona")),
   }),
   Schema.Struct({ ...EventBase, type: Schema.Literal("allocation.agent-started") }),
   Schema.Struct({

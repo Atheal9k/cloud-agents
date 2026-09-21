@@ -24,6 +24,11 @@ import { CloudSecurityReport } from "./cloudSecurity.ts";
  * together and always run separately.
  */
 export const CloudReadinessCheckId = Schema.Literals([
+  "daytona-authentication",
+  "daytona-api",
+  "daytona-capacity",
+  "daytona-sandbox-readiness",
+  /** Retained so reports and requests from the AWS implementation still decode. */
   "execution-iam",
   "hypervisor-kvm",
   "image-access",
@@ -35,19 +40,15 @@ export const CloudReadinessCheckId = Schema.Literals([
 export type CloudReadinessCheckId = typeof CloudReadinessCheckId.Type;
 
 export const CLOUD_READINESS_CHECK_IDS = [
-  "execution-iam",
-  "hypervisor-kvm",
-  "image-access",
-  "snapshot-access",
-  "artifact-storage",
-  "guest-registration",
-  "ssm-diagnostics",
+  "daytona-authentication",
+  "daytona-api",
+  "daytona-capacity",
+  "daytona-sandbox-readiness",
 ] as const satisfies ReadonlyArray<CloudReadinessCheckId>;
 
-/** Only `ssm-diagnostics` is optional; the rest gate a working allocation. */
-export const CLOUD_READINESS_OPTIONAL_CHECK_IDS = [
-  "ssm-diagnostics",
-] as const satisfies ReadonlyArray<CloudReadinessCheckId>;
+/** Every Daytona check gates managed runtime admission. */
+export const CLOUD_READINESS_OPTIONAL_CHECK_IDS =
+  [] as const satisfies ReadonlyArray<CloudReadinessCheckId>;
 
 export const CloudReadinessCheckOutcome = Schema.Union([
   /** Nothing has probed this yet on this controller process. */
@@ -196,8 +197,24 @@ export const CloudReadinessSettings = Schema.Struct({
 });
 export type CloudReadinessSettings = typeof CloudReadinessSettings.Type;
 
+export const CloudManagedProviderReadiness = Schema.Struct({
+  provider: Schema.Literal("daytona"),
+  admission: Schema.Literals(["enabled", "disabled"]),
+  authentication: Schema.Literals(["configured", "missing", "invalid"]),
+  reachability: Schema.Literals(["unchecked", "reachable", "unreachable"]),
+  region: TrimmedNonEmptyString,
+  resourceClass: TrimmedNonEmptyString,
+  maxConcurrentWorkers: PositiveInt,
+  observedSandboxes: NonNegativeInt,
+  readySandboxes: NonNegativeInt,
+  detail: TrimmedNonEmptyString,
+});
+export type CloudManagedProviderReadiness = typeof CloudManagedProviderReadiness.Type;
+
 export const CloudReadinessReport = Schema.Struct({
   generatedAt: IsoDateTime,
+  /** Absent on reports generated before Daytona admission replaced AWS. */
+  managedProvider: Schema.optionalKey(CloudManagedProviderReadiness),
   accounts: Schema.Array(CloudReadinessAccount),
   runtime: CloudReadinessRuntime,
   environments: Schema.Array(CloudReadinessEnvironment),

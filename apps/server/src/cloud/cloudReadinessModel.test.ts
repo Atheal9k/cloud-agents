@@ -259,35 +259,25 @@ describe("buildCloudReadinessReport", () => {
     expect(report.environments[0]?.egressAllowlist).toEqual(["registry.npmjs.org"]);
   });
 
-  it("holds health down for a failed required check but not for a failed optional one", () => {
+  it("holds health down for a failed Daytona readiness check", () => {
     const requiredFailure = buildCloudReadinessReport({
       config: config(),
       snapshot: snapshot(),
       outcomes: outcomes([
-        ["execution-iam", { status: "failed", detail: "denied", remedy: "fix it", checkedAt: NOW }],
-      ]),
-      now: NOW,
-    });
-    const optionalFailure = buildCloudReadinessReport({
-      config: config(),
-      snapshot: snapshot(),
-      outcomes: outcomes([
         [
-          "ssm-diagnostics",
-          { status: "failed", detail: "missing", remedy: "fix it", checkedAt: NOW },
+          "daytona-authentication",
+          { status: "failed", detail: "denied", remedy: "fix it", checkedAt: NOW },
         ],
       ]),
       now: NOW,
     });
 
     expect(requiredFailure.health.requiredChecksPassing).toBe(false);
-    expect(requiredFailure.health.failedCheckIds).toEqual(["execution-iam"]);
-    expect(optionalFailure.health.requiredChecksPassing).toBe(true);
-    expect(optionalFailure.health.failedCheckIds).toEqual([]);
+    expect(requiredFailure.health.failedCheckIds).toEqual(["daytona-authentication"]);
     // A check nobody has run yet is not a failure, only an unknown.
-    expect(
-      requiredFailure.checks.find((check) => check.id === "hypervisor-kvm")?.outcome.status,
-    ).toBe("unchecked");
+    expect(requiredFailure.checks.find((check) => check.id === "daytona-api")?.outcome.status).toBe(
+      "unchecked",
+    );
   });
 
   it("reports the EC2 fallback with no packing capacity", () => {

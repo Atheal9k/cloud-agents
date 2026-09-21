@@ -35,6 +35,7 @@ function runtimeBase(runtime: CloudRuntimeAttempt, updatedAt: string) {
     allocationId: runtime.allocationId,
     attempt: runtime.attempt,
     runIds: runtime.runIds,
+    ...(runtime.managedRuntime === undefined ? {} : { managedRuntime: runtime.managedRuntime }),
     createdAt: runtime.createdAt,
     updatedAt,
   };
@@ -105,7 +106,21 @@ export function projectCloudControlPlane(
           throw new Error("A cloud agent can only be requested once");
         case "allocation.launch-started":
         case "allocation.launch-retry-scheduled":
+          if (runtime !== undefined) {
+            runtimes.set(event.attempt, { ...runtime, updatedAt: event.occurredAt });
+          }
+          break;
         case "allocation.instance-launched":
+          if (runtime !== undefined) {
+            runtimes.set(event.attempt, {
+              ...runtime,
+              ...(event.managedRuntime === undefined
+                ? {}
+                : { managedRuntime: event.managedRuntime }),
+              updatedAt: event.occurredAt,
+            });
+          }
+          break;
         case "allocation.worker-booted":
         case "allocation.preview-published":
         case "allocation.preview-withdrawn":
