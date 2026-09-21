@@ -6,8 +6,10 @@
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import { assert, expect, it } from "@effect/vitest";
 import { CloudEnvironmentBuildId, CloudEnvironmentSaveInput } from "@t3tools/contracts";
+import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
+import * as Fiber from "effect/Fiber";
 import * as Layer from "effect/Layer";
 import * as Path from "effect/Path";
 import * as Schema from "effect/Schema";
@@ -23,6 +25,7 @@ import {
 import { make as makeRunner } from "./CloudEnvironmentBuildRunner.ts";
 import { make as makeEnvironments } from "./CloudEnvironmentCatalog.ts";
 import * as CloudGitCredentials from "./CloudGitCredentials.ts";
+import type { DaytonaEnvironmentBuildProvider } from "./DaytonaEnvironmentBuildProvider.ts";
 
 const decodeSave = Schema.decodeSync(CloudEnvironmentSaveInput);
 const ProcessRunnerLayer = ProcessRunner.layer.pipe(Layer.provide(NodeServices.layer));
@@ -34,7 +37,9 @@ const TestLayer = Layer.mergeAll(ProcessRunnerLayer, SqlitePersistenceMemory).pi
 const INSTALL = `node -e "require('node:fs').writeFileSync('install.ok','installed\\n'); process.stdout.write(process.env.NPM_TOKEN || '')"`;
 const FAILING_INSTALL = `node -e "process.exit(3)"`;
 
-const fixture = Effect.fn("CloudEnvironmentBuildRunner.fixture")(function* () {
+const fixture = Effect.fn("CloudEnvironmentBuildRunner.fixture")(function* (
+  daytona?: DaytonaEnvironmentBuildProvider,
+) {
   const fs = yield* FileSystem.FileSystem;
   const path = yield* Path.Path;
   const processRunner = yield* ProcessRunner.ProcessRunner;
@@ -120,7 +125,11 @@ const fixture = Effect.fn("CloudEnvironmentBuildRunner.fixture")(function* () {
 
   const environment = yield* saveEnvironment(INSTALL, "2026-09-19T02:00:00.000Z");
 
-  const runner = yield* makeRunner({ buildRoot, installTimeoutSeconds: 120 }).pipe(
+  const runner = yield* makeRunner({
+    buildRoot,
+    installTimeoutSeconds: 120,
+    ...(daytona === undefined ? {} : { daytona }),
+  }).pipe(
     Effect.provideService(CloudGitCredentials.CloudGitCredentials, credentials),
     Effect.provideService(CloudEnvironmentBuildCatalog, builds),
   );
@@ -283,6 +292,101 @@ it.effect(
       expect((yield* context.environments.list)[0]?.activeBuildId).toBe("build-draft");
     }).pipe(Effect.scoped, TestClock.withLive, Effect.provide(TestLayer)),
   120_000,
+);
+
+it.effect("activates a Daytona-backed draft only after explicit Save", () =>
+  Effect.gen(function* () {
+    const prepared: Array<string> = [];
+    const daytona: DaytonaEnvironmentBuildProvider = {
+      prepare: (input) => {
+        prepared.push(input.buildId);
+        return Effect.succeed({
+          snapshot: {
+            id: "daytona-snapshot-draft",
+            digest: "d".repeat(64),
+            sizeBytes: 8192,
+            createdAt: "2026-09-19T02:02:00.000Z",
+          },
+          logs: [],
+          timings: {},
+        });
+      },
+      inspectSnapshot: () => Effect.succeed(undefined),
+      deleteSnapshot: () => Effect.void,
+      archiveSandbox: () => Effect.void,
+    };
+    const context = yield* fixture(daytona);
+    const draft = yield* context.runner.run({
+      buildId: CloudEnvironmentBuildId.make("build-daytona-draft"),
+      version: context.version,
+      trigger: "agent-requested",
+      draft: true,
+      occurredAt: "2026-09-19T02:01:00.000Z",
+      secretValues: context.secretValues,
+    });
+
+    assert(draft.outcome.status === "succeeded");
+    expect(draft.outcome.snapshot.id).toBe("daytona-snapshot-draft");
+    expect(prepared).toEqual(["build-daytona-draft"]);
+    expect((yield* context.environments.list)[0]?.activeBuildId).toBeUndefined();
+
+    yield* context.builds.save({
+      buildId: draft.id,
+      occurredAt: "2026-09-19T02:03:00.000Z",
+    });
+    expect((yield* context.environments.list)[0]?.activeBuildId).toBe("build-daytona-draft");
+  }).pipe(Effect.scoped, TestClock.withLive, Effect.provide(TestLayer)),
+);
+
+it.effect("deletes a Daytona snapshot when cancellation wins the completion race", () =>
+  Effect.gen(function* () {
+    const entered = yield* Deferred.make<void>();
+    const release = yield* Deferred.make<void>();
+    const deleted: string[] = [];
+    const daytona: DaytonaEnvironmentBuildProvider = {
+      prepare: () =>
+        Deferred.succeed(entered, undefined).pipe(
+          Effect.andThen(Deferred.await(release)),
+          Effect.as({
+            snapshot: {
+              id: "daytona-snapshot-cancelled",
+              digest: "e".repeat(64),
+              sizeBytes: 8192,
+              createdAt: "2026-09-19T02:02:00.000Z",
+            },
+            logs: [],
+            timings: {},
+          }),
+        ),
+      inspectSnapshot: () => Effect.succeed(undefined),
+      deleteSnapshot: (snapshotId) => Effect.sync(() => void deleted.push(snapshotId)),
+      archiveSandbox: () => Effect.void,
+    };
+    const context = yield* fixture(daytona);
+    const buildId = CloudEnvironmentBuildId.make("build-daytona-cancelled");
+    const buildFiber = yield* context.runner
+      .run({
+        buildId,
+        version: context.version,
+        trigger: "agent-requested",
+        draft: true,
+        occurredAt: "2026-09-19T02:01:00.000Z",
+        secretValues: context.secretValues,
+      })
+      .pipe(Effect.forkScoped);
+
+    yield* Deferred.await(entered);
+    yield* context.builds.cancel({
+      buildId,
+      occurredAt: "2026-09-19T02:02:30.000Z",
+    });
+    yield* Deferred.succeed(release, undefined);
+    const error = yield* Fiber.join(buildFiber).pipe(Effect.flip);
+
+    expect(error.reason).toBe("build-already-settled");
+    expect(deleted).toEqual(["daytona-snapshot-cancelled"]);
+    expect((yield* context.environments.list)[0]?.activeBuildId).toBeUndefined();
+  }).pipe(Effect.scoped, TestClock.withLive, Effect.provide(TestLayer)),
 );
 
 it.effect("rejects a Build before it starts when ports collide or Build secrets are missing", () =>

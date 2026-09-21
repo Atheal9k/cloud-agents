@@ -53,6 +53,11 @@ import {
 } from "./cloudEnvironmentBuildPolicy.ts";
 import * as CloudGitCredentials from "./CloudGitCredentials.ts";
 import {
+  type DaytonaEnvironmentBuildProvider,
+  make as makeDaytonaEnvironmentBuildProvider,
+} from "./DaytonaEnvironmentBuildProvider.ts";
+import { resolveDaytonaConfig } from "./daytonaConfig.ts";
+import {
   checkCloudPrivateDependencies,
   firstFailedCloudPrivateDependency,
 } from "./cloudPrivateNetworkPolicy.ts";
@@ -99,6 +104,8 @@ export class CloudEnvironmentBuildRunner extends Context.Service<
 interface StageFailure {
   readonly stage: CloudEnvironmentBuildStage;
   readonly message: string;
+  readonly logs?: ReadonlyArray<CloudRepositoryCommandResult>;
+  readonly timings?: CloudEnvironmentBuildTimings;
 }
 
 /** Timings fill in as stages complete, so the record survives a mid-run failure. */
@@ -122,6 +129,7 @@ function workspaceSegment(repository: string): string {
 export const make = Effect.fn("CloudEnvironmentBuildRunner.make")(function* (input: {
   readonly buildRoot: string;
   readonly installTimeoutSeconds?: number;
+  readonly daytona?: DaytonaEnvironmentBuildProvider;
 }) {
   const catalog = yield* CloudEnvironmentBuildCatalog;
   const credentials = yield* CloudGitCredentials.CloudGitCredentials;
@@ -586,16 +594,32 @@ export const make = Effect.fn("CloudEnvironmentBuildRunner.make")(function* (inp
         const logs: Array<CloudRepositoryCommandResult> = [];
         const timings: MutableTimings = {};
         const prepared = yield* Effect.result(
-          prepareTree({
-            buildId: request.buildId,
-            version,
-            gitSetup,
-            runId,
-            secretEnv: injected.env,
-            redact: injected.redact,
-            logs,
-            timings,
-          }),
+          input.daytona === undefined
+            ? prepareTree({
+                buildId: request.buildId,
+                version,
+                gitSetup,
+                runId,
+                secretEnv: injected.env,
+                redact: injected.redact,
+                logs,
+                timings,
+              }).pipe(
+                Effect.map((snapshot) => ({
+                  snapshot,
+                  logs,
+                  timings: timings satisfies CloudEnvironmentBuildTimings,
+                })),
+              )
+            : input.daytona.prepare({
+                buildId: request.buildId,
+                base: cloudEnvironmentBase(version.config),
+                inputsFingerprint: fingerprint,
+                gitSetup,
+                install: version.config.install,
+                secretEnv: injected.env,
+                redact: injected.redact,
+              }),
         );
         const completedAt = yield* now;
         if (Result.isFailure(prepared)) {
@@ -603,8 +627,8 @@ export const make = Effect.fn("CloudEnvironmentBuildRunner.make")(function* (inp
           return yield* catalog.complete({
             buildId: request.buildId,
             gitSetup,
-            logs,
-            timings: timings satisfies CloudEnvironmentBuildTimings,
+            logs: prepared.failure.logs ?? logs,
+            timings: prepared.failure.timings ?? (timings satisfies CloudEnvironmentBuildTimings),
             outcome: {
               status: "failed",
               stage: prepared.failure.stage,
@@ -613,13 +637,21 @@ export const make = Effect.fn("CloudEnvironmentBuildRunner.make")(function* (inp
             },
           });
         }
-        return yield* catalog.complete({
-          buildId: request.buildId,
-          gitSetup,
-          logs,
-          timings: timings satisfies CloudEnvironmentBuildTimings,
-          outcome: { status: "succeeded", snapshot: prepared.success, completedAt },
-        });
+        return yield* catalog
+          .complete({
+            buildId: request.buildId,
+            gitSetup,
+            logs: prepared.success.logs,
+            timings: prepared.success.timings,
+            outcome: { status: "succeeded", snapshot: prepared.success.snapshot, completedAt },
+          })
+          .pipe(
+            Effect.tapError(() =>
+              input.daytona === undefined
+                ? Effect.void
+                : input.daytona.deleteSnapshot(prepared.success.snapshot.id).pipe(Effect.ignore),
+            ),
+          );
       }),
     );
 
@@ -637,9 +669,12 @@ export const layer = Layer.effect(
     const installTimeoutSeconds = yield* Config.int(
       "T3CODE_CLOUD_BUILD_INSTALL_TIMEOUT_SECONDS",
     ).pipe(Config.withDefault(DEFAULT_INSTALL_TIMEOUT_SECONDS));
+    const daytonaConfig = yield* resolveDaytonaConfig();
+    const daytona = yield* makeDaytonaEnvironmentBuildProvider({ config: daytonaConfig });
     return yield* make({
       buildRoot,
       installTimeoutSeconds: Math.max(1, installTimeoutSeconds),
+      daytona,
     });
   }),
 );

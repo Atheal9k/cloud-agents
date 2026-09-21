@@ -1137,7 +1137,7 @@ References: [Daytona lifecycle](https://www.daytona.io/docs/sandboxes),
 
 Dependencies: CA-61.
 
-Status: Open.
+Status: Done on 2026-09-21 in [PR #68](https://github.com/Atheal9k/cloud-agents/pull/68).
 
 Description: Map T3's versioned environment and explicit Save workflow onto
 tested Daytona image, snapshot, and sandbox operations.
