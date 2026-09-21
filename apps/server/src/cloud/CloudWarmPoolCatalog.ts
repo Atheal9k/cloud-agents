@@ -27,7 +27,15 @@ import { warmGuestHasForbiddenIdentity } from "./cloudWarmPoolPolicy.ts";
 const EmptyRequest = Schema.Struct({});
 const GuestRow = Schema.Struct({ value: Schema.fromJsonString(CloudWarmGuest) });
 const ChangedRow = Schema.Struct({ changed: Schema.Int });
-const TimingKind = Schema.Literals(["cold-build-restore", "warm-claim", "ec2-startup"]);
+const TimingKind = Schema.Literals([
+  "cold-build-restore",
+  "warm-claim",
+  "ec2-startup",
+  "daytona-cold-create",
+  "daytona-stop-start",
+  "daytona-archive-start",
+  "daytona-build-restore",
+]);
 const TimingRow = Schema.Struct({
   kind: TimingKind,
   durationMs: Schema.Int,
@@ -398,7 +406,19 @@ export const make = Effect.fn("CloudWarmPoolCatalog.make")(function* () {
       ) {
         return undefined;
       }
-      return { coldBuildRestoreMs, warmClaimMs, ec2StartupMs };
+      const daytonaColdCreateMs = byKind.get("daytona-cold-create");
+      const daytonaStopStartMs = byKind.get("daytona-stop-start");
+      const daytonaArchiveStartMs = byKind.get("daytona-archive-start");
+      const daytonaBuildRestoreMs = byKind.get("daytona-build-restore");
+      return {
+        coldBuildRestoreMs,
+        warmClaimMs,
+        ec2StartupMs,
+        ...(daytonaColdCreateMs === undefined ? {} : { daytonaColdCreateMs }),
+        ...(daytonaStopStartMs === undefined ? {} : { daytonaStopStartMs }),
+        ...(daytonaArchiveStartMs === undefined ? {} : { daytonaArchiveStartMs }),
+        ...(daytonaBuildRestoreMs === undefined ? {} : { daytonaBuildRestoreMs }),
+      };
     }),
   );
 

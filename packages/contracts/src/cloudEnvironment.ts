@@ -16,6 +16,7 @@ import {
   CloudPrivateDependency,
 } from "./cloudPrivateNetwork.ts";
 import { CloudSecretScope } from "./cloudSecurity.ts";
+import { CloudManagedRuntimePolicy } from "./cloudRuntime.ts";
 
 const CursorEnvironmentBuild = Schema.Struct({
   dockerfile: Schema.optionalKey(TrimmedNonEmptyString),
@@ -88,6 +89,8 @@ const CursorEnvironmentCommon = {
     Schema.Array(Schema.Union([CloudEnvironmentTerminal, Schema.Array(CloudEnvironmentTerminal)])),
   ),
   agentCanUpdateSnapshot: Schema.optionalKey(Schema.Boolean),
+  /** Provider failsafes. Agent, viewer, and retention clocks remain independent. */
+  runtimeLifecycle: Schema.optionalKey(CloudManagedRuntimePolicy),
 };
 
 /** Cursor-compatible environment.json shape, with CA-41's stricter single-base rule. */

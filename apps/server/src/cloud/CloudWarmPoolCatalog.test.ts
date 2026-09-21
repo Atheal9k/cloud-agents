@@ -65,6 +65,33 @@ it.effect("claims one ready guest exactly once under concurrent callers", () =>
   }).pipe(Effect.provide(SqlitePersistenceMemory)),
 );
 
+it.effect("reports Daytona lifecycle timings separately from warm-pool timings", () =>
+  Effect.gen(function* () {
+    const pool = yield* makeWarmPool();
+    for (const [kind, durationMs] of [
+      ["cold-build-restore", 100],
+      ["warm-claim", 20],
+      ["ec2-startup", 500],
+      ["daytona-cold-create", 240],
+      ["daytona-stop-start", 80],
+      ["daytona-archive-start", 420],
+      ["daytona-build-restore", 300],
+    ] as const) {
+      yield* pool.recordTiming({ kind, durationMs, occurredAt });
+    }
+
+    expect(yield* pool.timings).toEqual({
+      coldBuildRestoreMs: 100,
+      warmClaimMs: 20,
+      ec2StartupMs: 500,
+      daytonaColdCreateMs: 240,
+      daytonaStopStartMs: 80,
+      daytonaArchiveStartMs: 420,
+      daytonaBuildRestoreMs: 300,
+    });
+  }).pipe(Effect.provide(SqlitePersistenceMemory)),
+);
+
 it.effect("drains obsolete versions without mutating a claimed guest", () =>
   Effect.gen(function* () {
     const pool = yield* makeWarmPool();

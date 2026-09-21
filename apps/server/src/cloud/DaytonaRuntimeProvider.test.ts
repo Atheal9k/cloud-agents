@@ -62,6 +62,7 @@ function fakeSandbox(id = "sandbox-daytona") {
     >(),
     desktopStatus: "stopped",
     lifecycleCalls: { start: 0, stop: 0, archive: 0, delete: 0 },
+    policyCalls: [] as Array<readonly [string, number]>,
   };
   const sandbox = {
     id,
@@ -128,6 +129,21 @@ function fakeSandbox(id = "sandbox-daytona") {
       state.lifecycleCalls.archive += 1;
       state.lifecycle = "archived";
     },
+    setAutostopInterval: async (minutes: number) => {
+      state.policyCalls.push(["stop", minutes]);
+    },
+    setAutoPauseInterval: async (minutes: number) => {
+      state.policyCalls.push(["pause", minutes]);
+    },
+    setAutoArchiveInterval: async (minutes: number) => {
+      state.policyCalls.push(["archive", minutes]);
+    },
+    setAutoDeleteInterval: async (minutes: number) => {
+      state.policyCalls.push(["delete", minutes]);
+    },
+    setTtl: async (minutes: number) => {
+      state.policyCalls.push(["ttl", minutes]);
+    },
     delete: async () => {
       state.lifecycleCalls.delete += 1;
       state.lifecycle = "destroyed";
@@ -172,6 +188,12 @@ function fakeClient(
         readonly user: "root";
         readonly envVars: Record<string, string>;
         readonly labels: Record<string, string>;
+        readonly public: false;
+        readonly autoStopInterval: number;
+        readonly autoPauseInterval: number;
+        readonly autoArchiveInterval: number;
+        readonly autoDeleteInterval: number;
+        readonly ttlMinutes: number;
       }
     | undefined;
   return {
@@ -194,6 +216,12 @@ function fakeClient(
         readonly user: "root";
         readonly envVars: Record<string, string>;
         readonly labels: Record<string, string>;
+        readonly public: false;
+        readonly autoStopInterval: number;
+        readonly autoPauseInterval: number;
+        readonly autoArchiveInterval: number;
+        readonly autoDeleteInterval: number;
+        readonly ttlMinutes: number;
       }) => {
         createCalls += 1;
         lastCreateParams = params;
@@ -326,6 +354,48 @@ it.effect("refuses to attach a different agent to an existing allocation attempt
   }),
 );
 
+it.effect("applies environment lifecycle policy and fences destructive calls by ownership", () =>
+  Effect.gen(function* () {
+    const fake = fakeClient();
+    const provider = yield* make({ config: config(), client: fake.client });
+    const policy = {
+      idle: { action: "pause" as const, afterMinutes: 20 },
+      archiveAfterMinutes: 180,
+      deleteAfterMinutes: 1_440,
+      maxTtlMinutes: 2_880,
+    };
+    const created = yield* provider.create({ ...assignment, policy });
+
+    expect(fake.state.lastCreateParams).toMatchObject({
+      autoStopInterval: 0,
+      autoPauseInterval: 20,
+      autoArchiveInterval: 180,
+      autoDeleteInterval: 1_440,
+      ttlMinutes: 2_880,
+    });
+    expect(created.policy).toEqual(policy);
+
+    yield* provider.start({ runtimeId: created.runtimeId, assignment: { ...assignment, policy } });
+    expect(fake.state.latestSandboxState?.policyCalls).toEqual([
+      ["stop", 0],
+      ["pause", 20],
+      ["archive", 180],
+      ["delete", 1_440],
+      ["ttl", 2_880],
+    ]);
+
+    const error = yield* provider
+      .stop({
+        runtimeId: created.runtimeId,
+        allocationId: RunAllocationId.make("allocation-other"),
+        attempt,
+      })
+      .pipe(Effect.flip);
+    expect(error.reason).toBe("conflict");
+    expect(fake.state.latestSandboxState?.lifecycleCalls.stop).toBe(0);
+  }),
+);
+
 it.effect("reports provider outages without exposing the API key", () =>
   Effect.gen(function* () {
     const fake = fakeClient({
@@ -348,6 +418,7 @@ it.effect("implements the provider-neutral lifecycle operations", () =>
     const fake = fakeClient();
     const provider = yield* make({ config: config(), client: fake.client });
     const created = yield* provider.create(assignment);
+    const owned = { runtimeId: created.runtimeId, allocationId, attempt };
 
     expect(created.lifecycleState).toBe("started");
     expect(
@@ -395,17 +466,17 @@ it.effect("implements the provider-neutral lifecycle operations", () =>
       token: "preview-token",
     });
     yield* provider.snapshot({ runtimeId: created.runtimeId, name: "snapshot-test" });
-    expect((yield* provider.stop(created.runtimeId)).lifecycleState).toBe("stopped");
-    yield* provider.stop(created.runtimeId);
+    expect((yield* provider.stop(owned)).lifecycleState).toBe("stopped");
+    yield* provider.stop(owned);
     expect(
       (yield* provider.start({ runtimeId: created.runtimeId, assignment })).lifecycleState,
     ).toBe("started");
     yield* provider.start({ runtimeId: created.runtimeId, assignment });
-    yield* provider.stop(created.runtimeId);
-    expect((yield* provider.archive(created.runtimeId)).lifecycleState).toBe("archived");
-    yield* provider.archive(created.runtimeId);
-    yield* provider.delete(created.runtimeId);
-    yield* provider.delete(created.runtimeId);
+    yield* provider.stop(owned);
+    expect((yield* provider.archive(owned)).lifecycleState).toBe("archived");
+    yield* provider.archive(owned);
+    yield* provider.delete(owned);
+    yield* provider.delete(owned);
 
     expect(fake.state.sandboxes[0]?.state).toBe("destroyed");
     expect(fake.state.latestSandboxState?.lifecycleCalls).toEqual({

@@ -5,6 +5,7 @@ import * as Schema from "effect/Schema";
 import { CloudEnvironmentConfig } from "./cloudEnvironment.ts";
 
 const decode = Schema.decodeUnknownExit(CloudEnvironmentConfig);
+const encode = Schema.encodeSync(CloudEnvironmentConfig);
 
 describe("CloudEnvironmentConfig", () => {
   it("accepts the Cursor environment fields with exactly one base", () => {
@@ -41,13 +42,42 @@ describe("CloudEnvironmentConfig", () => {
     ).toBe(true);
   });
 
+  it("validates provider lifecycle failsafes independently from environment commands", () => {
+    expect(
+      Exit.isSuccess(
+        decode({
+          image: "node:24",
+          runtimeLifecycle: {
+            idle: { action: "stop", afterMinutes: 15 },
+            archiveAfterMinutes: 1_440,
+            deleteAfterMinutes: 129_600,
+            maxTtlMinutes: 129_600,
+          },
+        }),
+      ),
+    ).toBe(true);
+    expect(
+      Exit.isFailure(
+        decode({
+          image: "node:24",
+          runtimeLifecycle: {
+            idle: { action: "pause", afterMinutes: 0 },
+            archiveAfterMinutes: 60,
+            deleteAfterMinutes: 120,
+            maxTtlMinutes: 180,
+          },
+        }),
+      ),
+    ).toBe(true);
+  });
+
   it("reads a committed file that carries $schema but never writes it back", () => {
     const decoded = decode({
       $schema: "https://cursor.com/schemas/environment.schema.json",
       image: "node:24",
       name: "Node",
     });
-    const encoded = Schema.encodeSync(CloudEnvironmentConfig)({ image: "node:24", name: "Node" });
+    const encoded = encode({ image: "node:24", name: "Node" });
 
     expect(Exit.isSuccess(decoded)).toBe(true);
     expect(encoded).toEqual({ image: "node:24", name: "Node" });
