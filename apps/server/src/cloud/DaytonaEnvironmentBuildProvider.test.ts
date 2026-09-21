@@ -48,7 +48,9 @@ function snapshot(id: string, name: string): Snapshot {
   };
 }
 
-function fakeClient(input: { readonly failVerification?: boolean } = {}) {
+function fakeClient(
+  input: { readonly failCreate?: boolean; readonly failVerification?: boolean } = {},
+) {
   const snapshots = new Map<string, Snapshot>();
   const createParams: Array<Parameters<DaytonaEnvironmentBuildClient["create"]>[0]> = [];
   const commands: Array<{
@@ -106,6 +108,8 @@ function fakeClient(input: { readonly failVerification?: boolean } = {}) {
       const purpose = params.labels["t3-purpose"] ?? "unknown";
       const sandbox = makeSandbox(`sandbox-${createParams.length}`, purpose);
       sandboxes.set(sandbox.id, sandbox);
+      sandboxes.set(params.name, sandbox);
+      if (input.failCreate === true) throw new Error("image build failed");
       return sandbox;
     },
     get: async (sandboxId) => {
@@ -203,6 +207,17 @@ it.effect("deletes a snapshot that fails verification in a fresh sandbox", () =>
     expect(error.message).toContain("fresh Daytona verification sandbox");
     expect(fake.state.deletedSnapshots).toEqual(["snapshot-build-1"]);
     expect(fake.state.deletedSandboxes).toEqual(["sandbox-2", "sandbox-1"]);
+  }),
+);
+
+it.effect("deletes a named sandbox when Daytona rejects after allocating it", () =>
+  Effect.gen(function* () {
+    const fake = fakeClient({ failCreate: true });
+    const provider = yield* make({ config: config(), client: fake.client });
+    const error = yield* provider.prepare(buildInput).pipe(Effect.flip);
+
+    expect(error.stage).toBe("base");
+    expect(fake.state.deletedSandboxes).toEqual(["sandbox-1"]);
   }),
 );
 

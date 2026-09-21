@@ -282,26 +282,41 @@ export const make = Effect.fn("DaytonaEnvironmentBuildProvider.make")(function (
         ...(input.config.memoryGib === undefined ? {} : { memory: input.config.memoryGib }),
         ...(input.config.diskGib === undefined ? {} : { disk: input.config.diskGib }),
       };
-      return yield* sdk("base", "Daytona could not create the isolated Build sandbox.", () =>
-        daytona.create(
-          {
-            ...source,
-            name: sandboxName(request.buildId, request.purpose),
-            user: request.purpose === "prepare" ? "root" : "cloudagent",
-            envVars: {},
-            labels: {
-              [LABEL.project]: input.config.project,
-              [LABEL.purpose]: `environment-build-${request.purpose}`,
-              [LABEL.buildId]: request.buildId,
-            },
-            public: false,
-            autoStopInterval: 0,
-            autoArchiveInterval: 0,
-            autoDeleteInterval: 60,
-            ...(Object.keys(resources).length === 0 ? {} : { resources }),
-          },
-          { timeout: OPERATION_TIMEOUT_SECONDS },
-        ),
+      const name = sandboxName(request.buildId, request.purpose);
+      return yield* sdk(
+        "base",
+        "Daytona could not create the isolated Build sandbox.",
+        async () => {
+          try {
+            return await daytona.create(
+              {
+                ...source,
+                name,
+                user: request.purpose === "prepare" ? "root" : "cloudagent",
+                envVars: {},
+                labels: {
+                  [LABEL.project]: input.config.project,
+                  [LABEL.purpose]: `environment-build-${request.purpose}`,
+                  [LABEL.buildId]: request.buildId,
+                },
+                public: false,
+                autoStopInterval: 0,
+                autoArchiveInterval: 0,
+                autoDeleteInterval: 60,
+                ...(Object.keys(resources).length === 0 ? {} : { resources }),
+              },
+              { timeout: OPERATION_TIMEOUT_SECONDS },
+            );
+          } catch (cause) {
+            try {
+              const failed = await daytona.get(name);
+              await failed.delete(60, true);
+            } catch {
+              // Daytona may reject before allocating the named sandbox.
+            }
+            throw cause;
+          }
+        },
       );
     },
   );
@@ -376,21 +391,21 @@ export const make = Effect.fn("DaytonaEnvironmentBuildProvider.make")(function (
         const repositoryChecks = request.build.gitSetup
           .map((entry) => {
             const directory = `${WORK_ROOT}/${workspaceSegment(entry.repository)}`;
-            return `test "$(git -C ${shellQuote(directory)} rev-parse HEAD)" = ${shellQuote(entry.commit)}`;
+            return `test "$(git -c safe.directory=${shellQuote(directory)} -C ${shellQuote(directory)} rev-parse HEAD)" = ${shellQuote(entry.commit)}`;
           })
           .join(" && ");
         const command = [
           `test "$(sha256sum ${PROVENANCE_PATH} | cut -d' ' -f1)" = ${shellQuote(request.provenanceDigest)}`,
           `test "$(node --version)" = ${shellQuote(`v${DAYTONA_WORKER_IMAGE_VERSIONS.node}`)}`,
           "git --version >/dev/null",
-          "t3 --version >/dev/null",
-          "codex --version >/dev/null",
-          "claude --version >/dev/null",
           repositoryChecks,
           "test ! -e /home/cloudagent/.ssh",
           "test ! -e /home/cloudagent/.codex",
           "test ! -e /home/cloudagent/.claude",
           "test ! -e /home/cloudagent/.t3",
+          "t3 --version >/dev/null",
+          "codex --version >/dev/null",
+          "claude --version >/dev/null",
         ]
           .filter((part) => part.length > 0)
           .join(" && ");
