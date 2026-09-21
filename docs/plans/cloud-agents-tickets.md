@@ -1204,7 +1204,7 @@ References: [Daytona process execution](https://www.daytona.io/docs/process-code
 
 Dependencies: CA-06, CA-49, CA-61, CA-63.
 
-Status: Open.
+Status: Done on 2026-09-21 in [PR #70](https://github.com/Atheal9k/cloud-agents/pull/70).
 
 Description: Let Codex and Claude authenticate in a Daytona sandbox and let Git
 use the owner's required SSH remote without confusing Daytona's inbound SSH
