@@ -86,6 +86,25 @@ run the command again and replace the secret when needed. Codex account login us
 ChatGPT allowance. Claude Agent SDK runs draw from the plan's separate monthly Agent SDK credit.
 Codex API keys use OpenAI API billing.
 
+Daytona uses the same trusted-machine login flows, but the controller reads the
+secrets and installs only the selected provider's credential in the assigned
+sandbox. Set these references on the controller:
+
+```bash
+export T3CODE_CLOUD_CODEX_AUTH_JSON_SECRET_REF=cloud-agent-codex-auth-json
+export T3CODE_CLOUD_CLAUDE_OAUTH_TOKEN_SECRET_REF=cloud-agent-claude-oauth-token
+```
+
+For Codex, run `codex login --device-auth` on a trusted machine and store the
+complete `auth.json`. The controller writes a refreshed file back before it
+stops the sandbox, so only one active sandbox may use a given Codex secret. For
+Claude, run `claude setup-token` on a trusted machine and store its raw output.
+The Claude token has no sandbox writeback. If either provider reports expiry or
+revocation, stop the run, authenticate again on the trusted machine, replace the
+secret value, and restart the run. To log out, stop every run using the secret,
+remove or revoke the stored value, and remove the local trusted-machine login.
+Neither flow needs a callback listener on the controller or sandbox.
+
 After applying OpenTofu, launch **New cloud thread** and choose the authenticated Codex or Claude
 provider and model. If the worker reports an authentication failure, replace the relevant secret,
 apply again if its ARN changed, and start a new worker.
@@ -328,6 +347,19 @@ Grant the GitHub token `Pull requests: write` for the target repository. If
 `cloud-agent-victor-key` is an account SSH key, its Git access is as broad as that account's
 repository access even though each run receives only its configured repository operation. A
 repository deploy key is narrower when one repository is enough.
+
+Daytona requires that narrower form. `T3CODE_CLOUD_GIT_SSH_SECRET_REF` must
+name a GitHub deploy-key secret for the repository assigned to the sandbox.
+Give the deploy key write access only when the run may push. Bootstrap loads the
+key into a sandbox-local SSH agent, deletes the key bytes, and allows only Git
+upload and receive commands for the assigned `owner/repository`. Git keeps
+either `git@github.com:` or `ssh://git@github.com/` remotes. The wrapper connects
+through `ssh.github.com:443` and accepts only the pinned GitHub Ed25519 host key.
+
+Provider homes, the SSH agent socket, and the runtime environment live under
+`/run/t3-cloud-credentials`, outside Build snapshots. T3 removes that directory
+before a Daytona sandbox stops, archives, or is released. A restored or
+reassigned sandbox must fetch fresh credentials for its allocation attempt.
 
 The base image deliberately has no provider CLI. Cloud tasks run on workers. To run a provider
 inside this controller instead, derive another image that installs a pinned provider CLI, supply

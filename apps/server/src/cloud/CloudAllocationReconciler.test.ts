@@ -17,6 +17,7 @@ import * as TestClock from "effect/testing/TestClock";
 import { SqlitePersistenceMemory } from "../persistence/Layers/Sqlite.ts";
 import * as CloudAllocationController from "./CloudAllocationController.ts";
 import * as CloudAllocationReconciler from "./CloudAllocationReconciler.ts";
+import type { DaytonaWorkerBootstrap } from "./DaytonaWorkerBootstrap.ts";
 import {
   CloudRuntimeProvider,
   CloudRuntimeProviderError,
@@ -88,6 +89,7 @@ function fixture(
     readonly terminateFailure?: boolean;
     readonly hibernateFailure?: boolean;
     readonly restoreFailure?: boolean;
+    readonly daytonaCredentials?: boolean;
   } = {},
 ) {
   return Effect.gen(function* () {
@@ -106,6 +108,8 @@ function fixture(
       archiveCalls: number;
       restoreCalls: number;
       runtimeArchived: boolean;
+      credentialReleaseCalls: number;
+      lifecycleEvents: string[];
     } = {
       instance: undefined,
       launchCalls: 0,
@@ -121,6 +125,8 @@ function fixture(
       archiveCalls: 0,
       restoreCalls: 0,
       runtimeArchived: false,
+      credentialReleaseCalls: 0,
+      lifecycleEvents: [],
     };
     let assignment: CloudRuntimeCreateInput | undefined;
     const controller = yield* CloudAllocationController.make({ enabled: true });
@@ -381,6 +387,7 @@ function fixture(
         }),
       stop: () =>
         Effect.gen(function* () {
+          state.lifecycleEvents.push("stop");
           state.hibernateCalls += 1;
           if (input.hibernateFailure === true) {
             return yield* new CloudRuntimeProviderError({
@@ -465,7 +472,24 @@ function fixture(
           return { status: "unchanged", capturedAt: "2026-09-17T04:10:00.000Z" } as const;
         }),
     });
-    const reconciler = yield* CloudAllocationReconciler.make({ runClient }).pipe(
+    const daytonaWorker: DaytonaWorkerBootstrap | undefined =
+      input.daytonaCredentials === true
+        ? {
+            prepare: () => Effect.succeed({ status: "ready" as const }),
+            registration: () => Effect.succeed(undefined),
+            preview: () => Effect.succeed(undefined),
+            interrupt: () => Effect.void,
+            releaseCredentials: () =>
+              Effect.sync(() => {
+                state.credentialReleaseCalls += 1;
+                state.lifecycleEvents.push("release-credentials");
+              }),
+          }
+        : undefined;
+    const reconciler = yield* CloudAllocationReconciler.make({
+      runClient,
+      ...(daytonaWorker === undefined ? {} : { daytonaWorker }),
+    }).pipe(
       Effect.provideService(CloudAllocationController.CloudAllocationController, controller),
       Effect.provideService(
         CloudWorkerRegistration,
@@ -974,15 +998,19 @@ function followUpCommand(allocationId: string, occurredAt: string, runId: string
 /** Drives one allocation from launch to a settled guest ready to go idle. */
 const settledFixture = Effect.fn("settledFixture")(function* (input?: {
   readonly restoreFailure?: boolean;
+  readonly daytonaCredentials?: boolean;
   readonly environment?: {
     readonly environmentId: string;
     readonly repository: string;
     readonly start: string;
   };
 }) {
-  const harness = yield* fixture(
-    input?.restoreFailure === undefined ? {} : { restoreFailure: input.restoreFailure },
-  );
+  const harness = yield* fixture({
+    ...(input?.restoreFailure === undefined ? {} : { restoreFailure: input.restoreFailure }),
+    ...(input?.daytonaCredentials === undefined
+      ? {}
+      : { daytonaCredentials: input.daytonaCredentials }),
+  });
   if (input?.environment !== undefined) {
     yield* harness.controller.saveEnvironment(
       decodeEnvironmentSave({
@@ -1060,6 +1088,20 @@ it.effect("flushes a settled guest, then releases it when the idle window ends",
     // The guest is stopped, so the compute meter stopped with it.
     const usage = (yield* controller.snapshot).usage[0];
     expect(usage?.elapsedWorkerSeconds).toBe(3_600);
+  }).pipe(Effect.provide(SqlitePersistenceMemory)),
+);
+
+it.effect("removes Daytona credentials before an idle sandbox stops", () =>
+  Effect.gen(function* () {
+    yield* TestClock.setTime(startAt);
+    const { reconciler, state } = yield* settledFixture({ daytonaCredentials: true });
+
+    yield* reconciler.reconcileOnce();
+    yield* TestClock.setTime(Date.parse("2026-09-17T04:00:00.000Z"));
+    yield* reconciler.reconcileOnce();
+
+    expect(state.credentialReleaseCalls).toBe(1);
+    expect(state.lifecycleEvents).toEqual(["release-credentials", "stop"]);
   }).pipe(Effect.provide(SqlitePersistenceMemory)),
 );
 

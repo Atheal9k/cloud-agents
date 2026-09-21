@@ -12,7 +12,7 @@ import * as ChildProcessSpawner from "effect/unstable/process/ChildProcessSpawne
 import * as ServerConfig from "../config.ts";
 import * as ProcessRunner from "../processRunner.ts";
 
-const GITHUB_SSH_KNOWN_HOST =
+export const GITHUB_SSH_KNOWN_HOST =
   "[ssh.github.com]:443 ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIOMqqnkVzrm0SdG6UOoqKLsabgH5C9okWi0dh2l9GKJl\n";
 const DEFAULT_COMMAND_TIMEOUT = "2 minutes";
 const MAX_SECRET_BYTES = 64 * 1024;

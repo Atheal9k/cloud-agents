@@ -21,6 +21,11 @@ import * as HttpClientResponse from "effect/unstable/http/HttpClientResponse";
 
 import type { CloudRuntimeProcess } from "./CloudRuntimeProvider.ts";
 import { CloudRuntimeProvider } from "./CloudRuntimeProvider.ts";
+import {
+  DAYTONA_GIT_SSH_WRAPPER,
+  DAYTONA_RUNTIME_ENV,
+  DaytonaSandboxCredentials,
+} from "./DaytonaSandboxCredentials.ts";
 
 const T3_PORT = 3773;
 const T3_HOME = "/home/cloudagent/.t3-cloud";
@@ -70,6 +75,9 @@ export interface DaytonaWorkerBootstrap {
   readonly interrupt: (
     allocation: RunAllocation,
   ) => Effect.Effect<void, DaytonaWorkerBootstrapError>;
+  readonly releaseCredentials: (
+    allocation: RunAllocation,
+  ) => Effect.Effect<void, DaytonaWorkerBootstrapError>;
 }
 
 function failure(stage: DaytonaWorkerBootstrapStage, message: string) {
@@ -107,23 +115,49 @@ function checkoutCommand(allocation: RunAllocation): string {
   const outputBranch = allocation.target.branch;
   const builtWorkspace = `/work/environment/${segment(repository)}`;
   const prepare = allocation.build
-    ? `rm -rf ${shellQuote(WORKSPACE)} && cp -a ${shellQuote(builtWorkspace)} ${shellQuote(WORKSPACE)}`
-    : `rm -rf ${shellQuote(WORKSPACE)} && git clone ${shellQuote(`https://github.com/${repository}.git`)} ${shellQuote(WORKSPACE)}`;
+    ? `rm -rf ${shellQuote(WORKSPACE)} && cp -a ${shellQuote(builtWorkspace)} ${shellQuote(WORKSPACE)} && chown -R cloudagent:cloudagent ${shellQuote(WORKSPACE)}`
+    : `rm -rf ${shellQuote(WORKSPACE)} && install -d -o cloudagent -g cloudagent -m 0750 ${shellQuote(WORKSPACE)} && ${cloudagentGitCommand(`git clone ${shellQuote(`git@github.com:${repository}.git`)} ${shellQuote(WORKSPACE)}`)}`;
   return [
     "set -eu",
     prepare,
-    `git -c safe.directory=${shellQuote(WORKSPACE)} -C ${shellQuote(WORKSPACE)} checkout -B ${shellQuote(outputBranch)} ${shellQuote(selectedRef)}`,
-    `chown -R cloudagent:cloudagent ${shellQuote(WORKSPACE)}`,
+    cloudagentGitCommand(
+      [
+        `git -C ${shellQuote(WORKSPACE)} remote set-url origin ${shellQuote(`git@github.com:${repository}.git`)}`,
+        `git -C ${shellQuote(WORKSPACE)} fetch --no-tags --force origin ${shellQuote(selectedRef)}`,
+        `git -C ${shellQuote(WORKSPACE)} checkout -B ${shellQuote(outputBranch)} FETCH_HEAD`,
+      ].join(" && "),
+    ),
   ].join(" && ");
 }
 
 function providerCommand(allocation: RunAllocation): string {
   const instanceId = allocation.execution?.turn.modelSelection.instanceId ?? "";
-  return instanceId.toLowerCase().includes("claude") ? "claude --version" : "codex --version";
+  return cloudagentCommand(
+    instanceId.toLowerCase().includes("claude") ? "claude auth status" : "codex login status",
+  );
 }
 
 function workerCommand(): string {
-  return `exec runuser -u cloudagent -- env T3CODE_NO_BROWSER=true t3 --host 0.0.0.0 --port ${T3_PORT} --base-dir ${shellQuote(T3_HOME)}`;
+  return [
+    "set -eu",
+    "set -a",
+    `. ${shellQuote(DAYTONA_RUNTIME_ENV)}`,
+    "set +a",
+    `exec runuser -u cloudagent --preserve-environment -- env T3CODE_NO_BROWSER=true t3 --host 0.0.0.0 --port ${T3_PORT} --base-dir ${shellQuote(T3_HOME)}`,
+  ].join(" && ");
+}
+
+function cloudagentCommand(command: string): string {
+  return [
+    "set -a",
+    `. ${shellQuote(DAYTONA_RUNTIME_ENV)}`,
+    "set +a",
+    `runuser -u cloudagent --preserve-environment -- /bin/sh -lc ${shellQuote(command)}`,
+  ].join(" && ");
+}
+
+function cloudagentGitCommand(command: string): string {
+  return `runuser -u cloudagent -- env GIT_SSH=${shellQuote(DAYTONA_GIT_SSH_WRAPPER)} GIT_TERMINAL_PROMPT=0 GCM_INTERACTIVE=never /bin/sh -lc ${shellQuote(command)}`;
 }
 
 function processFailure(stage: DaytonaWorkerBootstrapStage, process: CloudRuntimeProcess) {
@@ -152,6 +186,7 @@ const encodeAccessCache = Schema.encodeSync(
 );
 export const make = Effect.fn("DaytonaWorkerBootstrap.make")(function* () {
   const runtimes = yield* CloudRuntimeProvider;
+  const credentials = yield* DaytonaSandboxCredentials;
   const httpClient = yield* HttpClient.HttpClient;
 
   const ensureCompleted = Effect.fn("DaytonaWorkerBootstrap.ensureCompleted")(function* (input: {
@@ -190,6 +225,9 @@ export const make = Effect.fn("DaytonaWorkerBootstrap.make")(function* () {
       const id = runtimeId(allocation);
       if (id === undefined)
         return yield* failure("setup", "The allocation has no Daytona runtime.");
+      yield* credentials
+        .provision({ runtimeId: id, allocation })
+        .pipe(Effect.mapError((error) => failure("provider", error.message)));
       if (
         !(yield* ensureCompleted({
           runtimeId: id,
@@ -367,7 +405,26 @@ export const make = Effect.fn("DaytonaWorkerBootstrap.make")(function* () {
     yield* runtimes
       .deleteProcess({ runtimeId: id, sessionId: sessionId(allocation, "worker") })
       .pipe(Effect.mapError((error) => failure("worker", error.message)));
+    yield* credentials
+      .release({ runtimeId: id, allocation })
+      .pipe(Effect.mapError((error) => failure("provider", error.message)));
   });
 
-  return { prepare, registration, preview, interrupt } satisfies DaytonaWorkerBootstrap;
+  const releaseCredentials: DaytonaWorkerBootstrap["releaseCredentials"] = Effect.fn(
+    "DaytonaWorkerBootstrap.releaseCredentials",
+  )(function* (allocation) {
+    const id = runtimeId(allocation);
+    if (id === undefined) return;
+    yield* credentials
+      .release({ runtimeId: id, allocation })
+      .pipe(Effect.mapError((error) => failure("provider", error.message)));
+  });
+
+  return {
+    prepare,
+    registration,
+    preview,
+    interrupt,
+    releaseCredentials,
+  } satisfies DaytonaWorkerBootstrap;
 });

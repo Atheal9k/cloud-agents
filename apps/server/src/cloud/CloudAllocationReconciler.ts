@@ -358,6 +358,22 @@ export const make = Effect.fn("CloudAllocationReconciler.make")(function* (input
             status: "running",
             message: "Provider interrupted. Stopping the Daytona sandbox.",
           });
+          if (input?.daytonaWorker !== undefined) {
+            const released = yield* input.daytonaWorker
+              .releaseCredentials(allocation)
+              .pipe(Effect.result);
+            if (Result.isFailure(released)) {
+              yield* Effect.logWarning(
+                "Could not remove Daytona credentials before stopping the sandbox.",
+                {
+                  allocationId: allocation.id,
+                  attempt: allocation.attempt,
+                  runtimeId: managed.runtimeId,
+                  error: released.failure.message,
+                },
+              );
+            }
+          }
           const stopped = yield* runtimes.stop(managed.runtimeId).pipe(Effect.result);
           if (Result.isFailure(stopped)) {
             yield* Effect.logWarning("Could not stop the Daytona sandbox during cleanup.", {
@@ -686,6 +702,22 @@ export const make = Effect.fn("CloudAllocationReconciler.make")(function* (input
         return;
       }
       if (managed.lifecycleState !== "stopped" && managed.lifecycleState !== "archived") {
+        if (input?.daytonaWorker !== undefined) {
+          const released = yield* input.daytonaWorker
+            .releaseCredentials(allocation)
+            .pipe(Effect.result);
+          if (Result.isFailure(released)) {
+            yield* Effect.logWarning(
+              "Could not remove Daytona credentials before hibernating the sandbox.",
+              {
+                allocationId: allocation.id,
+                attempt: allocation.attempt,
+                runtimeId: managed.runtimeId,
+                error: released.failure.message,
+              },
+            );
+          }
+        }
         yield* runtimes.stop(managed.runtimeId);
         return;
       }
