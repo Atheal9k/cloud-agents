@@ -322,6 +322,12 @@ import {
   CloudHandoffPreviewInput,
 } from "./cloudHandoff.ts";
 import {
+  CloudExpoMetroControlInput,
+  CloudExpoMetroError,
+  CloudExpoMetroInspectInput,
+  CloudExpoMetroStatus,
+} from "./cloudExpoMetro.ts";
+import {
   CloudEnvironment,
   CloudEnvironmentError,
   CloudEnvironmentResolution,
@@ -496,6 +502,8 @@ export const WS_METHODS = {
   cloudAgentReviewAct: "cloud.agents.act",
   cloudAgentReviewLease: "cloud.agents.lease",
   cloudAgentReviewShare: "cloud.agents.share",
+  cloudExpoMetroInspect: "cloud.expoMetro.inspect",
+  cloudExpoMetroControl: "cloud.expoMetro.control",
   cloudHandoffPreview: "cloud.handoff.preview",
   cloudHandoffExecute: "cloud.handoff.execute",
   sharedBrowserIssue: "sharedBrowser.issue",
@@ -988,6 +996,18 @@ const WsCloudAgentReviewShareRpc = Rpc.make(WS_METHODS.cloudAgentReviewShare, {
     CloudAllocationControllerError,
     EnvironmentAuthorizationError,
   ]),
+});
+
+const WsCloudExpoMetroInspectRpc = Rpc.make(WS_METHODS.cloudExpoMetroInspect, {
+  payload: CloudExpoMetroInspectInput,
+  success: CloudExpoMetroStatus,
+  error: Schema.Union([CloudExpoMetroError, EnvironmentAuthorizationError]),
+});
+
+const WsCloudExpoMetroControlRpc = Rpc.make(WS_METHODS.cloudExpoMetroControl, {
+  payload: CloudExpoMetroControlInput,
+  success: CloudExpoMetroStatus,
+  error: Schema.Union([CloudExpoMetroError, EnvironmentAuthorizationError]),
 });
 
 const WsCloudHandoffPreviewRpc = Rpc.make(WS_METHODS.cloudHandoffPreview, {
@@ -1838,6 +1858,8 @@ export const WsRpcGroup = RpcGroup.make(
   WsCloudAgentReviewActRpc,
   WsCloudAgentReviewLeaseRpc,
   WsCloudAgentReviewShareRpc,
+  WsCloudExpoMetroInspectRpc,
+  WsCloudExpoMetroControlRpc,
   WsCloudHandoffPreviewRpc,
   WsCloudHandoffExecuteRpc,
   WsSharedBrowserIssueRpc,

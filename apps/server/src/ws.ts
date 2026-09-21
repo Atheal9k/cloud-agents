@@ -126,6 +126,7 @@ import * as CloudAllocationController from "./cloud/CloudAllocationController.ts
 import * as CloudCollaboration from "./cloud/CloudCollaboration.ts";
 import * as CloudArtifactAccess from "./cloud/CloudArtifactAccess.ts";
 import * as CloudAgentReview from "./cloud/CloudAgentReview.ts";
+import * as CloudExpoMetro from "./cloud/CloudExpoMetro.ts";
 import * as CloudHandoff from "./cloud/CloudHandoff.ts";
 import * as CloudEnvironmentBuildRunner from "./cloud/CloudEnvironmentBuildRunner.ts";
 import * as CloudReadiness from "./cloud/CloudReadiness.ts";
@@ -580,6 +581,7 @@ const makeWsRpcLayer = (
       const deviceDisplayGateway = yield* DeviceDisplayGateway.DeviceDisplayGateway;
       const cloudArtifactAccess = yield* CloudArtifactAccess.CloudArtifactAccess;
       const cloudAgentReview = yield* CloudAgentReview.CloudAgentReviewService;
+      const cloudExpoMetro = yield* CloudExpoMetro.CloudExpoMetro;
       const cloudHandoff = yield* CloudHandoff.CloudHandoff;
       const cloudBuildRunner = yield* CloudEnvironmentBuildRunner.CloudEnvironmentBuildRunner;
       const cloudReadiness = yield* CloudReadiness.CloudReadiness;
@@ -3748,6 +3750,14 @@ const makeWsRpcLayer = (
         [WS_METHODS.cloudAgentReviewShare]: (input) =>
           observeRpcEffect(WS_METHODS.cloudAgentReviewShare, cloudAgentReview.share(input), {
             "rpc.aggregate": "cloud-review",
+          }),
+        [WS_METHODS.cloudExpoMetroInspect]: (input) =>
+          observeRpcEffect(WS_METHODS.cloudExpoMetroInspect, cloudExpoMetro.inspect(input), {
+            "rpc.aggregate": "cloud-expo-metro",
+          }),
+        [WS_METHODS.cloudExpoMetroControl]: (input) =>
+          observeRpcEffect(WS_METHODS.cloudExpoMetroControl, cloudExpoMetro.control(input), {
+            "rpc.aggregate": "cloud-expo-metro",
           }),
         [WS_METHODS.cloudHandoffPreview]: (input) =>
           observeRpcEffect(WS_METHODS.cloudHandoffPreview, cloudHandoff.preview(input), {

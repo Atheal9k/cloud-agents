@@ -444,6 +444,8 @@ export function auditActionForCommand(
       return "snapshot";
     case "allocation.preview-published":
     case "allocation.preview-withdrawn":
+    case "allocation.expo-metro-request":
+    case "allocation.expo-metro-stop":
       return "artifact";
     default:
       return undefined;
