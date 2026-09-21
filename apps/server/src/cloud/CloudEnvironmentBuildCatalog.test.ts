@@ -156,6 +156,40 @@ it.effect("keeps an agent-requested draft out of the active slot until it is sav
   }).pipe(Effect.provide(SqlitePersistenceMemory)),
 );
 
+it.effect("serializes concurrent Save requests and activates the draft once", () =>
+  Effect.gen(function* () {
+    const { environments, builds, version } = yield* setup();
+    yield* builds.start(start(version, "build-draft", true));
+    yield* builds.complete({
+      buildId: CloudEnvironmentBuildId.make("build-draft"),
+      gitSetup: [],
+      logs: [],
+      timings: {},
+      outcome: {
+        status: "succeeded",
+        snapshot: snapshot("build-draft"),
+        completedAt: "2026-09-19T02:09:00.000Z",
+      },
+    });
+
+    const saves = yield* Effect.all(
+      ["2026-09-19T02:10:00.000Z", "2026-09-19T02:10:00.001Z"].map((occurredAt) =>
+        builds
+          .save({ buildId: CloudEnvironmentBuildId.make("build-draft"), occurredAt })
+          .pipe(Effect.result),
+      ),
+      { concurrency: "unbounded" },
+    );
+
+    expect(saves.filter((result) => result._tag === "Success")).toHaveLength(1);
+    const rejected = saves.find((result) => result._tag === "Failure");
+    expect(rejected?._tag === "Failure" ? rejected.failure.reason : undefined).toBe(
+      "build-not-draft",
+    );
+    expect((yield* environments.list)[0]?.activeBuildId).toBe("build-draft");
+  }).pipe(Effect.provide(SqlitePersistenceMemory)),
+);
+
 it.effect("links agent setup Builds to their chat and unlocks Save only after proposal", () =>
   Effect.gen(function* () {
     const { builds, version } = yield* setup();
