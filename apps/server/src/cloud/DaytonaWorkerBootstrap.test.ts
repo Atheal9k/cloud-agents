@@ -12,6 +12,7 @@ import * as HttpClient from "effect/unstable/http/HttpClient";
 import * as HttpClientResponse from "effect/unstable/http/HttpClientResponse";
 
 import { CloudRuntimeProvider } from "./CloudRuntimeProvider.ts";
+import { DaytonaSandboxCredentials } from "./DaytonaSandboxCredentials.ts";
 import { make } from "./DaytonaWorkerBootstrap.ts";
 
 const allocation = Schema.decodeSync(RunAllocation)({
@@ -189,6 +190,13 @@ it.effect("reconciles named processes and registers through a signed Daytona rou
     });
     const worker = yield* make().pipe(
       Effect.provideService(CloudRuntimeProvider, runtime),
+      Effect.provideService(
+        DaytonaSandboxCredentials,
+        DaytonaSandboxCredentials.of({
+          provision: () => Effect.void,
+          release: () => Effect.void,
+        }),
+      ),
       Effect.provideService(HttpClient.HttpClient, httpClient),
     );
 
@@ -208,7 +216,10 @@ it.effect("reconciles named processes and registers through a signed Daytona rou
     const registration = yield* worker.registration({ allocation });
 
     expect(processCommands.some((command) => command.includes("git clone"))).toBe(true);
-    expect(processCommands.some((command) => command.includes("codex --version"))).toBe(true);
+    expect(
+      processCommands.some((command) => command.includes("git@github.com:t3tools/t3code.git")),
+    ).toBe(true);
+    expect(processCommands.some((command) => command.includes("codex login status"))).toBe(true);
     expect(processCommands.some((command) => command.includes("t3 --host 0.0.0.0"))).toBe(true);
     expect(urls).toEqual([
       "https://3773-sandbox.proxy.daytona.test/.well-known/t3/environment?token=preview-token",

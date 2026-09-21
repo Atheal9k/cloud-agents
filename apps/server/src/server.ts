@@ -163,6 +163,7 @@ import * as CloudEnvironmentRuntimeBoot from "./cloud/CloudEnvironmentRuntimeBoo
 import * as CloudWorkerReopen from "./cloud/CloudWorkerReopen.ts";
 import * as CloudWorkerProvider from "./cloud/CloudWorkerProvider.ts";
 import * as DaytonaRuntimeProvider from "./cloud/DaytonaRuntimeProvider.ts";
+import * as DaytonaSandboxCredentials from "./cloud/DaytonaSandboxCredentials.ts";
 import * as CloudEnvironmentBuildCatalog from "./cloud/CloudEnvironmentBuildCatalog.ts";
 import * as CloudEnvironmentCatalog from "./cloud/CloudEnvironmentCatalog.ts";
 import * as CloudDiagnosticsCatalog from "./cloud/CloudDiagnosticsCatalog.ts";
@@ -352,6 +353,12 @@ const CloudWorkerSessionLayerLive = CloudWorkerReopen.layer.pipe(
 const CloudAllocationRuntimeLayerLive = CloudAllocationReconciler.layer.pipe(
   Layer.provide(CloudWorkerProviderLayerLive),
   Layer.provide(CloudRuntimeProviderLayerLive),
+  Layer.provide(
+    DaytonaSandboxCredentials.layer.pipe(
+      Layer.provide(ProcessRunner.layer),
+      Layer.provide(CloudRuntimeProviderLayerLive),
+    ),
+  ),
   Layer.provideMerge(CloudWorkerRunClient.layer),
   Layer.provideMerge(CloudWorkerRegistrationLayerLive),
 );
