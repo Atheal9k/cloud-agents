@@ -40,6 +40,7 @@ export const CloudUsageDimension = Schema.Literals([
   "snapshots",
   "artifacts-transfer",
   "previews",
+  "daytona-quota",
   "external-provider",
 ]);
 export type CloudUsageDimension = typeof CloudUsageDimension.Type;
@@ -64,7 +65,7 @@ export const CloudSpendLimitInput = Schema.Struct({
 });
 export type CloudSpendLimitInput = typeof CloudSpendLimitInput.Type;
 
-export const CloudInvoiceSource = Schema.Literals(["aws", "model-provider"]);
+export const CloudInvoiceSource = Schema.Literals(["aws", "daytona", "model-provider"]);
 export type CloudInvoiceSource = typeof CloudInvoiceSource.Type;
 
 export const CloudInvoiceLine = Schema.Struct({
@@ -153,11 +154,7 @@ export const CloudUsageExportInput = Schema.Struct({
 });
 export type CloudUsageExportInput = typeof CloudUsageExportInput.Type;
 
-export const CloudCollaborationDefault = Schema.Literals([
-  "disabled",
-  "service-accounts",
-  "all",
-]);
+export const CloudCollaborationDefault = Schema.Literals(["disabled", "service-accounts", "all"]);
 export type CloudCollaborationDefault = typeof CloudCollaborationDefault.Type;
 
 export const CloudSpendAttribution = Schema.Struct({

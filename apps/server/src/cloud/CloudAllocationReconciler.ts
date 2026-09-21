@@ -3,11 +3,13 @@ import {
   CloudMacHostId,
   CloudRunId,
   CloudWarmGuestId,
+  DEFAULT_CLOUD_MANAGED_RUNTIME_POLICY,
   RunAllocationCommand,
   type CloudAllocationSnapshot,
   type CloudEnvironment,
   type CloudEnvironmentVersion,
   type CloudManagedRuntime,
+  type CloudManagedRuntimePolicy,
   type RunAllocation,
   type RunAllocationProgressStage,
   type RunRuntimeFlush,
@@ -41,6 +43,7 @@ import {
 import { expiredLeases, holdsRuntime, settleIdleSeconds } from "./cloudPreviewLeasePolicy.ts";
 import * as CloudMacHostCatalog from "./CloudMacHostCatalog.ts";
 import * as CloudRuntimeProvider from "./CloudRuntimeProvider.ts";
+import * as CloudRuntimeCleanupQueue from "./CloudRuntimeCleanupQueue.ts";
 import * as CloudWarmPoolCatalog from "./CloudWarmPoolCatalog.ts";
 import {
   planWarmPoolCapacity,
@@ -193,6 +196,7 @@ export const make = Effect.fn("CloudAllocationReconciler.make")(function* (input
   const runtimes = yield* CloudRuntimeProvider.CloudRuntimeProvider;
   const macHosts = yield* CloudMacHostCatalog.make();
   const warmPool = yield* CloudWarmPoolCatalog.make();
+  const runtimeCleanup = yield* CloudRuntimeCleanupQueue.make();
   const runClient = input?.runClient;
   const dispatch = Effect.fn("CloudAllocationReconciler.dispatch")(function* (
     allocation: RunAllocation,
@@ -259,6 +263,7 @@ export const make = Effect.fn("CloudAllocationReconciler.make")(function* (input
     allocation: RunAllocation,
     registrationCredential: string,
     maxInputWaitSeconds: number,
+    policy: CloudManagedRuntimePolicy,
   ): CloudRuntimeProvider.CloudRuntimeCreateInput => ({
     allocationId: allocation.id,
     attempt: allocation.attempt,
@@ -269,6 +274,7 @@ export const make = Effect.fn("CloudAllocationReconciler.make")(function* (input
       : { environmentId: allocation.environment.environmentId }),
     ...(allocation.build === undefined ? {} : { buildId: allocation.build.buildId }),
     ...(allocation.build === undefined ? {} : { snapshotId: allocation.build.snapshot.id }),
+    policy,
     environmentVariables: {
       T3CODE_CLOUD_ALLOCATION_ID: allocation.id,
       T3CODE_CLOUD_ALLOCATION_ATTEMPT: String(allocation.attempt),
@@ -350,6 +356,24 @@ export const make = Effect.fn("CloudAllocationReconciler.make")(function* (input
           managed.lifecycleState === "unknown" ||
           managed.lifecycleState === "error"
         ) {
+          if (
+            runClient !== undefined &&
+            (allocation.progress?.stage !== "checkpoint" ||
+              allocation.progress.status !== "succeeded")
+          ) {
+            const checkpoint = yield* runClient.flush(allocation).pipe(Effect.result);
+            yield* reportProgress({
+              allocation,
+              occurredAt,
+              operation: "sandbox-checkpoint",
+              stage: "checkpoint",
+              status: Result.isSuccess(checkpoint) ? "succeeded" : "failed",
+              message: Result.isSuccess(checkpoint)
+                ? "Checkpointed T3 state and provider continuation data before sandbox stop."
+                : `Could not checkpoint the sandbox before stop: ${checkpoint.failure.message}`,
+            });
+            return;
+          }
           yield* reportProgress({
             allocation,
             occurredAt,
@@ -374,7 +398,13 @@ export const make = Effect.fn("CloudAllocationReconciler.make")(function* (input
               );
             }
           }
-          const stopped = yield* runtimes.stop(managed.runtimeId).pipe(Effect.result);
+          const stopped = yield* runtimes
+            .stop({
+              runtimeId: managed.runtimeId,
+              allocationId: allocation.id,
+              attempt: allocation.attempt,
+            })
+            .pipe(Effect.result);
           if (Result.isFailure(stopped)) {
             yield* Effect.logWarning("Could not stop the Daytona sandbox during cleanup.", {
               allocationId: allocation.id,
@@ -409,7 +439,13 @@ export const make = Effect.fn("CloudAllocationReconciler.make")(function* (input
             status: "running",
             message: "Sandbox stopped. Archiving its resources.",
           });
-          const archived = yield* runtimes.archive(managed.runtimeId).pipe(Effect.result);
+          const archived = yield* runtimes
+            .archive({
+              runtimeId: managed.runtimeId,
+              allocationId: allocation.id,
+              attempt: allocation.attempt,
+            })
+            .pipe(Effect.result);
           if (Result.isFailure(archived)) {
             yield* Effect.logWarning("Could not archive the Daytona sandbox during cleanup.", {
               allocationId: allocation.id,
@@ -432,7 +468,13 @@ export const make = Effect.fn("CloudAllocationReconciler.make")(function* (input
               : "Archive confirmed. Releasing the Daytona resource.",
         });
         if (managed.lifecycleState === "deleting") return;
-        const deleted = yield* runtimes.delete(managed.runtimeId).pipe(Effect.result);
+        const deleted = yield* runtimes
+          .delete({
+            runtimeId: managed.runtimeId,
+            allocationId: allocation.id,
+            attempt: allocation.attempt,
+          })
+          .pipe(Effect.result);
         if (Result.isFailure(deleted)) {
           yield* Effect.logWarning("Could not release the Daytona sandbox.", {
             allocationId: allocation.id,
@@ -718,7 +760,11 @@ export const make = Effect.fn("CloudAllocationReconciler.make")(function* (input
             );
           }
         }
-        yield* runtimes.stop(managed.runtimeId);
+        yield* runtimes.stop({
+          runtimeId: managed.runtimeId,
+          allocationId: allocation.id,
+          attempt: allocation.attempt,
+        });
         return;
       }
       const snapshot: RunRuntimeSnapshot = {
@@ -921,8 +967,24 @@ export const make = Effect.fn("CloudAllocationReconciler.make")(function* (input
             allocation,
             registrationCredential,
             maxInputWaitSeconds,
+            environmentVersionFor(allocation, environments)?.config.runtimeLifecycle ??
+              DEFAULT_CLOUD_MANAGED_RUNTIME_POLICY,
           );
           const retained = retainedRuntimeSnapshot(allocation);
+          const startedAt = yield* DateTime.now;
+          const retainedObservation =
+            retained === undefined
+              ? undefined
+              : yield* runtimes
+                  .inspect({ kind: "id", runtimeId: retained.instanceId })
+                  .pipe(Effect.result);
+          const retainedLifecycle =
+            retainedObservation !== undefined &&
+            Result.isSuccess(retainedObservation) &&
+            retainedObservation.success !== undefined
+              ? retainedObservation.success.lifecycleState
+              : undefined;
+          let createdFresh = retained === undefined;
           let launched = yield* (
             retained === undefined
               ? runtimes.create(assignment)
@@ -933,9 +995,25 @@ export const make = Effect.fn("CloudAllocationReconciler.make")(function* (input
             Result.isFailure(launched) &&
             launched.failure.reason === "not-found"
           ) {
+            createdFresh = true;
             launched = yield* runtimes.create(assignment).pipe(Effect.result);
           }
           if (Result.isSuccess(launched)) {
+            const durationMs = Math.max(
+              0,
+              DateTime.toEpochMillis(yield* DateTime.now) - DateTime.toEpochMillis(startedAt),
+            );
+            yield* warmPool.recordTiming({
+              kind: createdFresh
+                ? assignment.snapshotId === undefined
+                  ? "daytona-cold-create"
+                  : "daytona-build-restore"
+                : retainedLifecycle === "archived"
+                  ? "daytona-archive-start"
+                  : "daytona-stop-start",
+              durationMs,
+              occurredAt,
+            });
             yield* dispatch(allocation, occurredAt, {
               type: "allocation.instance-launched",
               commandId: commandId(allocation, "instance-launched"),
@@ -1834,10 +1912,43 @@ export const make = Effect.fn("CloudAllocationReconciler.make")(function* (input
     },
   );
 
+  const removeAbandonedManagedRuntime = Effect.fn(
+    "CloudAllocationReconciler.removeAbandonedManagedRuntime",
+  )(function* (runtime: CloudManagedRuntime, occurredAt: string) {
+    const removed = yield* runtimes
+      .delete({
+        runtimeId: runtime.runtimeId,
+        allocationId: runtime.allocationId,
+        attempt: runtime.attempt,
+      })
+      .pipe(Effect.result);
+    if (Result.isSuccess(removed)) {
+      yield* runtimeCleanup.resolve(runtime.runtimeId);
+      return;
+    }
+    yield* runtimeCleanup.recordFailure({
+      runtime,
+      error: removed.failure.message,
+      occurredAt,
+    });
+  });
+
   const reconcileWorkersOnce = Effect.fn("CloudAllocationReconciler.reconcileWorkersOnce")(
     function* () {
       const snapshot = yield* controller.snapshot;
       if (snapshot.controller.writability?.status === "fenced") return;
+      const occurredAt = DateTime.formatIso(yield* DateTime.now);
+      const dueCleanup = yield* runtimeCleanup.due(occurredAt);
+      const attemptedCleanup = new Set(dueCleanup.map((item) => item.runtime.runtimeId));
+      yield* Effect.forEach(
+        dueCleanup,
+        (item) =>
+          Effect.gen(function* () {
+            yield* runtimeCleanup.markRetrying(item, occurredAt);
+            yield* removeAbandonedManagedRuntime(item.runtime, occurredAt);
+          }),
+        { discard: true },
+      );
       const allocations = new Map(
         snapshot.allocations.map((allocation) => [allocation.id, allocation]),
       );
@@ -1864,7 +1975,10 @@ export const make = Effect.fn("CloudAllocationReconciler.make")(function* (input
               runtime.attempt < allocation.attempt ||
               allocation.cleanupState.status === "succeeded" ||
               (recorded !== undefined && recorded.runtimeId !== runtime.runtimeId);
-            return abandoned ? runtimes.delete(runtime.runtimeId) : Effect.void;
+            if (abandoned && attemptedCleanup.has(runtime.runtimeId)) return Effect.void;
+            return abandoned
+              ? removeAbandonedManagedRuntime(runtime, occurredAt)
+              : runtimeCleanup.resolve(runtime.runtimeId);
           },
           { discard: true },
         );

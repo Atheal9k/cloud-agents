@@ -127,6 +127,11 @@ describe("cloud accounting policy", () => {
     expect(byDimension["previews"]?.quantity).toBe(4_800);
     expect(byDimension["snapshots"]?.quantity).toBe(1);
     expect(byDimension["model-tokens"]?.cost.status).toBe("unknown");
+    expect(byDimension["daytona-quota"]).toMatchObject({
+      quantity: 0,
+      unit: "quota-units",
+      cost: { status: "unknown" },
+    });
     expect(byDimension["external-provider"]?.cost.status).toBe("unknown");
   });
 

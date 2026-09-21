@@ -77,6 +77,7 @@ import * as CloudEnvironmentBuildCatalog from "./CloudEnvironmentBuildCatalog.ts
 import { isCloudEnvironmentBuildStale } from "./cloudEnvironmentBuildPolicy.ts";
 import * as CloudEnvironmentCatalog from "./CloudEnvironmentCatalog.ts";
 import * as CloudMacHostCatalog from "./CloudMacHostCatalog.ts";
+import * as CloudRuntimeCleanupQueue from "./CloudRuntimeCleanupQueue.ts";
 import * as CloudWarmPoolCatalog from "./CloudWarmPoolCatalog.ts";
 import {
   admitCloudWorkspaceLaunch,
@@ -289,6 +290,7 @@ export const make = Effect.fn("CloudAllocationController.make")(function* (input
   const warmPool = yield* CloudWarmPoolCatalog.make();
   const settings = yield* ControllerSettings.make();
   const accounting = yield* CloudAccountingCatalog.make();
+  const runtimeCleanup = yield* CloudRuntimeCleanupQueue.make();
   const mode = input.mode ?? "local";
   const region = input.region ?? "us-west-1";
   const changes = yield* PubSub.unbounded<CloudAllocationSnapshot>();
@@ -511,6 +513,7 @@ export const make = Effect.fn("CloudAllocationController.make")(function* (input
       attributions,
       invoices,
       audit,
+      runtimeCleanupQueue,
     ] = yield* Effect.all([
       readAllEventRows({}),
       readDeletionRows({}),
@@ -525,6 +528,7 @@ export const make = Effect.fn("CloudAllocationController.make")(function* (input
       accounting.listAttributions(),
       accounting.listInvoices(),
       accounting.listAudit(100),
+      runtimeCleanup.list,
     ]).pipe(Effect.mapError(persistenceError));
     const grouped = new Map<RunAllocationId, Array<RunAllocationEvent>>();
     for (const row of rows) {
@@ -623,6 +627,7 @@ export const make = Effect.fn("CloudAllocationController.make")(function* (input
       spendLimits,
       invoices: reconciledInvoices,
       audit,
+      runtimeCleanupQueue,
     } satisfies CloudAllocationSnapshot;
   });
 

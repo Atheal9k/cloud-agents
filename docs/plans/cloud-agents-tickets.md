@@ -1234,7 +1234,7 @@ GitHub SSH identity. [Daytona SSH access](https://www.daytona.io/docs/en/ssh-acc
 
 Dependencies: CA-43, CA-45, CA-46, CA-55, CA-63, CA-64.
 
-Status: Open.
+Status: Done on 21 September 2026 in [PR #71](https://github.com/Atheal9k/cloud-agents/pull/71).
 
 Description: Make durable agents survive controller and Daytona failures while
 inactive sandboxes stop consuming running compute.

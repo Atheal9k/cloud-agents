@@ -1,4 +1,9 @@
-import { CloudManagedRuntime, type CloudManagedRuntimeLifecycle } from "@t3tools/contracts";
+import {
+  CloudManagedRuntime,
+  DEFAULT_CLOUD_MANAGED_RUNTIME_POLICY,
+  type CloudManagedRuntimeLifecycle,
+  type CloudManagedRuntimePolicy,
+} from "@t3tools/contracts";
 import {
   Daytona,
   DaytonaAuthenticationError,
@@ -44,6 +49,11 @@ const LABEL = {
   buildId: "t3-build-id",
   agentId: "t3-agent-id",
   runId: "t3-run-id",
+  idleAction: "t3-idle-action",
+  idleMinutes: "t3-idle-minutes",
+  archiveMinutes: "t3-archive-minutes",
+  deleteMinutes: "t3-delete-minutes",
+  ttlMinutes: "t3-ttl-minutes",
 } as const;
 
 interface DaytonaSandboxClient {
@@ -51,6 +61,13 @@ interface DaytonaSandboxClient {
   readonly target: string;
   readonly labels: Record<string, string>;
   readonly state?: string;
+  readonly autoStopInterval?: number;
+  readonly autoPauseInterval?: number;
+  readonly autoArchiveInterval?: number;
+  readonly autoDeleteInterval?: number;
+  readonly autoDestroyAt?: string;
+  readonly createdAt?: string;
+  readonly lastActivityAt?: string;
   readonly process: {
     readonly executeCommand: (
       command: string,
@@ -89,6 +106,11 @@ interface DaytonaSandboxClient {
   readonly start: (timeoutSeconds?: number) => Promise<void>;
   readonly stop: (timeoutSeconds?: number, force?: boolean) => Promise<void>;
   readonly archive: () => Promise<void>;
+  readonly setAutostopInterval: (interval: number) => Promise<void>;
+  readonly setAutoPauseInterval: (interval: number) => Promise<void>;
+  readonly setAutoArchiveInterval: (interval: number) => Promise<void>;
+  readonly setAutoDeleteInterval: (interval: number) => Promise<void>;
+  readonly setTtl: (minutes: number) => Promise<void>;
   readonly setLabels: (labels: Record<string, string>) => Promise<Record<string, string>>;
   readonly updateEnv: (environment: Record<string, string>) => Promise<void>;
   readonly delete: (timeoutSeconds?: number, wait?: boolean) => Promise<void>;
@@ -110,8 +132,10 @@ interface DaytonaClient {
       readonly labels: Record<string, string>;
       readonly public: false;
       readonly autoStopInterval: number;
+      readonly autoPauseInterval: number;
       readonly autoArchiveInterval: number;
       readonly autoDeleteInterval: number;
+      readonly ttlMinutes: number;
     },
     options: { readonly timeout: number },
   ) => Promise<DaytonaSandboxClient>;
@@ -224,6 +248,7 @@ function lifecycle(state: string | undefined): CloudManagedRuntimeLifecycle {
 }
 
 function labelsFor(config: ResolvedDaytonaConfig, input: CloudRuntimeCreateInput) {
+  const policy = resolvedPolicy(input);
   return {
     [LABEL.project]: config.project,
     [LABEL.allocationId]: input.allocationId,
@@ -231,6 +256,11 @@ function labelsFor(config: ResolvedDaytonaConfig, input: CloudRuntimeCreateInput
     [LABEL.resourceClass]: config.resourceClass,
     [LABEL.agentId]: input.agentId,
     [LABEL.runId]: input.runId,
+    [LABEL.idleAction]: policy.idle.action,
+    [LABEL.idleMinutes]: String(policy.idle.afterMinutes),
+    [LABEL.archiveMinutes]: String(policy.archiveAfterMinutes),
+    [LABEL.deleteMinutes]: String(policy.deleteAfterMinutes),
+    [LABEL.ttlMinutes]: String(policy.maxTtlMinutes),
     ...(input.environmentId === undefined ? {} : { [LABEL.environmentId]: input.environmentId }),
     ...(input.buildId === undefined ? {} : { [LABEL.buildId]: input.buildId }),
   };
@@ -245,6 +275,10 @@ function assignmentMatches(runtime: CloudManagedRuntime, input: CloudRuntimeCrea
     runtime.environmentId === input.environmentId &&
     runtime.buildId === input.buildId
   );
+}
+
+function resolvedPolicy(input: CloudRuntimeCreateInput): CloudManagedRuntimePolicy {
+  return input.policy ?? DEFAULT_CLOUD_MANAGED_RUNTIME_POLICY;
 }
 
 export const make = Effect.fn("DaytonaRuntimeProvider.make")(function (input: {
@@ -281,6 +315,24 @@ export const make = Effect.fn("DaytonaRuntimeProvider.make")(function (input: {
     const observedAt = DateTime.formatIso(yield* DateTime.now);
     const environmentId = sandbox.labels[LABEL.environmentId];
     const buildId = sandbox.labels[LABEL.buildId];
+    const idleAction = sandbox.labels[LABEL.idleAction];
+    const idleMinutes = sandbox.labels[LABEL.idleMinutes];
+    const archiveMinutes = sandbox.labels[LABEL.archiveMinutes];
+    const deleteMinutes = sandbox.labels[LABEL.deleteMinutes];
+    const ttlMinutes = sandbox.labels[LABEL.ttlMinutes];
+    const policy =
+      (idleAction === "stop" || idleAction === "pause") &&
+      idleMinutes !== undefined &&
+      archiveMinutes !== undefined &&
+      deleteMinutes !== undefined &&
+      ttlMinutes !== undefined
+        ? {
+            idle: { action: idleAction, afterMinutes: Number(idleMinutes) },
+            archiveAfterMinutes: Number(archiveMinutes),
+            deleteAfterMinutes: Number(deleteMinutes),
+            maxTtlMinutes: Number(ttlMinutes),
+          }
+        : undefined;
     return yield* decodeRuntime({
       provider: "daytona",
       runtimeId: sandbox.id,
@@ -293,6 +345,10 @@ export const make = Effect.fn("DaytonaRuntimeProvider.make")(function (input: {
       runId: sandbox.labels[LABEL.runId],
       allocationId: sandbox.labels[LABEL.allocationId],
       attempt: Number(sandbox.labels[LABEL.attempt]),
+      ...(policy === undefined ? {} : { policy }),
+      ...(sandbox.createdAt === undefined ? {} : { createdAt: sandbox.createdAt }),
+      ...(sandbox.lastActivityAt === undefined ? {} : { lastActivityAt: sandbox.lastActivityAt }),
+      ...(sandbox.autoDestroyAt === undefined ? {} : { autoDestroyAt: sandbox.autoDestroyAt }),
       observedAt,
     }).pipe(
       Effect.mapError(() =>
@@ -318,6 +374,44 @@ export const make = Effect.fn("DaytonaRuntimeProvider.make")(function (input: {
   const get = Effect.fn("DaytonaRuntimeProvider.get")(function* (runtimeId: string) {
     const client = yield* requireClient();
     return yield* sdk(() => client.get(runtimeId));
+  });
+
+  const requireOwnedSandbox = Effect.fn("DaytonaRuntimeProvider.requireOwnedSandbox")(
+    function* (owned: {
+      readonly runtimeId: string;
+      readonly allocationId: CloudManagedRuntime["allocationId"];
+      readonly attempt: CloudManagedRuntime["attempt"];
+    }) {
+      const sandbox = yield* get(owned.runtimeId);
+      const runtime = yield* runtimeFromSandbox(sandbox);
+      if (runtime.allocationId !== owned.allocationId || runtime.attempt !== owned.attempt) {
+        return yield* providerError(
+          "conflict",
+          `Daytona sandbox '${owned.runtimeId}' is not owned by allocation '${owned.allocationId}' attempt ${owned.attempt}.`,
+        );
+      }
+      return sandbox;
+    },
+  );
+
+  const applyPolicy = Effect.fn("DaytonaRuntimeProvider.applyPolicy")(function* (
+    sandbox: DaytonaSandboxClient,
+    policy: CloudManagedRuntimePolicy,
+  ) {
+    if (policy.idle.action === "pause") {
+      yield* sdk(() => sandbox.setAutostopInterval(0));
+      yield* sdk(() => sandbox.setAutoPauseInterval(policy.idle.afterMinutes));
+    } else {
+      yield* sdk(() => sandbox.setAutoPauseInterval(0));
+      yield* sdk(() => sandbox.setAutostopInterval(policy.idle.afterMinutes));
+    }
+    yield* sdk(() => sandbox.setAutoArchiveInterval(policy.archiveAfterMinutes));
+    yield* sdk(() => sandbox.setAutoDeleteInterval(policy.deleteAfterMinutes));
+    // Daytona anchors TTL from the setter call. Do not extend the original
+    // wall-clock maximum every time a stopped sandbox wakes.
+    if (sandbox.autoDestroyAt === undefined) {
+      yield* sdk(() => sandbox.setTtl(policy.maxTtlMinutes));
+    }
   });
 
   const inspect: CloudRuntimeProvider["Service"]["inspect"] = (locator) =>
@@ -447,9 +541,17 @@ export const make = Effect.fn("DaytonaRuntimeProvider.make")(function (input: {
             envVars: { ...createInput.environmentVariables },
             labels: labelsFor(config, createInput),
             public: false,
-            autoStopInterval: 0,
-            autoArchiveInterval: 0,
-            autoDeleteInterval: -1,
+            autoStopInterval:
+              resolvedPolicy(createInput).idle.action === "stop"
+                ? resolvedPolicy(createInput).idle.afterMinutes
+                : 0,
+            autoPauseInterval:
+              resolvedPolicy(createInput).idle.action === "pause"
+                ? resolvedPolicy(createInput).idle.afterMinutes
+                : 0,
+            autoArchiveInterval: resolvedPolicy(createInput).archiveAfterMinutes,
+            autoDeleteInterval: resolvedPolicy(createInput).deleteAfterMinutes,
+            ttlMinutes: resolvedPolicy(createInput).maxTtlMinutes,
           },
           { timeout: 60 },
         ),
@@ -526,16 +628,27 @@ export const make = Effect.fn("DaytonaRuntimeProvider.make")(function (input: {
           const sandbox = yield* get(startInput.runtimeId);
           const assignment = startInput.assignment;
           if (assignment !== undefined) {
+            const observed = yield* runtimeFromSandbox(sandbox);
+            if (
+              observed.allocationId !== assignment.allocationId ||
+              observed.attempt > assignment.attempt
+            ) {
+              return yield* providerError(
+                "conflict",
+                `Daytona sandbox '${startInput.runtimeId}' is not owned by this allocation attempt.`,
+              );
+            }
             yield* sdk(() => sandbox.setLabels(labelsFor(config, assignment)));
             yield* sdk(() => sandbox.updateEnv({ ...assignment.environmentVariables }));
+            yield* applyPolicy(sandbox, resolvedPolicy(assignment));
           }
           const state = lifecycle(sandbox.state);
           if (state !== "starting" && state !== "started") yield* sdk(() => sandbox.start());
           return yield* runtimeFromSandbox(yield* get(startInput.runtimeId));
         }),
-      stop: (runtimeId) =>
+      stop: (owned) =>
         Effect.gen(function* () {
-          const sandbox = yield* get(runtimeId);
+          const sandbox = yield* requireOwnedSandbox(owned);
           const state = lifecycle(sandbox.state);
           if (
             state !== "stopping" &&
@@ -547,11 +660,11 @@ export const make = Effect.fn("DaytonaRuntimeProvider.make")(function (input: {
           ) {
             yield* sdk(() => sandbox.stop());
           }
-          return yield* runtimeFromSandbox(yield* get(runtimeId));
+          return yield* runtimeFromSandbox(yield* get(owned.runtimeId));
         }).pipe(Effect.withSpan("DaytonaRuntimeProvider.stop")),
-      archive: (runtimeId) =>
+      archive: (owned) =>
         Effect.gen(function* () {
-          const sandbox = yield* get(runtimeId);
+          const sandbox = yield* requireOwnedSandbox(owned);
           const state = lifecycle(sandbox.state);
           if (
             state !== "archiving" &&
@@ -561,11 +674,11 @@ export const make = Effect.fn("DaytonaRuntimeProvider.make")(function (input: {
           ) {
             yield* sdk(() => sandbox.archive());
           }
-          return yield* runtimeFromSandbox(yield* get(runtimeId));
+          return yield* runtimeFromSandbox(yield* get(owned.runtimeId));
         }).pipe(Effect.withSpan("DaytonaRuntimeProvider.archive")),
-      delete: (runtimeId) =>
+      delete: (owned) =>
         Effect.gen(function* () {
-          const sandbox = yield* get(runtimeId).pipe(
+          const sandbox = yield* requireOwnedSandbox(owned).pipe(
             Effect.catchIf(
               (error) => error.reason === "not-found",
               () => Effect.void,

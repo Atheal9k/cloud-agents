@@ -3,6 +3,7 @@ import type {
   CloudEnvironmentBuildId,
   CloudEnvironmentId,
   CloudManagedRuntime,
+  CloudManagedRuntimePolicy,
   CloudRunId,
   RunAllocationAttempt,
   RunAllocationId,
@@ -45,7 +46,14 @@ export interface CloudRuntimeCreateInput {
   readonly environmentId?: CloudEnvironmentId;
   readonly buildId?: CloudEnvironmentBuildId;
   readonly snapshotId?: string;
+  readonly policy?: CloudManagedRuntimePolicy;
   readonly environmentVariables: Readonly<Record<string, string>>;
+}
+
+export interface CloudRuntimeOwnedInput {
+  readonly runtimeId: string;
+  readonly allocationId: RunAllocationId;
+  readonly attempt: RunAllocationAttempt;
 }
 
 export interface CloudRuntimeProviderReadiness {
@@ -103,12 +111,14 @@ export class CloudRuntimeProvider extends Context.Service<
       readonly assignment?: CloudRuntimeCreateInput;
     }) => Effect.Effect<CloudManagedRuntime, CloudRuntimeProviderError>;
     readonly stop: (
-      runtimeId: string,
+      input: CloudRuntimeOwnedInput,
     ) => Effect.Effect<CloudManagedRuntime, CloudRuntimeProviderError>;
     readonly archive: (
-      runtimeId: string,
+      input: CloudRuntimeOwnedInput,
     ) => Effect.Effect<CloudManagedRuntime, CloudRuntimeProviderError>;
-    readonly delete: (runtimeId: string) => Effect.Effect<void, CloudRuntimeProviderError>;
+    readonly delete: (
+      input: CloudRuntimeOwnedInput,
+    ) => Effect.Effect<void, CloudRuntimeProviderError>;
     readonly execute: (input: {
       readonly runtimeId: string;
       readonly command: string;

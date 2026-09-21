@@ -90,6 +90,10 @@ export const CloudWarmPoolTimings = Schema.Struct({
   coldBuildRestoreMs: NonNegativeInt,
   warmClaimMs: NonNegativeInt,
   ec2StartupMs: NonNegativeInt,
+  daytonaColdCreateMs: Schema.optionalKey(NonNegativeInt),
+  daytonaStopStartMs: Schema.optionalKey(NonNegativeInt),
+  daytonaArchiveStartMs: Schema.optionalKey(NonNegativeInt),
+  daytonaBuildRestoreMs: Schema.optionalKey(NonNegativeInt),
 });
 export type CloudWarmPoolTimings = typeof CloudWarmPoolTimings.Type;
 

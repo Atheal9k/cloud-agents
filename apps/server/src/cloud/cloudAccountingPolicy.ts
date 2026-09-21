@@ -29,9 +29,7 @@ export function principalFromApiKey(input: {
   };
 }
 
-export function principalOf(
-  principal: CloudSpendPrincipal | undefined,
-): CloudSpendPrincipal {
+export function principalOf(principal: CloudSpendPrincipal | undefined): CloudSpendPrincipal {
   return principal ?? DEFAULT_CLOUD_SPEND_PRINCIPAL;
 }
 
@@ -138,6 +136,7 @@ const DIMENSIONS: ReadonlyArray<CloudUsageDimension> = [
   "snapshots",
   "artifacts-transfer",
   "previews",
+  "daytona-quota",
   "external-provider",
 ];
 
@@ -205,7 +204,9 @@ export function cloudUsageMeters(input: {
       cost:
         snapshotQuantity === 0
           ? notAttributed("This allocation has no retained runtime snapshot.")
-          : unknown("Snapshot storage is billed by AWS; invoice reconciliation supplies the charge."),
+          : unknown(
+              "Snapshot storage is billed by AWS; invoice reconciliation supplies the charge.",
+            ),
     },
     {
       dimension: "artifacts-transfer",
@@ -218,6 +219,12 @@ export function cloudUsageMeters(input: {
       quantity: previewSeconds,
       unit: "seconds",
       cost: unknown("Preview and display transfer are not metered by the controller."),
+    },
+    {
+      dimension: "daytona-quota",
+      quantity: 0,
+      unit: "quota-units",
+      cost: unknown("Daytona quota is account-level and is not attributable to one allocation."),
     },
     {
       dimension: "external-provider",

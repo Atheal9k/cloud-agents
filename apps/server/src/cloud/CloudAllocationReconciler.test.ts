@@ -27,7 +27,7 @@ import { make as makeBuilds } from "./CloudEnvironmentBuildCatalog.ts";
 import { make as makeWarmPool } from "./CloudWarmPoolCatalog.ts";
 import * as ControllerSettings from "./controllerSettings.ts";
 import { CloudWorkerRegistration } from "./CloudWorkerRegistration.ts";
-import { CloudWorkerRunClient } from "./CloudWorkerRunClient.ts";
+import { CloudWorkerRunClient, CloudWorkerRunClientError } from "./CloudWorkerRunClient.ts";
 import {
   CloudWorkerProvider,
   CloudWorkerProviderError,
@@ -88,8 +88,11 @@ function fixture(
     readonly readinessFailure?: "disabled" | "missing" | "outage";
     readonly terminateFailure?: boolean;
     readonly hibernateFailure?: boolean;
+    readonly archiveFailure?: boolean;
+    readonly flushFailure?: boolean;
     readonly restoreFailure?: boolean;
     readonly daytonaCredentials?: boolean;
+    readonly workerListEmpty?: boolean;
   } = {},
 ) {
   return Effect.gen(function* () {
@@ -146,7 +149,9 @@ function fixture(
         }),
       listWorkers: () =>
         Effect.sync(() =>
-          state.instance === undefined || state.instance.state === "terminated"
+          input.workerListEmpty === true ||
+          state.instance === undefined ||
+          state.instance.state === "terminated"
             ? []
             : [state.instance],
         ),
@@ -401,8 +406,14 @@ function fixture(
           return managedRuntime()!;
         }),
       archive: () =>
-        Effect.sync(() => {
+        Effect.gen(function* () {
           state.archiveCalls += 1;
+          if (input.archiveFailure === true) {
+            return yield* new CloudRuntimeProviderError({
+              reason: "provider-outage",
+              message: "RequestTimeout",
+            });
+          }
           state.runtimeArchived = true;
           return managedRuntime()!;
         }),
@@ -440,8 +451,15 @@ function fixture(
           return "succeeded" as const;
         }),
       flush: () =>
-        Effect.sync(() => {
+        Effect.gen(function* () {
           state.flushCalls += 1;
+          if (input.flushFailure === true) {
+            return yield* new CloudWorkerRunClientError({
+              stage: "flush",
+              message: "Worker disconnected during checkpoint.",
+            });
+          }
+          state.lifecycleEvents.push("checkpoint");
           return {
             userdata: { status: "flushed", detail: "Checkpointed 4 write-ahead log pages." },
             workspace: {
@@ -741,6 +759,40 @@ it.effect("removes a stale Daytona sandbox but never a newer allocation attempt"
   }).pipe(Effect.provide(SqlitePersistenceMemory)),
 );
 
+it.effect("queues and retries a Daytona resource that could not be deleted", () =>
+  Effect.gen(function* () {
+    yield* TestClock.setTime(startAt);
+    const { controller, reconciler, state } = yield* fixture({
+      terminateFailure: true,
+      workerListEmpty: true,
+    });
+    state.instance = {
+      instanceId: "i-lost",
+      state: "running",
+      identity: {
+        status: "matched",
+        allocationId: RunAllocationId.make("missing-allocation"),
+        attempt: RunAllocationAttempt.make(1),
+      },
+      registrationCredentialPresent: true,
+    };
+
+    yield* reconciler.reconcileWorkersOnce();
+    const [queued] = (yield* controller.snapshot).runtimeCleanupQueue ?? [];
+    expect(queued).toMatchObject({ status: "pending", attempts: 1 });
+    expect(state.terminateCalls).toBe(1);
+
+    if (queued === undefined) return;
+    yield* TestClock.setTime(Date.parse(queued.nextRetryAt));
+    yield* reconciler.reconcileWorkersOnce();
+    expect((yield* controller.snapshot).runtimeCleanupQueue?.[0]).toMatchObject({
+      status: "pending",
+      attempts: 2,
+    });
+    expect(state.terminateCalls).toBe(2);
+  }).pipe(Effect.provide(SqlitePersistenceMemory)),
+);
+
 it.effect("keeps failed cleanup visible and accepts an explicit retry", () =>
   Effect.gen(function* () {
     yield* TestClock.setTime(startAt);
@@ -802,17 +854,81 @@ it.effect("stops, archives, and confirms Daytona resource release after cancella
     yield* reconciler.reconcileOnce();
     yield* reconciler.reconcileOnce();
     yield* reconciler.reconcileOnce();
+    yield* reconciler.reconcileOnce();
 
     const released = (yield* controller.snapshot).allocations[0];
     expect(state.hibernateCalls).toBe(1);
     expect(state.archiveCalls).toBe(1);
     expect(state.terminateCalls).toBe(1);
+    expect(state.flushCalls).toBe(1);
+    expect(state.lifecycleEvents).toEqual(["checkpoint", "stop"]);
     expect(released?.cleanupState.status).toBe("succeeded");
     expect(released?.progress).toMatchObject({
       stage: "delete",
       status: "succeeded",
       message: "Daytona confirmed the resource was released.",
     });
+  }).pipe(Effect.provide(SqlitePersistenceMemory)),
+);
+
+it.effect("does not stop a Daytona sandbox until its checkpoint succeeds", () =>
+  Effect.gen(function* () {
+    yield* TestClock.setTime(startAt);
+    const { controller, reconciler, state } = yield* fixture({ flushFailure: true });
+    const allocation = yield* controller.dispatch(launchCommand("allocation-1"));
+    yield* reconciler.reconcileOnce();
+    yield* reconciler.reconcileOnce();
+    yield* controller.dispatch(
+      decodeCommand({
+        type: "allocation.cancel",
+        commandId: "cancel-checkpoint-allocation-1",
+        allocationId: allocation.id,
+        attempt: allocation.attempt,
+        occurredAt: "2026-09-17T03:00:01.000Z",
+      }),
+    );
+
+    yield* reconciler.reconcileOnce();
+    yield* reconciler.reconcileOnce();
+    yield* reconciler.reconcileOnce();
+
+    const pending = (yield* controller.snapshot).allocations[0];
+    expect(state.flushCalls).toBe(2);
+    expect(state.hibernateCalls).toBe(0);
+    expect(state.archiveCalls).toBe(0);
+    expect(pending?.cleanupState.status).toBe("running");
+    expect(pending?.progress).toMatchObject({ stage: "checkpoint", status: "failed" });
+  }).pipe(Effect.provide(SqlitePersistenceMemory)),
+);
+
+it.effect("leaves an interrupted archive retryable without deleting the sandbox", () =>
+  Effect.gen(function* () {
+    yield* TestClock.setTime(startAt);
+    const { controller, reconciler, state } = yield* fixture({ archiveFailure: true });
+    const allocation = yield* controller.dispatch(launchCommand("allocation-1"));
+    yield* reconciler.reconcileOnce();
+    yield* reconciler.reconcileOnce();
+    yield* controller.dispatch(
+      decodeCommand({
+        type: "allocation.cancel",
+        commandId: "cancel-archive-allocation-1",
+        allocationId: allocation.id,
+        attempt: allocation.attempt,
+        occurredAt: "2026-09-17T03:00:01.000Z",
+      }),
+    );
+
+    yield* reconciler.reconcileOnce();
+    yield* reconciler.reconcileOnce();
+    yield* reconciler.reconcileOnce();
+    yield* reconciler.reconcileOnce();
+
+    const pending = (yield* controller.snapshot).allocations[0];
+    expect(state.hibernateCalls).toBe(1);
+    expect(state.archiveCalls).toBe(1);
+    expect(state.terminateCalls).toBe(0);
+    expect(pending?.cleanupState.status).toBe("running");
+    expect(pending?.progress).toMatchObject({ stage: "archive", status: "running" });
   }).pipe(Effect.provide(SqlitePersistenceMemory)),
 );
 
@@ -1101,7 +1217,7 @@ it.effect("removes Daytona credentials before an idle sandbox stops", () =>
     yield* reconciler.reconcileOnce();
 
     expect(state.credentialReleaseCalls).toBe(1);
-    expect(state.lifecycleEvents).toEqual(["release-credentials", "stop"]);
+    expect(state.lifecycleEvents).toEqual(["checkpoint", "release-credentials", "stop"]);
   }).pipe(Effect.provide(SqlitePersistenceMemory)),
 );
 

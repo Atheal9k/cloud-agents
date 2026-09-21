@@ -172,6 +172,13 @@ Reopening an agent restores that snapshot and runs the environment's `start` aga
 start a run, so it costs no provider usage, and anything you change by hand in a reopened preview
 is kept as a checkpoint and a diff rather than pushed to the branch the run published.
 
+Daytona environments may set `runtimeLifecycle` in their environment JSON. Its `idle` field chooses
+`stop` or `pause` and an `afterMinutes` delay; `archiveAfterMinutes`, `deleteAfterMinutes`, and
+`maxTtlMinutes` set provider failsafes. The defaults stop after 15 minutes, archive after 1 day,
+and delete no later than 90 days after creation. Starting the sandbox again does not extend that
+maximum lifetime. These provider timers use Daytona activity and do not replace T3's separate
+agent-idle, preview-lease, or conversation-retention clocks.
+
 An idle agent keeps its stopped disk for 90 days, and every start or resume gives it a fresh 90
 days. After that the disk is released, and the next follow-up starts the agent on a new worker
 instead of restoring it. Conversations and their runs are kept forever unless you set

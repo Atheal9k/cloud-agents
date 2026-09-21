@@ -44,7 +44,7 @@ import {
   CloudWarmGuest,
   CloudWarmPoolCapacityPlan,
 } from "./cloudWarmPool.ts";
-import { CloudManagedRuntime } from "./cloudRuntime.ts";
+import { CloudManagedRuntime, CloudRuntimeCleanupQueueItem } from "./cloudRuntime.ts";
 
 export const RunWorkerDevice = Schema.Literals(["android", "ios"]);
 export type RunWorkerDevice = typeof RunWorkerDevice.Type;
@@ -600,6 +600,7 @@ export const RunAllocationProgressStage = Schema.Literals([
   "provider",
   "terminal",
   "preview",
+  "checkpoint",
   "stop",
   "archive",
   "delete",
@@ -1213,6 +1214,8 @@ export const CloudAllocationSnapshot = Schema.Struct({
   spendLimits: Schema.optionalKey(Schema.Array(CloudSpendLimit)),
   invoices: Schema.optionalKey(Schema.Array(CloudInvoiceLine)),
   audit: Schema.optionalKey(Schema.Array(CloudAuditEvent)),
+  /** Daytona resources that no allocation owns and still need provider cleanup. */
+  runtimeCleanupQueue: Schema.optionalKey(Schema.Array(CloudRuntimeCleanupQueueItem)),
 });
 export type CloudAllocationSnapshot = typeof CloudAllocationSnapshot.Type;
 
