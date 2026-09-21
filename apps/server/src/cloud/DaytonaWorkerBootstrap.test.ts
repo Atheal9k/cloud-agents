@@ -1,4 +1,10 @@
-import { RunAllocation, emptyCloudSessionLeases } from "@t3tools/contracts";
+import {
+  CloudEnvironmentId,
+  CloudEnvironmentVersionId,
+  RunAllocation,
+  emptyCloudSessionLeases,
+  type CloudEnvironmentVersion,
+} from "@t3tools/contracts";
 import { expect, it } from "@effect/vitest";
 import * as Effect from "effect/Effect";
 import * as Schema from "effect/Schema";
@@ -70,9 +76,37 @@ const allocation = Schema.decodeSync(RunAllocation)({
   updatedAt: "2026-09-17T03:01:00.000Z",
 });
 
+const version: CloudEnvironmentVersion = {
+  id: CloudEnvironmentVersionId.make("environment-daytona-worker:1"),
+  environmentId: CloudEnvironmentId.make("environment-daytona-worker"),
+  version: 1,
+  name: "Daytona worker",
+  source: { type: "saved", scope: "personal", owner: "victor" },
+  repositories: [{ repository: "t3tools/t3code", defaultRef: "main" }],
+  config: {
+    image: "node:24-bookworm",
+    start: 'node -e "setInterval(() => {}, 1000)"',
+    terminals: [{ name: "tests", command: 'node -e "setInterval(() => {}, 1000)"' }],
+    ports: [{ name: "web", port: 3000 }],
+  },
+  secretReferences: [],
+  effectivePolicy: {
+    runtimeUser: "root",
+    egressMode: "default_with_network_settings",
+    egressAllowlist: [],
+    testingEnabled: true,
+    disableAllMcpServers: false,
+    mcpServerAllowlist: [],
+    ports: [{ name: "web", port: 3000 }],
+    secrets: [],
+  },
+  createdAt: "2026-09-17T03:00:00.000Z",
+};
+
 it.effect("reconciles named processes and registers through a signed Daytona route", () =>
   Effect.gen(function* () {
     const processCommands: string[] = [];
+    const runningSessions = new Set<string>();
     const urls: string[] = [];
     const runtime = CloudRuntimeProvider.of({
       readiness: () => Effect.die("unused"),
@@ -92,31 +126,37 @@ it.effect("reconciles named processes and registers through a signed Daytona rou
       ensureProcess: (input) =>
         Effect.sync(() => {
           processCommands.push(input.command);
-          return input.sessionId.endsWith("worker")
+          if (input.sessionId.endsWith("worker") || input.command.includes("setInterval")) {
+            runningSessions.add(input.sessionId);
+            return {
+              status: "running" as const,
+              sessionId: input.sessionId,
+              commandId: `${input.sessionId}-command`,
+              command: input.command,
+              output: "ready",
+            };
+          }
+          return {
+            status: "succeeded" as const,
+            sessionId: input.sessionId,
+            commandId: "completed-command",
+            command: input.command,
+            exitCode: 0,
+            output: "ready",
+          };
+        }),
+      inspectProcess: (input) =>
+        Effect.succeed(
+          runningSessions.has(input.sessionId)
             ? {
                 status: "running" as const,
                 sessionId: input.sessionId,
-                commandId: "worker-command",
-                command: input.command,
-                output: "",
-              }
-            : {
-                status: "succeeded" as const,
-                sessionId: input.sessionId,
-                commandId: "completed-command",
-                command: input.command,
-                exitCode: 0,
+                commandId: `${input.sessionId}-command`,
+                command: "long-running process",
                 output: "ready",
-              };
-        }),
-      inspectProcess: (input) =>
-        Effect.succeed({
-          status: "running",
-          sessionId: input.sessionId,
-          commandId: "worker-command",
-          command: "t3 --host 0.0.0.0",
-          output: "T3 Code listening",
-        }),
+              }
+            : { status: "missing" as const, sessionId: input.sessionId },
+        ),
       deleteProcess: () => Effect.die("unused"),
       preview: () =>
         Effect.succeed({
@@ -152,7 +192,19 @@ it.effect("reconciles named processes and registers through a signed Daytona rou
       Effect.provideService(HttpClient.HttpClient, httpClient),
     );
 
-    expect((yield* worker.prepare({ allocation })).status).toBe("ready");
+    expect(yield* worker.prepare({ allocation, version })).toEqual({
+      status: "pending",
+      stage: "setup",
+    });
+    expect(yield* worker.prepare({ allocation, version })).toEqual({
+      status: "pending",
+      stage: "terminal",
+    });
+    expect(yield* worker.prepare({ allocation, version })).toEqual({
+      status: "pending",
+      stage: "worker",
+    });
+    expect(yield* worker.prepare({ allocation, version })).toEqual({ status: "ready" });
     const registration = yield* worker.registration({ allocation });
 
     expect(processCommands.some((command) => command.includes("git clone"))).toBe(true);

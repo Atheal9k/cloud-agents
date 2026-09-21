@@ -173,13 +173,16 @@ export const make = Effect.fn("DaytonaWorkerBootstrap.make")(function* () {
     readonly command: string;
     readonly stage: DaytonaWorkerBootstrapStage;
   }) {
+    const observed = yield* runtimes
+      .inspectProcess(input)
+      .pipe(Effect.mapError((error) => failure(input.stage, error.message)));
     const process = yield* runtimes
       .ensureProcess(input)
       .pipe(Effect.mapError((error) => failure(input.stage, error.message)));
     if (process.status === "failed" || process.status === "succeeded") {
       return yield* processFailure(input.stage, process);
     }
-    return process.status === "running";
+    return observed.status !== "missing" && process.status === "running";
   });
 
   const prepare: DaytonaWorkerBootstrap["prepare"] = Effect.fn("DaytonaWorkerBootstrap.prepare")(

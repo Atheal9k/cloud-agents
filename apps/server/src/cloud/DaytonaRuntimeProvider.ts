@@ -15,6 +15,7 @@ import {
   DaytonaServiceUnavailableError,
   DaytonaTimeoutError,
   DaytonaUnprocessableEntityError,
+  type Image,
 } from "@daytona/sdk";
 import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
@@ -32,6 +33,7 @@ import {
   resolveDaytonaConfig,
   type ResolvedDaytonaConfig,
 } from "./daytonaConfig.ts";
+import { daytonaWorkerImage } from "./daytonaWorkerImage.ts";
 
 const LABEL = {
   project: "t3-project",
@@ -101,7 +103,9 @@ interface DaytonaSandboxClient {
 interface DaytonaClient {
   readonly create: (
     params: {
+      readonly image?: string | Image;
       readonly snapshot?: string;
+      readonly user: "root";
       readonly envVars: Record<string, string>;
       readonly labels: Record<string, string>;
       readonly public: false;
@@ -124,6 +128,19 @@ function providerError(
   message: string,
 ): CloudRuntimeProviderError {
   return new CloudRuntimeProviderError({ reason, message });
+}
+
+function shellQuote(value: string): string {
+  return `'${value.replaceAll("'", `'"'"'`)}'`;
+}
+
+function processExitPath(sessionId: string): string {
+  return `/tmp/t3-process-${encodeURIComponent(sessionId)}.exit`;
+}
+
+function wrappedProcessCommand(sessionId: string, command: string): string {
+  const status = shellQuote(processExitPath(sessionId));
+  return `status=${status}; rm -f "$status"; set +e; ( ${command} ); code=$?; printf %s "$code" > "$status"; exit "$code"`;
 }
 
 function safeMessage(error: unknown, config: ResolvedDaytonaConfig): string {
@@ -262,14 +279,16 @@ export const make = Effect.fn("DaytonaRuntimeProvider.make")(function (input: {
     sandbox: DaytonaSandboxClient,
   ) {
     const observedAt = DateTime.formatIso(yield* DateTime.now);
+    const environmentId = sandbox.labels[LABEL.environmentId];
+    const buildId = sandbox.labels[LABEL.buildId];
     return yield* decodeRuntime({
       provider: "daytona",
       runtimeId: sandbox.id,
       region: sandbox.target || config.target,
       resourceClass: sandbox.labels[LABEL.resourceClass],
       lifecycleState: lifecycle(sandbox.state),
-      environmentId: sandbox.labels[LABEL.environmentId],
-      buildId: sandbox.labels[LABEL.buildId],
+      ...(environmentId === undefined ? {} : { environmentId }),
+      ...(buildId === undefined ? {} : { buildId }),
       agentId: sandbox.labels[LABEL.agentId],
       runId: sandbox.labels[LABEL.runId],
       allocationId: sandbox.labels[LABEL.allocationId],
@@ -362,7 +381,28 @@ export const make = Effect.fn("DaytonaRuntimeProvider.make")(function (input: {
         sandbox.process.getSessionCommandLogs(processInput.sessionId, command.id),
       );
       const output = logs.output ?? [logs.stdout, logs.stderr].filter(Boolean).join("\n");
-      if (command.exitCode === undefined) {
+      const exitCode =
+        command.exitCode ??
+        (yield* sdk(() =>
+          sandbox.process.executeCommand(
+            `test ! -f ${shellQuote(processExitPath(processInput.sessionId))} || cat ${shellQuote(processExitPath(processInput.sessionId))}`,
+          ),
+        ).pipe(
+          Effect.flatMap((result) => {
+            const value = result.result.trim();
+            if (value.length === 0) return Effect.succeed(undefined);
+            const parsed = Number(value);
+            return Number.isInteger(parsed)
+              ? Effect.succeed(parsed)
+              : Effect.fail(
+                  providerError(
+                    "fatal",
+                    `Daytona process session '${processInput.sessionId}' returned an invalid exit status.`,
+                  ),
+                );
+          }),
+        ));
+      if (exitCode === undefined) {
         return {
           status: "running",
           sessionId: processInput.sessionId,
@@ -372,11 +412,11 @@ export const make = Effect.fn("DaytonaRuntimeProvider.make")(function (input: {
         };
       }
       return {
-        status: command.exitCode === 0 ? "succeeded" : "failed",
+        status: exitCode === 0 ? "succeeded" : "failed",
         sessionId: processInput.sessionId,
         commandId: command.id,
         command: command.command,
-        exitCode: command.exitCode,
+        exitCode,
         output,
       };
     },
@@ -400,7 +440,10 @@ export const make = Effect.fn("DaytonaRuntimeProvider.make")(function (input: {
       const sandbox = yield* sdk(() =>
         client.create(
           {
-            ...(createInput.snapshotId === undefined ? {} : { snapshot: createInput.snapshotId }),
+            ...(createInput.snapshotId === undefined
+              ? { image: daytonaWorkerImage() }
+              : { snapshot: createInput.snapshotId }),
+            user: "root",
             envVars: { ...createInput.environmentVariables },
             labels: labelsFor(config, createInput),
             public: false,
@@ -411,7 +454,9 @@ export const make = Effect.fn("DaytonaRuntimeProvider.make")(function (input: {
           { timeout: 60 },
         ),
       );
-      return yield* runtimeFromSandbox(sandbox);
+      // Daytona's create response can omit labels even though the persisted sandbox has them.
+      // Re-read before decoding ownership so we never reject a sandbox we just created.
+      return yield* runtimeFromSandbox(yield* get(sandbox.id));
     });
 
   const readiness: CloudRuntimeProvider["Service"]["readiness"] = () =>
@@ -546,15 +591,16 @@ export const make = Effect.fn("DaytonaRuntimeProvider.make")(function (input: {
         }),
       ensureProcess: (processInput) =>
         Effect.gen(function* () {
+          const command = wrappedProcessCommand(processInput.sessionId, processInput.command);
           const observed = yield* inspectProcess(processInput);
           if (observed.status !== "missing") {
-            if (observed.command !== processInput.command) {
+            if (observed.command !== command) {
               return yield* providerError(
                 "conflict",
                 `Daytona process session '${processInput.sessionId}' contains an unexpected command.`,
               );
             }
-            return observed;
+            return { ...observed, command: processInput.command };
           }
           const sandbox = yield* get(processInput.runtimeId);
           yield* sdk(() => sandbox.process.createSession(processInput.sessionId)).pipe(
@@ -565,20 +611,20 @@ export const make = Effect.fn("DaytonaRuntimeProvider.make")(function (input: {
           );
           const started = yield* sdk(() =>
             sandbox.process.executeSessionCommand(processInput.sessionId, {
-              command: processInput.command,
+              command,
               runAsync: true,
               suppressInputEcho: true,
             }),
           ).pipe(Effect.result);
           const recovered = yield* inspectProcess(processInput);
           if (recovered.status !== "missing") {
-            if (recovered.command !== processInput.command) {
+            if (recovered.command !== command) {
               return yield* providerError(
                 "conflict",
                 `Daytona process session '${processInput.sessionId}' contains an unexpected command.`,
               );
             }
-            return recovered;
+            return { ...recovered, command: processInput.command };
           }
           if (started._tag === "Failure") return yield* started.failure;
           return {
@@ -649,7 +695,10 @@ function makeSdkClient(config: ResolvedDaytonaConfig): DaytonaClient | undefined
     target: config.target,
   });
   return {
-    create: (params, options) => daytona.create(params, options),
+    create: (params, options) =>
+      params.image === undefined
+        ? daytona.create(params, options)
+        : daytona.create({ ...params, image: params.image }, options),
     get: (runtimeId) => daytona.get(runtimeId),
     list: (query) => daytona.list(query),
   };

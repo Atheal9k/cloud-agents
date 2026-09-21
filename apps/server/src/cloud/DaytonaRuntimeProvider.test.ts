@@ -55,6 +55,7 @@ function fakeSandbox(id = "sandbox-daytona") {
     deleted: false,
     snapshots: [] as string[],
     revokedTokens: [] as string[],
+    statusFiles: new Map<string, number>(),
     sessions: new Map<
       string,
       { sessionId: string; commands: Array<{ id: string; command: string; exitCode?: number }> }
@@ -72,7 +73,16 @@ function fakeSandbox(id = "sandbox-daytona") {
       return state.lifecycle;
     },
     process: {
-      executeCommand: async () => ({ exitCode: 0, result: "command output" }),
+      executeCommand: async (command: string) => {
+        const statusPath = /cat '([^']+)'$/u.exec(command)?.[1];
+        return {
+          exitCode: 0,
+          result:
+            statusPath === undefined
+              ? "command output"
+              : String(state.statusFiles.get(statusPath) ?? ""),
+        };
+      },
       createSession: async (sessionId: string) => {
         if (!state.sessions.has(sessionId))
           state.sessions.set(sessionId, { sessionId, commands: [] });
@@ -149,6 +159,7 @@ function fakeClient(
     readonly createError?: Error;
     readonly listError?: Error;
     readonly rememberBeforeCreateError?: boolean;
+    readonly omitLabelsFromCreateResponse?: boolean;
   } = {},
 ) {
   const sandboxes: Array<ReturnType<typeof fakeSandbox>["sandbox"]> = [];
@@ -156,6 +167,9 @@ function fakeClient(
   let createCalls = 0;
   let lastCreateParams:
     | {
+        readonly image?: unknown;
+        readonly snapshot?: string;
+        readonly user: "root";
         readonly envVars: Record<string, string>;
         readonly labels: Record<string, string>;
       }
@@ -175,6 +189,9 @@ function fakeClient(
     },
     client: {
       create: async (params: {
+        readonly image?: unknown;
+        readonly snapshot?: string;
+        readonly user: "root";
         readonly envVars: Record<string, string>;
         readonly labels: Record<string, string>;
       }) => {
@@ -187,7 +204,9 @@ function fakeClient(
         if (input.rememberBeforeCreateError === true) sandboxes.push(created.sandbox);
         if (input.createError !== undefined) throw input.createError;
         if (input.rememberBeforeCreateError !== true) sandboxes.push(created.sandbox);
-        return created.sandbox;
+        return input.omitLabelsFromCreateResponse
+          ? { ...created.sandbox, labels: {} }
+          : created.sandbox;
       },
       get: async (runtimeId: string) => {
         const sandbox = sandboxes.find((candidate) => candidate.id === runtimeId);
@@ -259,6 +278,39 @@ it.effect("recovers a lost create response by allocation labels", () =>
   }),
 );
 
+it.effect("re-reads ownership labels omitted from the create response", () =>
+  Effect.gen(function* () {
+    const fake = fakeClient({ omitLabelsFromCreateResponse: true });
+    const provider = yield* make({ config: config(), client: fake.client });
+
+    const created = yield* provider.create(assignment);
+
+    expect(created.runtimeId).toBe("sandbox-daytona");
+    expect(created.allocationId).toBe(allocationId);
+    expect(created.agentId).toBe(assignment.agentId);
+  }),
+);
+
+it.effect("decodes sandboxes without optional environment or build labels", () =>
+  Effect.gen(function* () {
+    const fake = fakeClient();
+    const provider = yield* make({ config: config(), client: fake.client });
+
+    const created = yield* provider.create({
+      allocationId,
+      attempt,
+      agentId: assignment.agentId,
+      runId: assignment.runId,
+      environmentVariables: assignment.environmentVariables,
+    });
+
+    expect(created.environmentId).toBeUndefined();
+    expect(created.buildId).toBeUndefined();
+    expect(fake.state.lastCreateParams?.image).toBeDefined();
+    expect(fake.state.lastCreateParams?.user).toBe("root");
+  }),
+);
+
 it.effect("refuses to attach a different agent to an existing allocation attempt", () =>
   Effect.gen(function* () {
     const fake = fakeClient();
@@ -317,7 +369,7 @@ it.effect("implements the provider-neutral lifecycle operations", () =>
     expect(duplicate.commandId).toBe(process.commandId);
     const command = fake.state.latestSandboxState?.sessions.get("worker-1")?.commands[0];
     if (command === undefined) throw new Error("Expected a persisted process command.");
-    command.exitCode = 0;
+    fake.state.latestSandboxState?.statusFiles.set("/tmp/t3-process-worker-1.exit", 0);
     expect(
       (yield* provider.inspectProcess({
         runtimeId: created.runtimeId,
