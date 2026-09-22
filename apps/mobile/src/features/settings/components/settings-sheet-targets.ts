@@ -1,5 +1,7 @@
 export type SettingsSheetTarget =
   | "SettingsEnvironments"
+  | "SettingsCloudAgents"
+  | "SettingsDeviceHost"
   | "SettingsArchive"
   | "SettingsAppearance"
   | "SettingsKeyboard"

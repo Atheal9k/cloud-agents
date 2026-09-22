@@ -136,6 +136,10 @@ function LocalSettingsRouteScreen() {
             value={`${environmentCount}`}
             target="SettingsEnvironments"
           />
+          <SettingsRow icon="cloud" label="Cloud agents" target="SettingsCloudAgents" />
+          {Platform.OS === "android" ? (
+            <SettingsRow icon="iphone" label="Android device host" target="SettingsDeviceHost" />
+          ) : null}
         </SettingsSection>
 
         <GeneralSettingsSection />
@@ -518,6 +522,10 @@ function ConfiguredSettingsRouteScreen() {
             value={`${environmentCount}`}
             target="SettingsEnvironments"
           />
+          <SettingsRow icon="cloud" label="Cloud agents" target="SettingsCloudAgents" />
+          {Platform.OS === "android" ? (
+            <SettingsRow icon="iphone" label="Android device host" target="SettingsDeviceHost" />
+          ) : null}
           <SettingsSwitchRow
             icon="bell.badge"
             label="Device Notifications"

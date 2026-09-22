@@ -252,6 +252,11 @@ desktop clients. **Set up cloud environment** (or <kbd>Ctrl</kbd>+<kbd>Alt</kbd>
 <kbd>Command</kbd>+<kbd>Option</kbd>+<kbd>E</kbd>) opens that dialog with the env-setup skill
 already selected.
 
+On Android, open **Settings â†’ Cloud agents** to start a cloud agent, follow its run, send a
+follow-up, open the live thread for questions and approvals, and review its pull request or saved
+artifacts. Leaving T3 Code does not stop the run. The selected controller must stay online when it
+is a local controller.
+
 The controller continues provisioning, observing, and cleaning up the run if the client
 disconnects. Keep the controller host and Docker running. Reopen the dialog to see recent runs,
 stop one, or open a registered worker as an ordinary T3 thread.

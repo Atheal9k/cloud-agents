@@ -37,6 +37,7 @@ import IconCode from "@tabler/icons-react-native/IconCode";
 import IconCopy from "@tabler/icons-react-native/IconCopy";
 import IconDeviceDesktop from "@tabler/icons-react-native/IconDeviceDesktop";
 import IconDeviceLaptop from "@tabler/icons-react-native/IconDeviceLaptop";
+import IconDeviceMobile from "@tabler/icons-react-native/IconDeviceMobile";
 import IconDots from "@tabler/icons-react-native/IconDots";
 import IconDotsCircleHorizontal from "@tabler/icons-react-native/IconDotsCircleHorizontal";
 import IconEdit from "@tabler/icons-react-native/IconEdit";
@@ -143,6 +144,7 @@ const ANDROID_ICON_BY_SF_SYMBOL: Partial<Record<SFSymbol, Icon>> = {
   "folder.fill": IconFolder,
   gearshape: IconSettings,
   "info.circle": IconInfoCircle,
+  iphone: IconDeviceMobile,
   laptopcomputer: IconDeviceLaptop,
   link: IconLink,
   "line.3.horizontal": IconMenu2,
@@ -211,6 +213,7 @@ const ANDROID_ICON_BY_MATERIAL_NAME: Record<string, Icon> = {
   keyboard_hide: IconKeyboardHide,
   public: IconWorld,
   remove: IconMinus,
+  smartphone: IconDeviceMobile,
   terminal: IconTerminal2,
   visibility: IconEye,
 };

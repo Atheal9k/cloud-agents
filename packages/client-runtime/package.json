@@ -15,6 +15,14 @@
       "types": "./src/pendingRequests.ts",
       "default": "./src/pendingRequests.ts"
     },
+    "./cloud-agents": {
+      "types": "./src/cloudAgents.ts",
+      "default": "./src/cloudAgents.ts"
+    },
+    "./android-device-host": {
+      "types": "./src/androidDeviceHost.ts",
+      "default": "./src/androidDeviceHost.ts"
+    },
     "./connection": {
       "types": "./src/connection/index.ts",
       "default": "./src/connection/index.ts"
