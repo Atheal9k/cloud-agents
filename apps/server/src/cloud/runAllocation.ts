@@ -47,6 +47,7 @@ const BLOCKED_WHILE_DELETING = new Set<RunAllocationCommand["type"]>([
   "allocation.agent-unarchive",
   "allocation.session-lease-open",
   "allocation.session-lease-renew",
+  "allocation.expo-metro-request",
   "allocation.reopen",
   "allocation.reopened",
 ]);
@@ -327,6 +328,23 @@ export function decideRunAllocationCommand(
         allocation.agentOutcome.status !== "not-started" &&
         (allocation.idleState.status === "idle" || allocation.idleState.status === "busy")
         ? [{ ...base, type: "allocation.session-stopped" }]
+        : [];
+    case "allocation.expo-metro-request":
+      return allocation.allocationState.status === "ready" &&
+        allocation.cleanupState.status === "not-requested" &&
+        allocation.control?.runId === command.runId
+        ? [
+            {
+              ...base,
+              type: "allocation.expo-metro-requested",
+              runId: command.runId,
+              platform: command.platform,
+            },
+          ]
+        : [];
+    case "allocation.expo-metro-stop":
+      return allocation.expoMetro?.status === "enabled"
+        ? [{ ...base, type: "allocation.expo-metro-stopped" }]
         : [];
     /**
      * Reopening takes a fresh attempt for exactly the same reasons a wake does:
@@ -764,6 +782,9 @@ export function projectRunAllocationEvent(
     case "allocation.session-stopped":
       return projectUpdate(allocation, event, {
         stopRequestedAt: event.occurredAt,
+        ...(allocation.expoMetro?.status === "enabled"
+          ? { expoMetro: { status: "disabled" as const, stoppedAt: event.occurredAt } }
+          : {}),
         leases: releaseAllLeases({
           leases: allocation.leases,
           releasedAt: event.occurredAt,
@@ -773,6 +794,19 @@ export function projectRunAllocationEvent(
         ...(allocation.idleState.status === "idle"
           ? { idleState: { ...allocation.idleState, releaseAt: event.occurredAt } }
           : {}),
+      });
+    case "allocation.expo-metro-requested":
+      return projectUpdate(allocation, event, {
+        expoMetro: {
+          status: "enabled",
+          runId: event.runId,
+          platform: event.platform,
+          requestedAt: event.occurredAt,
+        },
+      });
+    case "allocation.expo-metro-stopped":
+      return projectUpdate(allocation, event, {
+        expoMetro: { status: "disabled", stoppedAt: event.occurredAt },
       });
     /**
      * A reopen replaces the runtime without touching the run state machine:
@@ -858,6 +892,9 @@ export function projectRunAllocationEvent(
         // Cleanup releases the guest, so the allocation stops holding an idle
         // one. The snapshot it was keeping is no longer restorable.
         idleState: { status: "busy" },
+        ...(allocation.expoMetro?.status === "enabled"
+          ? { expoMetro: { status: "disabled" as const, stoppedAt: event.occurredAt } }
+          : {}),
         cleanupState: { status: "requested", requestedAt: event.occurredAt },
       });
     case "allocation.expired":
@@ -897,12 +934,18 @@ export function projectRunAllocationEvent(
         },
         deadlines: event.deadlines,
         agentOutcome: { status: "not-started" },
+        ...(allocation.expoMetro?.status === "enabled"
+          ? { expoMetro: { status: "disabled" as const, stoppedAt: event.occurredAt } }
+          : {}),
         ...runtimeReset,
       });
     }
     case "allocation.agent-archived":
       return projectUpdate(allocation, event, {
         archivedAt: event.occurredAt,
+        ...(allocation.expoMetro?.status === "enabled"
+          ? { expoMetro: { status: "disabled" as const, stoppedAt: event.occurredAt } }
+          : {}),
         // Archiving releases the runtime claim, so the stopped guest it was
         // holding goes with it. Unarchiving then restores eligibility without
         // waking anything, because there is no snapshot left to restore.

@@ -183,6 +183,7 @@ import {
 } from "./cloud/SharedBrowserProxy.ts";
 import * as CloudArtifactAccess from "./cloud/CloudArtifactAccess.ts";
 import * as CloudAgentReview from "./cloud/CloudAgentReview.ts";
+import * as CloudExpoMetro from "./cloud/CloudExpoMetro.ts";
 import * as CloudHandoff from "./cloud/CloudHandoff.ts";
 import * as CloudReadiness from "./cloud/CloudReadiness.ts";
 import * as CloudRunControl from "./cloud/CloudRunControl.ts";
@@ -672,6 +673,7 @@ const RuntimeCoreDependenciesBaseLive = ReactorLayerLive.pipe(
 const RuntimeCoreDependenciesWithoutSchedulesLive = Layer.mergeAll(
   CloudRunControl.layer,
   CloudAgentReview.layer,
+  CloudExpoMetro.layer.pipe(Layer.provide(CloudRuntimeProviderLayerLive)),
   CloudHandoffLayerLive,
   CloudWorkerSessionLayerLive,
   CloudAgentsApi.layer.pipe(

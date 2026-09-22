@@ -29,6 +29,7 @@ import { ExecutionEnvironmentPlatformArch, ExecutionEnvironmentPlatformOs } from
 import { CloudProviderTurnInput, CloudProviderUnansweredRequestSeconds } from "./cloudExecution.ts";
 import { CloudEnvironment, CloudEnvironmentVersionReference } from "./cloudEnvironment.ts";
 import { CloudEnvironmentBuild, CloudEnvironmentBuildReference } from "./cloudEnvironmentBuild.ts";
+import { CloudExpoMetroIntent, CloudExpoPlatform } from "./cloudExpoMetro.ts";
 import { CloudMacHost } from "./cloudMacIos.ts";
 import {
   CloudRuntimeReopen,
@@ -658,6 +659,8 @@ export const RunAllocation = Schema.Struct({
   reopen: Schema.optionalKey(CloudRuntimeReopen),
   /** The edits a person made by hand during the last reopened session. */
   sessionEdits: Schema.optionalKey(CloudSessionEdits),
+  /** Durable intent; the current Daytona attempt owns the actual process and link. */
+  expoMetro: Schema.optionalKey(CloudExpoMetroIntent),
   /**
    * An explicit stop is waiting for the guest to settle. Stopping is a person
    * saying they are done, so the idle window that exists for people who walked
@@ -792,6 +795,13 @@ export const RunAllocationCommand = Schema.Union([
   }),
   /** The person closed the session. Everything is released once the guest settles. */
   Schema.Struct({ ...AttemptCommandBase, type: Schema.Literal("allocation.session-stop") }),
+  Schema.Struct({
+    ...AttemptCommandBase,
+    type: Schema.Literal("allocation.expo-metro-request"),
+    runId: CloudRunId,
+    platform: CloudExpoPlatform,
+  }),
+  Schema.Struct({ ...AttemptCommandBase, type: Schema.Literal("allocation.expo-metro-stop") }),
   Schema.Struct({
     ...AttemptCommandBase,
     type: Schema.Literal("allocation.reopen"),
@@ -971,6 +981,13 @@ export const RunAllocationEvent = Schema.Union([
     reason: TrimmedNonEmptyString,
   }),
   Schema.Struct({ ...EventBase, type: Schema.Literal("allocation.session-stopped") }),
+  Schema.Struct({
+    ...EventBase,
+    type: Schema.Literal("allocation.expo-metro-requested"),
+    runId: CloudRunId,
+    platform: CloudExpoPlatform,
+  }),
+  Schema.Struct({ ...EventBase, type: Schema.Literal("allocation.expo-metro-stopped") }),
   Schema.Struct({
     ...EventBase,
     type: Schema.Literal("allocation.reopen-requested"),

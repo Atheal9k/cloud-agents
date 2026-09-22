@@ -60,6 +60,7 @@ export * from "./cloudEnvSetup.ts";
 export * from "./cloudPrivateNetwork.ts";
 export * from "./cloudReview.ts";
 export * from "./cloudHandoff.ts";
+export * from "./cloudExpoMetro.ts";
 export * from "./pullRequest.ts";
 export * from "./orchestration.ts";
 export * from "./t3ProjectFile.ts";

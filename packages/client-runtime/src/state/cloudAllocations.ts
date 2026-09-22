@@ -7,6 +7,8 @@ import {
   type CloudAgentReviewShareInput,
   type CloudHandoffExecuteInput,
   type CloudHandoffPreviewInput,
+  type CloudExpoMetroControlInput,
+  type CloudExpoMetroInspectInput,
   type CloudEnvironmentBuildActivateInput,
   type CloudEnvironmentBuildCancelInput,
   type CloudEnvironmentBuildSaveInput,
@@ -257,6 +259,28 @@ export function createCloudAllocationAtoms<R, E>(
     execute: (input: CloudAgentReviewShareInput) =>
       request(WS_METHODS.cloudAgentReviewShare, input),
   });
+  const inspectExpoMetro = createEnvironmentRpcCommand(runtime, {
+    label: "environment-data:cloud-expo-metro:inspect",
+    tag: WS_METHODS.cloudExpoMetroInspect,
+    scheduler,
+    concurrency: {
+      mode: "singleFlight",
+      key: ({ environmentId, input }) => `${environmentId}:${input.agentId}`,
+    },
+    execute: (input: CloudExpoMetroInspectInput) =>
+      request(WS_METHODS.cloudExpoMetroInspect, input),
+  });
+  const controlExpoMetro = createEnvironmentRpcCommand(runtime, {
+    label: "environment-data:cloud-expo-metro:control",
+    tag: WS_METHODS.cloudExpoMetroControl,
+    scheduler,
+    concurrency: {
+      mode: "singleFlight",
+      key: ({ environmentId, input }) => `${environmentId}:${input.agentId}`,
+    },
+    execute: (input: CloudExpoMetroControlInput) =>
+      request(WS_METHODS.cloudExpoMetroControl, input),
+  });
   const previewHandoff = createEnvironmentRpcCommand(runtime, {
     label: "environment-data:cloud-handoff:preview",
     tag: WS_METHODS.cloudHandoffPreview,
@@ -329,6 +353,8 @@ export function createCloudAllocationAtoms<R, E>(
     actAgentReview,
     leaseAgentReview,
     shareAgentReview,
+    inspectExpoMetro,
+    controlExpoMetro,
     previewHandoff,
     executeHandoff,
     listScmConnections,

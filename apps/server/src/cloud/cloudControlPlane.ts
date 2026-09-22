@@ -132,6 +132,8 @@ export function projectCloudControlPlane(
         case "allocation.session-lease-renewed":
         case "allocation.session-lease-released":
         case "allocation.session-stopped":
+        case "allocation.expo-metro-requested":
+        case "allocation.expo-metro-stopped":
         case "allocation.reopened":
         case "allocation.session-edits-captured":
         case "allocation.cleanup-started":

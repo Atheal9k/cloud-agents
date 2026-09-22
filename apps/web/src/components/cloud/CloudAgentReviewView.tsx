@@ -12,6 +12,7 @@ import { useEffect, useState } from "react";
 
 import { Button } from "../ui/button";
 import { CloudHandoffPanel } from "./CloudHandoffPanel";
+import { CloudExpoMetroCard } from "./CloudExpoMetroCard";
 import { cloudAllocations } from "../../state/cloudAllocations";
 import { useAtomCommand } from "../../state/use-atom-command";
 import { randomUUID } from "../../lib/utils";
@@ -114,6 +115,7 @@ export function CloudAgentReviewView(props: {
         </p>
       </div>
       {error === null ? null : <p className="text-sm text-destructive">{error}</p>}
+      <CloudExpoMetroCard environmentId={props.environmentId} agentId={props.agentId} />
       <dl className="grid gap-2 text-sm">
         <div>
           <dt className="text-muted-foreground">Usage</dt>

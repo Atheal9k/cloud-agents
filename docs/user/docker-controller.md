@@ -432,6 +432,14 @@ Artifact downloads use short-lived authorized URLs; untrusted HTML is download-o
 unarchive, cancel, wake, pull-request deletion, and permanent delete are separate, access-checked
 actions. Results expire after seven days.
 
+For a Daytona run whose repository includes `expo-dev-client`, the review page can start Metro for
+the installed Android or iOS development build. T3 uses an Expo tunnel, then shows both an **Open
+on phone** link and a QR code. Expo Go is not supported. JavaScript, TypeScript, and asset edits use
+Fast Refresh; native dependencies, Expo app configuration, Gradle, Kotlin, or Java edits require a
+new development build. The card reports Metro, tunnel, and build compatibility separately and lets
+you reconnect, restart, or stop the session. Waking a hibernated session creates a new link, so
+reconnect the phone from the refreshed card.
+
 **Stop** cancels provider work and requests cleanup. It does not delete an already opened pull
 request or a saved result. Retry creates a new allocation attempt after the prior attempt is
 fenced; it does not revive the old process. When recovery is needed, use the saved checkpoint and

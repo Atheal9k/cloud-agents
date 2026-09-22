@@ -526,6 +526,107 @@ describe("cloud allocation hibernation", () => {
     ).allocation;
   }
 
+  it("retains Metro intent across a hibernated session reopen", () => {
+    let allocation: RunAllocation = {
+      ...settledAllocation(),
+      control: { agentId: "agent-1", runId: "run-1" },
+    };
+    allocation = applyAccepted(
+      allocation,
+      command({
+        type: "allocation.expo-metro-request",
+        commandId: "command-expo-request",
+        allocationId: "allocation-1",
+        attempt: 1,
+        occurredAt: "2026-09-17T03:10:00.500Z",
+        runId: "run-1",
+        platform: "ios",
+      }),
+    ).allocation;
+    allocation = applyAccepted(
+      allocation,
+      command({
+        type: "allocation.idle",
+        commandId: "command-idle-with-expo",
+        allocationId: "allocation-1",
+        attempt: 1,
+        occurredAt: "2026-09-17T03:10:01.000Z",
+        releaseAt: "2026-09-17T04:10:01.000Z",
+        flush,
+      }),
+    ).allocation;
+    allocation = applyAccepted(
+      allocation,
+      command({
+        type: "allocation.hibernate",
+        commandId: "command-hibernate-with-expo",
+        allocationId: "allocation-1",
+        attempt: 1,
+        occurredAt: "2026-09-17T04:10:02.000Z",
+        snapshot: {
+          instanceId: "i-worker",
+          attempt: 1,
+          flush,
+          capturedAt: "2026-09-17T04:10:02.000Z",
+        },
+      }),
+    ).allocation;
+    const reopened = applyAccepted(
+      allocation,
+      command({
+        type: "allocation.reopen",
+        commandId: "command-reopen-with-expo",
+        allocationId: "allocation-1",
+        attempt: 1,
+        nextAttempt: 2,
+        occurredAt: "2026-09-17T04:11:00.000Z",
+        deadlines: retryDeadlines,
+      }),
+    ).allocation;
+
+    expect(reopened.attempt).toBe(2);
+    expect(reopened.expoMetro).toEqual({
+      status: "enabled",
+      runId: "run-1",
+      platform: "ios",
+      requestedAt: "2026-09-17T03:10:00.500Z",
+    });
+  });
+
+  it("persists explicit Metro stop intent", () => {
+    const allocation: RunAllocation = {
+      ...runningAllocation().allocation,
+      control: { agentId: "agent-1", runId: "run-1" },
+    };
+    const started = applyAccepted(
+      allocation,
+      command({
+        type: "allocation.expo-metro-request",
+        commandId: "command-expo-start",
+        allocationId: "allocation-1",
+        attempt: 1,
+        occurredAt: "2026-09-17T03:05:00.000Z",
+        runId: "run-1",
+        platform: "android",
+      }),
+    ).allocation;
+    const stopped = applyAccepted(
+      started,
+      command({
+        type: "allocation.expo-metro-stop",
+        commandId: "command-expo-stop",
+        allocationId: "allocation-1",
+        attempt: 1,
+        occurredAt: "2026-09-17T03:06:00.000Z",
+      }),
+    ).allocation;
+
+    expect(stopped.expoMetro).toEqual({
+      status: "disabled",
+      stoppedAt: "2026-09-17T03:06:00.000Z",
+    });
+  });
+
   it("records the flush and the release deadline when a settled turn goes idle", () => {
     const idle = idleAllocation();
 
@@ -902,8 +1003,17 @@ describe("cloud agent retention, archive, and deletion", () => {
   });
 
   it("releases the retained snapshot on archive so unarchive cannot wake it", () => {
+    const runningMetro: RunAllocation = {
+      ...hibernated(),
+      expoMetro: {
+        status: "enabled",
+        runId: "run-1",
+        platform: "android",
+        requestedAt: "2026-09-17T03:10:00.500Z",
+      },
+    };
     const archived = applyAccepted(
-      hibernated(),
+      runningMetro,
       command({
         type: "allocation.agent-archive",
         commandId: "command-archive",
@@ -915,6 +1025,10 @@ describe("cloud agent retention, archive, and deletion", () => {
 
     expect(archived.idleState).toEqual({ status: "busy" });
     expect(archived.cleanupState.status).toBe("requested");
+    expect(archived.expoMetro).toEqual({
+      status: "disabled",
+      stoppedAt: "2026-09-18T09:00:00.000Z",
+    });
     expect(
       decideRunAllocationCommand(
         archived,
