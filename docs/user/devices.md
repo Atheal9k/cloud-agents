@@ -97,3 +97,19 @@ T3 provides discovery, streaming, and control. Arrange app builds,
 installation, and connectivity to development servers such as Metro separately.
 A simulator on another machine cannot reach Metro through your environment's
 localhost without forwarding or another reachable address.
+
+## Android phone device host
+
+On the Android client, open **Settings â†’ Android device host** to bind this phone to one connected
+controller. Enrollment records the controller and phone name. It does not grant screen capture,
+Accessibility, VPN, or wireless-debugging access. Android shows a separate status for each of
+those permissions, the Metro connection, broker connectivity, and the current agent input lease.
+
+Pause enrollment to reject new device-control sessions without stopping a Daytona run. Revoke it
+to remove local authorization immediately, including when the controller or sandbox cannot be
+reached. When screen capture or agent input is active, use **Stop device control** in this screen.
+
+Device control needs a signed Android build with the compatible device broker. Android may stop
+the broker unless its foreground-service notification is visible, and battery restrictions can
+still interrupt it. Opening an Expo development build from a Metro link switches to a separate
+app; the T3 Code and development-build identities remain distinct.

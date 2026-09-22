@@ -20,6 +20,8 @@ import { ArchivedThreadsRouteScreen } from "./features/archive/ArchivedThreadsRo
 import { useAgentNotificationNavigation } from "./features/agent-awareness/notificationNavigation";
 import { ConnectOnboardingRouteScreen } from "./features/cloud/ConnectOnboardingRouteScreen";
 import { useConnectOnboardingNavigation } from "./features/cloud/connectOnboardingNavigation";
+import { CloudAgentsRouteScreen } from "./features/cloud-agents/CloudAgentsRouteScreen";
+import { CloudAgentReviewRouteScreen } from "./features/cloud-agents/CloudAgentReviewRouteScreen";
 import { AttachmentFileScreen } from "./features/files/AttachmentFileScreen";
 import { ThreadFilesTreeScreen, ThreadFileScreen } from "./features/files/ThreadFilesRouteScreen";
 import { AdaptiveWorkspaceLayout } from "./features/layout/AdaptiveWorkspaceLayout";
@@ -59,6 +61,7 @@ import { SettingsClientStorageRouteScreen } from "./features/settings/SettingsCl
 import { SettingsDiagnosticsRouteScreen } from "./features/diagnostics/SettingsDiagnosticsRouteScreen";
 import { SettingsAuthRouteScreen } from "./features/settings/SettingsAuthRouteScreen";
 import { SettingsEnvironmentsRouteScreen } from "./features/settings/SettingsEnvironmentsRouteScreen";
+import { SettingsDeviceHostRouteScreen } from "./features/device-host/SettingsDeviceHostRouteScreen";
 import { SettingsKeyboardRouteScreen } from "./features/settings/SettingsKeyboardRouteScreen";
 import { SettingsLegalRouteScreen } from "./features/settings/SettingsLegalRouteScreen";
 import {
@@ -166,6 +169,27 @@ const SettingsContentStack = createNativeStackNavigator({
       linking: "environments",
       options: {
         title: "Environments",
+      },
+    }),
+    SettingsCloudAgents: createNativeStackScreen({
+      screen: CloudAgentsRouteScreen,
+      linking: "cloud-agents",
+      options: {
+        title: "Cloud agents",
+      },
+    }),
+    SettingsCloudAgentReview: createNativeStackScreen({
+      screen: CloudAgentReviewRouteScreen,
+      linking: "cloud-agents/:environmentId/:agentId",
+      options: {
+        title: "Cloud agent",
+      },
+    }),
+    SettingsDeviceHost: createNativeStackScreen({
+      screen: SettingsDeviceHostRouteScreen,
+      linking: "device-host",
+      options: {
+        title: "Android device host",
       },
     }),
     SettingsEnvironmentNew: createNativeStackScreen({

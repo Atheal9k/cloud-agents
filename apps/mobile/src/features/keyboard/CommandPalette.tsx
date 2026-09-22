@@ -7,6 +7,7 @@ import {
   FlatList,
   KeyboardAvoidingView,
   Modal,
+  Platform,
   Pressable,
   Text as NativeText,
   TextInput,
@@ -204,6 +205,32 @@ export function CommandPalette(props: {
             params: { screen: "SettingsEnvironments" },
           }),
       },
+      {
+        key: "cloudAgents",
+        kind: "action",
+        title: "Cloud agents",
+        searchTerms: ["remote", "daytona", "pull request", "artifacts"],
+        run: () =>
+          navigation.navigate("SettingsSheet", {
+            screen: "SettingsContent",
+            params: { screen: "SettingsCloudAgents" },
+          }),
+      },
+      ...(Platform.OS === "android"
+        ? [
+            {
+              key: "androidDeviceHost",
+              kind: "action" as const,
+              title: "Android device host",
+              searchTerms: ["phone", "device control", "metro", "enrollment"],
+              run: () =>
+                navigation.navigate("SettingsSheet", {
+                  screen: "SettingsContent",
+                  params: { screen: "SettingsDeviceHost" },
+                }),
+            },
+          ]
+        : []),
       {
         key: "usage",
         kind: "action",
