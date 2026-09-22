@@ -1882,7 +1882,7 @@ Acceptance criteria:
 
 Dependencies: CA-19, CA-21, CA-25, CA-34, CA-35, CA-36, CA-40, CA-47, CA-49.
 
-Status: Open. Required by CA-67 and CA-68.
+Status: Done on 22 September 2026 in [PR #73](https://github.com/Atheal9k/cloud-agents/pull/73).
 
 Description: Make the native T3 Android client the phone control center and the
 enrollment shell for the device broker selected in CA-67. Keep ordinary cloud
